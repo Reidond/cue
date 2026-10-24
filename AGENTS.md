@@ -52,9 +52,12 @@ speakers, `6x` calendar). It sources `tests/e2e/lib.sh`, which gives it:
 - `wait_for "what" SECONDS command…`, `wait_log PATTERN SECONDS`,
   `session_log`, `find_notes`;
 - `speech OUT.wav VOICE "text"` and `dialogue SCRIPT OUTDIR` (multi-voice
-  calls built with `say`, one WAV per side plus `timeline.tsv`), `ocr PNG`;
+  calls built with `say`, one WAV per side plus `timeline.tsv`), `ocr PNG`,
+  `audio_length FILE`, `audio_sync AUDIO TIMELINE [SIDE…]` (each line of a
+  dialogue where its timeline puts it, silence elsewhere);
 - `assert_file`, `assert_contains`, `assert_not_contains`, `assert_eq`,
-  `fail`, `skip`, and `need_whisper`, `need_real_claude`, `need_voice`.
+  `assert_between`, `fail`, `skip`, and `need_whisper`, `need_real_claude`,
+  `need_voice`.
 
 Look at the existing cases before writing a new one, and keep each case
 focused on one user-visible behaviour.
@@ -71,18 +74,19 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_WHISPER_PORT=n` | Run (or reuse) whisper-server on this port instead of 8178. |
 | `CUE_CLAUDE_BIN=path` | Use this binary instead of `claude`. |
 | `CUE_NO_LIVE_AUDIO=1` | Don't open the microphone or call audio. |
-| `CUE_REHEARSE_PARTICIPANT=wav` / `CUE_REHEARSE_ME=wav` | Play a file as the call / as your microphone. |
+| `CUE_REHEARSE_PARTICIPANT=wav` / `CUE_REHEARSE_ME=wav` | Play a file as the call / as your microphone, in real time; a recording gets its audio too (digital silence on the call side is left out, as ScreenCaptureKit delivers nothing while the Mac is silent). |
 | `CUE_REHEARSE_RECORD=1` | Record the rehearsal and write its notes. |
 | `CUE_SNAPSHOT=png` | Render the overlay to `png` every 2 s, and the dashboard and Settings, when open, to `…-dashboard.png` / `…-settings.png` (whole window, light appearance). |
 | `CUE_PROJECT=name` | Make this project active at launch, creating it if there is none by that name. |
-| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field). |
+| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there). |
 | `CUE_ALLOW_CAPTURE=1` | Let screenshots see the overlay. |
 | `CUE_SHOW_SETTINGS=1` | Open Settings at launch. |
 
 The session log (`Application Support/Cue/sessions/*.md`) is the app's
 progress record and what cases wait on: keep writing a line for every step a
-recording goes through (`🎙 Transcript saved: …`, `📝 Notes ready: …`, and so
-on), and never rename existing lines without updating the cases.
+recording goes through (`🎙 Transcript saved: …`, `🔊 Audio saved: …`,
+`🎚 Working audio: …`, `📝 Notes ready: …`, and so on), and never rename
+existing lines without updating the cases.
 
 ## Rules for changes
 

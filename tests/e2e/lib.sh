@@ -166,6 +166,13 @@ dialogue() {
 # ocr PNG — the text Vision reads in an image, one line per text block.
 ocr() { "$E2E_BIN/ocr" "$1"; }
 
+# audio_length FILE — its length in seconds, as afinfo reads it.
+audio_length() { afinfo "$1" 2> /dev/null | awk '/estimated duration:/ { print $3 }'; }
+
+# audio_sync AUDIO TIMELINE [SIDE…] — succeeds when the recording has each line of a dialogue's
+# timeline.tsv (of those SIDEs) where the timeline puts it, and silence elsewhere; prints what it measured.
+audio_sync() { "$E2E_BIN/audio-sync" "$@"; }
+
 # Waits for CUE_SNAPSHOT to write a PNG and prints its text.
 snapshot_text() {
     wait_for "snapshot $1" 20 test -s "$1"
@@ -190,3 +197,9 @@ assert_not_contains() {
 }
 
 assert_eq() { [[ $1 == "$2" ]] || fail "${3:-expected '$2', got '$1'}"; }
+
+# assert_between NUMBER LOW HIGH [MESSAGE] — LOW ≤ NUMBER ≤ HIGH, decimals allowed.
+assert_between() {
+    awk -v n="$1" -v low="$2" -v high="$3" 'BEGIN { exit !(n != "" && n >= low && n <= high) }' \
+        || fail "${4:-expected $1 to be between $2 and $3}"
+}

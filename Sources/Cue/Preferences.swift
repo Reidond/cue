@@ -37,6 +37,8 @@ final class Preferences: ObservableObject {
     @Published var textSize: Double { didSet { defaults.set(textSize, forKey: "textSize") } }
     @Published var libraryFolder: URL { didSet { defaults.set(libraryFolder.path, forKey: "libraryFolder") } }
     @Published var summarizeRecordings: Bool { didSet { defaults.set(summarizeRecordings, forKey: "summarizeRecordings") } }
+    /// Keep the call's audio next to its notes.
+    @Published var keepAudio: Bool { didSet { defaults.set(keepAudio, forKey: "keepAudio") } }
     /// Folder name of the project Cue was last bound to.
     @Published var activeProject: String? { didSet { defaults.set(activeProject, forKey: "activeProject") } }
 
@@ -50,6 +52,7 @@ final class Preferences: ObservableObject {
         libraryFolder = defaults.string(forKey: "libraryFolder").map { URL(fileURLWithPath: $0) }
             ?? documentsFolder.appendingPathComponent("Cue")
         summarizeRecordings = defaults.object(forKey: "summarizeRecordings") as? Bool ?? true
+        keepAudio = defaults.object(forKey: "keepAudio") as? Bool ?? true
         activeProject = defaults.string(forKey: "activeProject")
     }
 }

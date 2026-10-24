@@ -32,9 +32,10 @@ final class SessionLog {
 /// (CUE_REHEARSE_PARTICIPANT=/path/to/audio). Handy for testing the whole
 /// pipeline with recorded questions, without Google Meet.
 enum Rehearsal {
-    /// Returns the playback length in seconds.
+    /// Pushes 0.1 s chunks in real time, each with the host time it is "captured" at, like the live
+    /// sources do. Returns the playback length in seconds.
     @discardableResult
-    static func play(fileAt path: String, into push: @escaping ([Float]) -> Void) throws -> TimeInterval {
+    static func play(fileAt path: String, into push: @escaping ([Float], TimeInterval) -> Void) throws -> TimeInterval {
         let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
         guard let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: whisperSampleRate, channels: 1, interleaved: false),
               let converter = AVAudioConverter(from: file.processingFormat, to: target),
@@ -55,9 +56,11 @@ enum Rehearsal {
             + [Float](repeating: 0, count: Int(whisperSampleRate * 3))
         let chunk = Int(whisperSampleRate / 10)
         DispatchQueue.global().async {
+            let started = Date(), host = hostSeconds()
             for start in stride(from: 0, to: samples.count, by: chunk) {
-                push(Array(samples[start..<min(start + chunk, samples.count)]))
-                Thread.sleep(forTimeInterval: 0.1)
+                let offset = Double(start) / whisperSampleRate
+                push(Array(samples[start..<min(start + chunk, samples.count)]), host + offset)
+                Thread.sleep(until: started.addingTimeInterval(offset + 0.1))
             }
         }
         return Double(samples.count) / whisperSampleRate

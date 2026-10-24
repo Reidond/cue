@@ -27,6 +27,10 @@ struct SettingsView: View {
 
             Section {
                 Toggle("Write a summary with Claude", isOn: $preferences.summarizeRecordings)
+                Toggle(isOn: $preferences.keepAudio) {
+                    Text("Keep audio")
+                    Text("Saved next to the notes, about 15 MB per hour")
+                }
             } header: {
                 Text("Notes")
             } footer: {
@@ -50,7 +54,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 470)
+        .frame(width: 480, height: 520)
     }
 
     private func chooseLibrary() {
