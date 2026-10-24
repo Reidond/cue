@@ -93,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func showSettings() {
         if settingsWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 480, height: 640),
+                contentRect: NSRect(x: 0, y: 0, width: 480, height: 680),
                 styleMask: [.titled, .closable],
                 backing: .buffered, defer: false
             )
@@ -121,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             )
             window.title = "Cue"
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.contentView = NSHostingView(rootView: DashboardView(state: state, projects: state.projects, model: dashboard))
             window.center()
             window.setFrameAutosaveName("dashboard")
@@ -128,6 +129,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         NSApp.activate()
         dashboardWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// A note's audio stops with the dashboard.
+    func windowWillClose(_ notification: Notification) {
+        if notification.object as? NSWindow === dashboardWindow { state.player.load(nil, note: nil) }
     }
 
     /// Start Cue (⌘↩) for the project open in the dashboard, else the current one.
@@ -320,9 +326,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Testing aid: CUE_CONTROL=FILE. Each line appended to the file does what a click
     /// would: `new NAME` (New Project), `add PATH` (a file dropped on the open project's
     /// materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu),
-    /// `page home|upcoming|NAME|NAME/answers|NAME/notes` (a dashboard page),
-    /// `ask TEXT` (the Ask field), `assign EVENT | PROJECT` (an Upcoming call's project
-    /// picker) and `notification record|dismiss` (the latest Record / Not Now prompt).
+    /// `page home|upcoming|NAME|NAME/answers|NAME/notes` (a dashboard page), `ask TEXT`
+    /// (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript),
+    /// `assign EVENT | PROJECT` (an Upcoming call's project picker) and
+    /// `notification record|dismiss` (the latest Record / Not Now prompt).
     private func startControl(from path: String) {
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -351,6 +358,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let project = state.projects.project(named: argument) { state.startCue(project) }
         case "ask":
             state.ask(argument, force: true)
+        case "timestamp":
+            if let seconds = MarkdownView.seconds(argument) { state.player.play(from: seconds) }
         case "assign":
             let sides = argument.components(separatedBy: " | ")
             if sides.count == 2, let event = state.calendar.events.first(where: { $0.title == sides[0] }) {

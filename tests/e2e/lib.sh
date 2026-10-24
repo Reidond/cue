@@ -94,7 +94,7 @@ cue_stop() {
 }
 
 # cue_control COMMAND… — does in the running Cue what a click would (CUE_CONTROL):
-# `new NAME`, `add PATH`, `start NAME`, `project NAME`, `ask TEXT`,
+# `new NAME`, `add PATH`, `start NAME`, `project NAME`, `ask TEXT`, `timestamp HH:MM:SS`,
 # `page home|upcoming|NAME|NAME/answers|NAME/notes` for the dashboard,
 # `assign EVENT | PROJECT` (quote it) and `notification record|dismiss`.
 cue_control() { echo "$*" >> "$CASE_DIR/control"; }
@@ -194,6 +194,13 @@ _dashboard_shows() {
     [[ -s $png ]] && ocr "$png" > "$CASE_DIR/page.txt" && grep -q -i -E -- "$1" "$CASE_DIR/page.txt"
 }
 
+# audio_length FILE — its length in seconds, as afinfo reads it.
+audio_length() { afinfo "$1" 2> /dev/null | awk '/estimated duration:/ { print $3 }'; }
+
+# audio_sync AUDIO TIMELINE [SIDE…] — succeeds when the recording has each line of a dialogue's
+# timeline.tsv (of those SIDEs) where the timeline puts it, and silence elsewhere; prints what it measured.
+audio_sync() { "$E2E_BIN/audio-sync" "$@"; }
+
 # Waits for CUE_SNAPSHOT to write a PNG and prints its text.
 snapshot_text() {
     wait_for "snapshot $1" 20 test -s "$1"
@@ -218,3 +225,9 @@ assert_not_contains() {
 }
 
 assert_eq() { [[ $1 == "$2" ]] || fail "${3:-expected '$2', got '$1'}"; }
+
+# assert_between NUMBER LOW HIGH [MESSAGE] — LOW ≤ NUMBER ≤ HIGH, decimals allowed.
+assert_between() {
+    awk -v n="$1" -v low="$2" -v high="$3" 'BEGIN { exit !(n != "" && n >= low && n <= high) }' \
+        || fail "${4:-expected $1 to be between $2 and $3}"
+}

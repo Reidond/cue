@@ -6,17 +6,26 @@ import SwiftUI
 /// Foundation's Markdown parser.
 struct MarkdownView: View {
     let markdown: String
+    /// Makes the speaker lines' timestamps clickable; called with the offset in seconds.
+    var onTimestamp: ((TimeInterval) -> Void)?
 
     var body: some View {
         let document = MarkdownDocument(markdown)
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(document.blocks.enumerated()), id: \.offset) { index, block in
-                BlockView(block: block)
+                BlockView(block: block, onTimestamp: onTimestamp)
                     .padding(.top, index == 0 ? 0 : block.spacingAbove)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .modifier(Selectable())
+    }
+
+    /// A transcript timestamp in seconds: "00:01:05" or "1:05" → 65.
+    static func seconds(_ time: String) -> TimeInterval? {
+        let parts = time.split(separator: ":", omittingEmptySubsequences: false).map { Double($0) }
+        guard (2...3).contains(parts.count), !parts.contains(nil) else { return nil }
+        return parts.reduce(0) { $0 * 60 + $1! }
     }
 }
 
@@ -61,13 +70,14 @@ struct MarkdownDocument {
     init(_ text: String) {
         var lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")[...]
 
-        // YAML front matter shown as a compact metadata row; the title repeats as the H1.
+        // YAML front matter shown as a compact metadata row; the title (and the event it is named
+        // after) repeats as the H1 and the audio has its own player.
         if lines.first == "---", let end = lines.dropFirst().firstIndex(of: "---") {
             let pairs = lines[lines.startIndex + 1..<end].compactMap { line -> (key: String, value: String)? in
                 guard let colon = line.firstIndex(of: ":") else { return nil }
                 let key = line[..<colon].trimmingCharacters(in: .whitespaces)
                 let value = line[line.index(after: colon)...].trimmingCharacters(in: CharacterSet.whitespaces.union(["\""]))
-                return key == "title" || key == "event" || value.isEmpty || value == "[]" ? nil : (key, value)
+                return ["title", "event", "audio"].contains(key) || value.isEmpty || value == "[]" ? nil : (key, value)
             }
             if !pairs.isEmpty { blocks.append(.metadata(pairs)) }
             lines = lines[(end + 1)...]
@@ -126,6 +136,7 @@ struct MarkdownDocument {
 
 private struct BlockView: View {
     let block: MarkdownBlock
+    let onTimestamp: ((TimeInterval) -> Void)?
 
     var body: some View {
         switch block {
@@ -166,7 +177,16 @@ private struct BlockView: View {
         case .speaker(let time, let name):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(name).font(.body.weight(.semibold))
-                Text(time).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                if let onTimestamp, let seconds = MarkdownView.seconds(time) {
+                    Button(time) { onTimestamp(seconds) }
+                        .buttonStyle(.plain)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tint)
+                        .pointerStyle(.link)
+                        .help("Play from \(time)")
+                } else {
+                    Text(time).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
             }
         case .rule:
             Divider()

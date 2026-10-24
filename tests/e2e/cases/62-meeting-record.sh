@@ -44,6 +44,8 @@ assert_contains "$notes" '^title: "Weekly design sync"$'
 assert_contains "$notes" '^event: "Weekly design sync"$'
 assert_contains "$notes" '^attendees: \["Olena Mulesa", "Petro Ivanenko"\]$'
 assert_contains "$notes" '^project: "Research"$'
+assert_contains "$notes" '^audio: "[0-9 .-]+ – Weekly design sync\.m4a"$'
+assert_file "${notes%.md}.m4a" "the call's audio is kept next to the note, under the event's name"
 assert_contains "$notes" "^# Weekly design sync$"
 assert_contains "$notes" "onboarding screens"
 assert_contains "$notes" "Thursday"

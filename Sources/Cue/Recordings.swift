@@ -12,11 +12,15 @@ final class CallRecorder: ObservableObject {
 
     var isRecording: Bool { startedAt != nil && !stopping }
 
-    func start() {
+    /// Returns the start, which is also where the call's audio begins.
+    @discardableResult
+    func start() -> Date {
+        let now = Date()
         lines = []
         endedAt = nil
         stopping = false
-        startedAt = Date()
+        startedAt = now
+        return now
     }
 
     func add(_ utterance: Utterance) {
@@ -24,9 +28,13 @@ final class CallRecorder: ObservableObject {
         lines.append(utterance)
     }
 
-    func beginStop() {
-        endedAt = Date()
+    /// Returns the end of the recording.
+    @discardableResult
+    func beginStop() -> Date {
+        let now = Date()
+        endedAt = now
         stopping = true
+        return now
     }
 
     func finish() -> CallTranscript? {
@@ -78,19 +86,26 @@ struct RecordingFile: Identifiable, Hashable {
     let title: String
     let date: Date
     let duration: String
+    /// The call's audio next to the note (front matter `audio:`), if it was kept and is still there.
+    let audio: URL?
 
     static let transcriptMarker = "<!-- transcript -->"
 
     /// Folder name of the project the note belongs to (`<project>/Notes/<note>.md`).
     var projectID: String { url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent }
 
+    /// Each side of the call on its own (`mic.wav`, `call.wav`), there while the note is being processed.
+    var workingAudio: URL { AudioRecorder.workingFolder(startedAt: date) }
+
     static func load(_ url: URL) -> RecordingFile? {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         let front = frontMatter(text)
         guard let stamp = front["date"], let date = ISO8601DateFormatter().date(from: stamp) else { return nil }
         let project = url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent
+        let audio = front["audio"].map { url.deletingLastPathComponent().appendingPathComponent($0) }
         return RecordingFile(url: url, id: id(project: project, stamp: stamp), title: front["title"] ?? url.deletingPathExtension().lastPathComponent,
-                             date: date, duration: front["duration"] ?? "")
+                             date: date, duration: front["duration"] ?? "",
+                             audio: audio.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil })
     }
 
     static func id(project: String, stamp: String) -> String { "\(project)/\(stamp)" }
@@ -178,9 +193,11 @@ final class RecordingStore: ObservableObject {
         return text
     }
 
-    /// Writes the transcript into the project's notes right away so nothing is lost, then summarizes it.
-    /// A call recorded for a calendar event is named after the event and lists its attendees.
-    func save(_ transcript: CallTranscript, into project: Project, meeting: MeetingDetails? = nil) -> String? {
+    /// Writes the transcript into the project's notes right away so nothing is lost, puts the call's
+    /// audio next to it (with Keep audio on), then summarizes it. A call recorded for a calendar
+    /// event is named after the event and lists its attendees.
+    func save(_ transcript: CallTranscript, into project: Project, meeting: MeetingDetails? = nil,
+              audio: AudioRecorder.Recording? = nil) -> String? {
         let lexicon = project.lexicon
         let speaker = preferences.speakerName.isEmpty ? "You" : preferences.speakerName
         let names: (Channel) -> String = { $0 == .me ? speaker : lexicon.participant }
@@ -192,13 +209,36 @@ final class RecordingStore: ObservableObject {
         let summarize = preferences.summarizeRecordings
         let folder = project.notesFolder
         let event = meeting.map { "\nevent: \(RecordingFile.quoted($0.title))\nattendees: \(RecordingFile.list($0.attendees))" } ?? ""
+        let url = folder.appendingPathComponent(Self.fileName(date: transcript.startedAt, title: meeting?.title ?? "Call"))
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        } catch {
+            NSAlert(error: error).runModal()
+            return nil
+        }
+
+        // The mixed audio goes next to the note, under the same name; the working copies stay for processing.
+        var audioFile: URL?
+        if let mixed = audio?.mixed, preferences.keepAudio {
+            let target = url.deletingPathExtension().appendingPathExtension("m4a")
+            do {
+                if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
+                try FileManager.default.moveItem(at: mixed, to: target)
+                audioFile = target
+            } catch {
+                log.write("⚠︎ Couldn't save the audio: \(error.localizedDescription)")
+            }
+        } else if let mixed = audio?.mixed {
+            try? FileManager.default.removeItem(at: mixed)
+        }
+
         let document = """
         ---
         title: \(RecordingFile.quoted(title))
         date: \(stamp)
         duration: \(duration.isEmpty ? "<1 min" : duration)
         participants: \(speaker), \(lexicon.participant)
-        project: \(RecordingFile.quoted(project.name))\(event)
+        project: \(RecordingFile.quoted(project.name))\(event)\(audioFile.map { "\naudio: \(RecordingFile.quoted($0.lastPathComponent))" } ?? "")
         ---
 
         # \(title)
@@ -211,22 +251,47 @@ final class RecordingStore: ObservableObject {
         \(transcript.markdown(names: names))
 
         """
-        let url = folder.appendingPathComponent(Self.fileName(date: transcript.startedAt, title: meeting?.title ?? "Call"))
         do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try document.write(to: url, atomically: true, encoding: .utf8)
         } catch {
             NSAlert(error: error).runModal()
             return nil
         }
         log.write("🎙 Transcript saved: \(url.path)")
+        if let audio {
+            let length = Self.clock(audio.duration)
+            if let error = audio.error { log.write("⚠︎ Audio incomplete: \(error.localizedDescription)") }
+            if let audioFile {
+                log.write("🔊 Audio saved: \(audioFile.path) (\(length))")
+            } else if !preferences.keepAudio {
+                log.write("🔊 Audio not kept (Keep audio is off): \(length)")
+            }
+            log.write("🎚 Working audio: \(audio.folder.path) (\(AudioRecorder.micFile), \(AudioRecorder.callFile))")
+        }
         reload()
         if summarize {
             self.summarize(id, transcript: transcript.plainText(names: names))
         } else {
-            log.write("📝 Notes ready: \(url.path)")
+            notesReady(url, startedAt: transcript.startedAt)
         }
         return id
+    }
+
+    /// The last step a new note goes through: its working audio is no longer needed.
+    private func notesReady(_ url: URL, startedAt: Date) {
+        // Tests and the session log both wait for "Notes ready".
+        log.write("📝 Notes ready: \(url.path)")
+        let working = AudioRecorder.workingFolder(startedAt: startedAt)
+        if FileManager.default.fileExists(atPath: working.path), (try? FileManager.default.removeItem(at: working)) != nil {
+            log.write("🧹 Working audio removed: \(working.path)")
+        }
+    }
+
+    /// 0:42, 12:05 or 1:02:03.
+    nonisolated static func clock(_ seconds: TimeInterval) -> String {
+        let seconds = max(0, Int(seconds.rounded()))
+        return seconds >= 3600 ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+            : String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     /// (Re)generates the summary of a saved recording.
@@ -255,9 +320,8 @@ final class RecordingStore: ObservableObject {
         summarizers[id] = nil
         liveSummary[id] = nil
         guard let file = file(id), let text = try? String(contentsOf: file.url, encoding: .utf8) else { return }
-        // Tests and the session log both wait for "Notes ready".
         defer {
-            log.write("📝 Notes ready: \((self.file(id)?.url ?? file.url).path)")
+            notesReady(self.file(id)?.url ?? file.url, startedAt: file.date)
             onNotesReady(id)
         }
         switch result {
@@ -273,11 +337,19 @@ final class RecordingStore: ObservableObject {
                                                    with: "title: \"\(title.replacingOccurrences(of: "\"", with: "\\\""))\"")
             updated = updated.replacingOccurrences(of: "\n# \(file.title)\n", with: "\n# \(title)\n")
             let renamed = file.url.deletingLastPathComponent().appendingPathComponent(Self.fileName(date: file.date, title: title))
+            let rename = renamed != file.url && !FileManager.default.fileExists(atPath: renamed.path)
+            // The audio takes the note's new name too.
+            if rename, let audio = file.audio {
+                let renamedAudio = renamed.deletingPathExtension().appendingPathExtension(audio.pathExtension)
+                if !FileManager.default.fileExists(atPath: renamedAudio.path),
+                   (try? FileManager.default.moveItem(at: audio, to: renamedAudio)) != nil {
+                    updated = updated.replacingOccurrences(of: "\naudio: \(RecordingFile.quoted(audio.lastPathComponent))\n",
+                                                           with: "\naudio: \(RecordingFile.quoted(renamedAudio.lastPathComponent))\n")
+                }
+            }
             do {
                 try updated.write(to: file.url, atomically: true, encoding: .utf8)
-                if renamed != file.url, !FileManager.default.fileExists(atPath: renamed.path) {
-                    try FileManager.default.moveItem(at: file.url, to: renamed)
-                }
+                if rename { try FileManager.default.moveItem(at: file.url, to: renamed) }
             } catch {
                 failures[id] = error.localizedDescription
             }
@@ -285,10 +357,12 @@ final class RecordingStore: ObservableObject {
         reload()
     }
 
+    /// Moves the note and its audio to the Trash; working audio, if it is still being processed, is deleted.
     func moveToTrash(_ id: String) {
         guard let file = file(id) else { return }
         summarizers[id]?.terminate()
-        NSWorkspace.shared.recycle([file.url]) { [weak self] _, _ in
+        try? FileManager.default.removeItem(at: file.workingAudio)
+        NSWorkspace.shared.recycle([file.url] + (file.audio.map { [$0] } ?? [])) { [weak self] _, _ in
             Task { @MainActor in self?.reload() }
         }
     }
