@@ -110,8 +110,21 @@ field at the bottom. Drag the top bar to move Cue.
 
 Press ⌃⌥R, the record button in Cue's top bar, or **Start Recording** in the menu
 bar. While recording, the button turns into a red timer and the menu bar icon
-turns red. When you stop, Cue saves the transcript right away, opens the note
-in the dashboard and streams the summary in as Claude writes it.
+turns red. When you stop, Cue saves the transcript right away and opens the
+note in the dashboard, where a list shows the steps it goes through next:
+
+1. **Saving audio** — the call's audio goes next to the note.
+2. **Improving transcript** — the live transcript is written phrase by phrase
+   and gets words wrong that the rest of the call makes obvious («дотатниці»
+   for «до п'ятниці»). Whisper now reads each side's whole recording again,
+   with beam search and the project's language, occasion and names and terms,
+   and its transcript replaces the live one — each line still at the moment it
+   was said. This takes about 6 minutes per hour of call on an M2 Pro, and runs
+   at background priority, so a call you start meanwhile isn't slowed down.
+3. **Writing summary** — Claude's summary streams in as it is written.
+
+If a step fails, the note keeps what it had (the live transcript, say) and the
+list stays on the page with the reason; the other steps run all the same.
 
 Notes go into the current project's `Notes/` folder (a recording made before
 any project exists goes into **Meetings**), as plain Markdown files named
@@ -144,9 +157,13 @@ audio: "2026-10-24 14.05 – Weekly sync with the design team.m4a"
 …
 ```
 
-The summary and its headings are written in the language of the call. Use
-**Summarize Again** on the note to regenerate it; the transcript
-is kept as is. The files open in any Markdown editor (Obsidian, iA Writer, …).
+The summary and its headings are written in the language of the call, with
+the names and terms spelled the way the project has them. It is about the
+conversation only: Claude is told never to comment on the transcript or on
+speech recognition, and remarks like «(у транскрипті — „дотатниці“…)» that slip
+through anyway are dropped (the words that give them away are listed per
+language in `Resources/lexicons/`). Use **Summarize Again** on the note to
+regenerate it; the transcript is kept as is. The files open in any Markdown editor (Obsidian, iA Writer, …).
 
 The call's audio — your microphone and the call mixed, about 15 MB per hour —
 is saved next to the note under the same name (`.m4a`, AAC) and renamed or
@@ -237,7 +254,8 @@ to `cue.png`, the dashboard to `cue-dashboard.png`, Settings to
 `cue-settings.png` (layout and text only, in the light appearance — the glass is
 composited by the window server, so the overlay is rendered from its view).
 `CUE_HOME=dir` keeps all files and settings in `dir`, `CUE_CLAUDE_BIN` swaps in
-another `claude`, `CUE_PROJECT=name` picks the project at launch, and
+another `claude` and `CUE_WHISPER_CLI` another `whisper-cli` for the second
+pass, `CUE_PROJECT=name` picks the project at launch, and
 `CUE_CONTROL=file` runs each line appended to the file as a click would
 (`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
 `ask TEXT`, `timestamp 00:00:12`, `assign EVENT | PROJECT`,

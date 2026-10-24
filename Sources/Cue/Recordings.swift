@@ -150,6 +150,39 @@ struct MeetingDetails {
     let attendees: [String]
 }
 
+/// What a new note goes through after Stop, in order; its page lists them as they happen.
+/// The live transcript is saved before any of them, so a step that fails loses nothing.
+enum NoteStep: String {
+    case savingAudio = "Saving audio"
+    case improvingTranscript = "Improving transcript"
+    case writingSummary = "Writing summary"
+
+    var title: String { rawValue }
+}
+
+struct NoteProgress: Identifiable, Equatable {
+    enum State: Equatable {
+        case pending
+        /// With how far it has got, when the step knows.
+        case running(String?)
+        case done(String?)
+        case failed(String)
+    }
+
+    let step: NoteStep
+    var state: State
+    var id: NoteStep { step }
+
+    var isFinished: Bool {
+        switch state {
+        case .done, .failed: true
+        case .pending, .running: false
+        }
+    }
+
+    var failed: Bool { if case .failed = state { true } else { false } }
+}
+
 /// Saves recordings as Markdown in each project's `Notes/` and keeps them listed, newest first.
 @MainActor
 final class RecordingStore: ObservableObject {
@@ -158,13 +191,19 @@ final class RecordingStore: ObservableObject {
     @Published private(set) var liveSummary: [String: String] = [:]
     @Published private(set) var summarizing: Set<String> = []
     @Published private(set) var failures: [String: String] = [:]
-    /// Called with a recording's id once its summary is written (or has failed).
+    /// The steps of each note being processed, by recording id; kept after processing only if one failed.
+    @Published private(set) var progress: [String: [NoteProgress]] = [:]
+    /// Called with a recording's id once its notes are ready: every step done (or failed).
     var onNotesReady: (String) -> Void = { _ in }
 
     private let preferences: Preferences
     private let projects: ProjectStore
     private let log: SessionLog
     private var summarizers: [String: Process] = [:]
+    private var secondPasses: [String: SecondPassProcess] = [:]
+    /// Second passes run one at a time: each loads the 1.6 GB speech model.
+    private var secondPassRunning = false
+    private var secondPassQueue: [CheckedContinuation<Void, Never>] = []
 
     init(preferences: Preferences, projects: ProjectStore, log: SessionLog) {
         self.preferences = preferences
@@ -188,14 +227,20 @@ final class RecordingStore: ObservableObject {
     func contents(_ id: String) -> String {
         guard let file = file(id), var text = try? String(contentsOf: file.url, encoding: .utf8) else { return "" }
         if let live = liveSummary[id] {
-            text = replacingSummary(in: text, with: Self.withoutTitle(live))
+            let remarks = (projects.project(file.projectID)?.lexicon ?? Lexicon.load("en")).transcriptRemarks
+            text = replacingSummary(in: text, with: Self.withoutTitle(Summarizer.droppingTranscriptRemarks(live, words: remarks).text))
         }
         return text
     }
 
+    /// Still going through its steps after Stop, or being summarized again.
+    func isProcessing(_ id: String) -> Bool {
+        summarizing.contains(id) || progress[id]?.contains { !$0.isFinished } == true
+    }
+
     /// Writes the transcript into the project's notes right away so nothing is lost, puts the call's
-    /// audio next to it (with Keep audio on), then summarizes it. A call recorded for a calendar
-    /// event is named after the event and lists its attendees.
+    /// audio next to it (with Keep audio on), then improves the transcript and summarizes it (see
+    /// `process`). A call recorded for a calendar event is named after the event and lists its attendees.
     func save(_ transcript: CallTranscript, into project: Project, meeting: MeetingDetails? = nil,
               audio: AudioRecorder.Recording? = nil) -> String? {
         let lexicon = project.lexicon
@@ -219,18 +264,24 @@ final class RecordingStore: ObservableObject {
 
         // The mixed audio goes next to the note, under the same name; the working copies stay for processing.
         var audioFile: URL?
-        if let mixed = audio?.mixed, preferences.keepAudio {
-            let target = url.deletingPathExtension().appendingPathExtension("m4a")
+        var steps: [NoteProgress] = []
+        if let audio, preferences.keepAudio {
             do {
+                guard let mixed = audio.mixed else { throw audio.error ?? ServiceError("Couldn't write the call's audio") }
+                let target = url.deletingPathExtension().appendingPathExtension("m4a")
                 if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
                 try FileManager.default.moveItem(at: mixed, to: target)
                 audioFile = target
+                steps.append(NoteProgress(step: .savingAudio, state: .done(Self.clock(audio.duration))))
             } catch {
                 log.write("⚠︎ Couldn't save the audio: \(error.localizedDescription)")
+                steps.append(NoteProgress(step: .savingAudio, state: .failed(error.localizedDescription)))
             }
         } else if let mixed = audio?.mixed {
             try? FileManager.default.removeItem(at: mixed)
         }
+        if audio != nil { steps.append(NoteProgress(step: .improvingTranscript, state: .pending)) }
+        if summarize { steps.append(NoteProgress(step: .writingSummary, state: .pending)) }
 
         let document = """
         ---
@@ -268,23 +319,101 @@ final class RecordingStore: ObservableObject {
             }
             log.write("🎚 Working audio: \(audio.folder.path) (\(AudioRecorder.micFile), \(AudioRecorder.callFile))")
         }
+        progress[id] = steps
         reload()
-        if summarize {
-            self.summarize(id, transcript: transcript.plainText(names: names))
-        } else {
-            notesReady(url, startedAt: transcript.startedAt)
-        }
+        Task { await process(id, transcript: transcript, in: project, names: names) }
         return id
     }
 
-    /// The last step a new note goes through: its working audio is no longer needed.
-    private func notesReady(_ url: URL, startedAt: Date) {
+    /// The steps after the live transcript is saved, one after another: each works on what the
+    /// one before left, and a step that fails leaves the note as it was for the next.
+    private func process(_ id: String, transcript live: CallTranscript, in project: Project,
+                         names: @escaping (Channel) -> String) async {
+        var transcript = live
+        if has(.improvingTranscript, id), let improved = await improve(id, transcript: live, in: project, names: names) {
+            transcript = improved
+        }
+        // Step 2 (speakers) goes here, as `.findingSpeakers`: it labels the call side's turns in
+        // `transcript` from `call.wav` and writes them with `writeTranscript`, before the summary.
+        if has(.writingSummary, id) {
+            await withCheckedContinuation { done in summarize(id, transcript: transcript.plainText(names: names)) { done.resume() } }
+        }
+        guard let file = file(id) else { return }  // moved to the Trash meanwhile
+        notesReady(id, file.url, startedAt: file.date)
+    }
+
+    /// Whisper's second pass over each side's whole recording replaces the live transcript; on failure
+    /// the live one stays. Returns the improved transcript.
+    private func improve(_ id: String, transcript live: CallTranscript, in project: Project,
+                         names: @escaping (Channel) -> String) async -> CallTranscript? {
+        await waitForSecondPass()
+        defer { secondPassFinished() }
+        guard let file = file(id) else { return nil }
+        set(.improvingTranscript, of: id, to: .running(nil))
+        log.write("🔁 Improving transcript…")
+        let child = SecondPassProcess()
+        secondPasses[id] = child
+        defer { secondPasses[id] = nil }
+        let started = Date()
+        let job = SecondPass.Job(folder: file.workingAudio, startedAt: live.startedAt, endedAt: live.endedAt,
+                                 language: project.language, prompt: project.whisperPrompt, lexicon: project.lexicon)
+        do {
+            let result = try await SecondPass.run(job, child: child) { [weak self] done in
+                Task { @MainActor in
+                    guard self?.progress[id]?.first(where: { $0.step == .improvingTranscript })?.isFinished == false else { return }
+                    self?.set(.improvingTranscript, of: id, to: .running(done.formatted(.percent.precision(.fractionLength(0)))))
+                }
+            }
+            try writeTranscript(result.transcript, names: names, of: id)
+            let took = String(format: "%.1f", Date().timeIntervalSince(started))
+            log.write("✅ Transcript improved: \(result.transcript.lines.count) segments (\(took) s for \(Self.clock(result.duration)) of audio)")
+            set(.improvingTranscript, of: id, to: .done(nil))
+            return result.transcript
+        } catch {
+            log.write("⚠︎ Couldn't improve the transcript: \(error.localizedDescription) — the live transcript is kept")
+            set(.improvingTranscript, of: id, to: .failed("\(error.localizedDescription). The live transcript is kept."))
+            return nil
+        }
+    }
+
+    private func waitForSecondPass() async {
+        guard secondPassRunning else { secondPassRunning = true; return }
+        await withCheckedContinuation { secondPassQueue.append($0) }
+    }
+
+    private func secondPassFinished() {
+        if secondPassQueue.isEmpty { secondPassRunning = false } else { secondPassQueue.removeFirst().resume() }
+    }
+
+    /// Replaces the note's transcript section.
+    private func writeTranscript(_ transcript: CallTranscript, names: (Channel) -> String, of id: String) throws {
+        guard let file = file(id), let text = try? String(contentsOf: file.url, encoding: .utf8),
+              let marker = text.range(of: RecordingFile.transcriptMarker)
+        else { throw ServiceError("The note was moved or changed") }
+        let heading = projects.project(file.projectID)?.lexicon.transcript ?? Lexicon.load("en").transcript
+        let section = "\(RecordingFile.transcriptMarker)\n## \(heading)\n\n\(transcript.markdown(names: names))\n"
+        try (String(text[..<marker.lowerBound]) + section).write(to: file.url, atomically: true, encoding: .utf8)
+        objectWillChange.send()  // the open note shows the new transcript
+    }
+
+    private func has(_ step: NoteStep, _ id: String) -> Bool { progress[id]?.contains { $0.step == step } == true }
+
+    private func set(_ step: NoteStep, of id: String, to state: NoteProgress.State) {
+        guard let index = progress[id]?.firstIndex(where: { $0.step == step }) else { return }
+        progress[id]?[index].state = state
+    }
+
+    /// The last step a new note goes through: its working audio is no longer needed, and its steps
+    /// leave the page unless one of them failed.
+    private func notesReady(_ id: String, _ url: URL, startedAt: Date) {
         // Tests and the session log both wait for "Notes ready".
         log.write("📝 Notes ready: \(url.path)")
         let working = AudioRecorder.workingFolder(startedAt: startedAt)
         if FileManager.default.fileExists(atPath: working.path), (try? FileManager.default.removeItem(at: working)) != nil {
             log.write("🧹 Working audio removed: \(working.path)")
         }
+        if progress[id]?.contains(where: \.failed) != true { progress[id] = nil }
+        onNotesReady(id)
     }
 
     /// 0:42, 12:05 or 1:02:03.
@@ -294,42 +423,51 @@ final class RecordingStore: ObservableObject {
             : String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
-    /// (Re)generates the summary of a saved recording.
-    func summarize(_ id: String, transcript: String? = nil) {
-        guard let file = file(id), !summarizing.contains(id) else { return }
+    /// (Re)generates the summary of a saved recording. Without `completion` (Summarize Again) the notes
+    /// are ready when it is done; with one, the caller has more to do and calls it.
+    func summarize(_ id: String, transcript: String? = nil, completion: (() -> Void)? = nil) {
+        guard let file = file(id), !summarizing.contains(id) else { completion?(); return }
         let saved = (try? String(contentsOf: file.url, encoding: .utf8)) ?? ""
         let text = transcript ?? Self.transcriptSection(saved)
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { completion?(); return }
         summarizing.insert(id)
         failures[id] = nil
         liveSummary[id] = ""
+        set(.writingSummary, of: id, to: .running(nil))
+        log.write("✍️ Writing summary…")
         let project = projects.project(file.projectID)
         let front = RecordingFile.frontMatter(saved)
         let meeting = front["event"].map { MeetingDetails(title: $0, attendees: RecordingFile.list(front["attendees"])) }
         let prompt = Summarizer.systemPrompt(speaker: preferences.speakerName, language: (project?.lexicon ?? Lexicon.load("en")).name,
-                                             occasion: project?.occasion ?? "", meeting: meeting)
+                                             occasion: project?.occasion ?? "", namesAndTerms: project?.vocabulary ?? "",
+                                             meeting: meeting)
         summarizers[id] = Summarizer.run(system: prompt, transcript: text, model: preferences.model, onText: { [weak self] partial in
             Task { @MainActor in if self?.summarizing.contains(id) == true { self?.liveSummary[id] = partial } }
         }, completion: { [weak self] result in
-            Task { @MainActor in self?.finishSummary(id, result) }
+            Task { @MainActor in self?.finishSummary(id, result, completion: completion) }
         })
     }
 
-    private func finishSummary(_ id: String, _ result: Result<String, Error>) {
+    private func finishSummary(_ id: String, _ result: Result<String, Error>, completion: (() -> Void)?) {
         summarizing.remove(id)
         summarizers[id] = nil
         liveSummary[id] = nil
-        guard let file = file(id), let text = try? String(contentsOf: file.url, encoding: .utf8) else { return }
+        guard let file = file(id), let text = try? String(contentsOf: file.url, encoding: .utf8) else { completion?(); return }
         defer {
-            notesReady(self.file(id)?.url ?? file.url, startedAt: file.date)
-            onNotesReady(id)
+            if let completion { completion() } else { notesReady(id, self.file(id)?.url ?? file.url, startedAt: file.date) }
         }
         switch result {
         case .failure(let error):
             failures[id] = error.localizedDescription
+            set(.writingSummary, of: id, to: .failed(error.localizedDescription))
             log.write("⚠︎ Summary failed: \(error.localizedDescription)")
             try? replacingSummary(in: text, with: "").write(to: file.url, atomically: true, encoding: .utf8)
-        case .success(let summary):
+        case .success(let written):
+            set(.writingSummary, of: id, to: .done(nil))
+            // Remarks about the transcript break the rule in the prompt; the lexicon says how they read.
+            let remarks = (projects.project(file.projectID)?.lexicon ?? Lexicon.load("en")).transcriptRemarks
+            let (summary, dropped) = Summarizer.droppingTranscriptRemarks(written, words: remarks)
+            for remark in dropped { log.write("🧽 Dropped a remark about the transcript from the summary: \(remark)") }
             // A calendar call keeps the event's title; other calls take the summary's.
             let title = RecordingFile.frontMatter(text)["event"] == nil ? Self.title(of: summary) ?? file.title : file.title
             var updated = replacingSummary(in: text, with: Self.withoutTitle(summary))
@@ -352,6 +490,7 @@ final class RecordingStore: ObservableObject {
                 if rename { try FileManager.default.moveItem(at: file.url, to: renamed) }
             } catch {
                 failures[id] = error.localizedDescription
+                set(.writingSummary, of: id, to: .failed(error.localizedDescription))
             }
         }
         reload()
@@ -361,6 +500,8 @@ final class RecordingStore: ObservableObject {
     func moveToTrash(_ id: String) {
         guard let file = file(id) else { return }
         summarizers[id]?.terminate()
+        secondPasses[id]?.terminate()
+        progress[id] = nil
         try? FileManager.default.removeItem(at: file.workingAudio)
         NSWorkspace.shared.recycle([file.url] + (file.audio.map { [$0] } ?? [])) { [weak self] _, _ in
             Task { @MainActor in self?.reload() }
@@ -369,6 +510,7 @@ final class RecordingStore: ObservableObject {
 
     func cancelAll() {
         summarizers.values.forEach { $0.terminate() }
+        secondPasses.values.forEach { $0.terminate() }
     }
 
     // MARK: Markdown surgery
@@ -416,8 +558,11 @@ final class RecordingStore: ObservableObject {
 
 /// One-shot `claude -p` run that turns a transcript into meeting notes.
 enum Summarizer {
-    static func systemPrompt(speaker: String, language: String, occasion: String, meeting: MeetingDetails? = nil) -> String {
+    /// `namesAndTerms` and `occasion` come from the note's project, `meeting` from the calendar event it was recorded for.
+    static func systemPrompt(speaker: String, language: String, occasion: String, namesAndTerms: String = "",
+                             meeting: MeetingDetails? = nil) -> String {
         let name = speaker.isEmpty ? "the user" : speaker
+        let terms = namesAndTerms.trimmingCharacters(in: .whitespacesAndNewlines)
         let event = meeting.map { meeting in
             let invited = meeting.attendees.isEmpty ? "" : " Invited: \(meeting.attendees.joined(separator: ", "))."
             return "\n\nThe call was the calendar event “\(meeting.title)”.\(invited) The transcript doesn't say which of them is speaking: use a name only where the conversation makes it clear (for example, someone is addressed by name)."
@@ -425,7 +570,9 @@ enum Summarizer {
         return """
         You turn call transcripts into concise meeting notes in Markdown.
 
-        The transcript comes from automatic speech recognition. [\(name)] is the person who recorded the call; the other label is everyone else, possibly several people. Fix obvious recognition errors from context, but never invent facts, names, numbers or commitments, and don't comment on the transcript's quality.
+        The transcript comes from automatic speech recognition. [\(name)] is the person who recorded the call; the other label is everyone else, possibly several people. Fix obvious recognition errors from context, but never invent facts, names, numbers or commitments.
+
+        Write about the conversation only, never about the transcript: no notes, anywhere, about the transcript, the recording or speech recognition — not in parentheses, not as caveats or footnotes. Where a word was misheard, write the right word as if it had been heard correctly; where something can't be made out, leave it out. For example, never write «Надіслати звіт до п'ятниці (у транскрипті — „дотатниці“, ймовірно, мається на увазі „до п'ятниці“)» — write «Надіслати звіт до п'ятниці».
 
         Write everything in the language of the conversation (usually \(language)). The headings below are in English only to show the structure: write them in the conversation's language too.
 
@@ -451,8 +598,67 @@ enum Summarizer {
         ## Open questions
         - Only if something was left unresolved.
 
-        Context the user gave about their current talk (it may not apply to this call): \(occasion.isEmpty ? "none" : occasion)\(event)
+        Context the user gave about their current talk (it may not apply to this call): \(occasion.isEmpty ? "none" : occasion)\(terms.isEmpty ? "" : "\n\nNames and terms that may come up, spelled the way the user writes them: \(terms)")\(event)
         """
+    }
+
+    /// The safety net for the rule above: drops parenthetical remarks that mention the transcript or
+    /// recognition (`words`, from the lexicon), as in «до п'ятниці (у транскрипті — „дотатниці“)».
+    /// Returns the summary and the remarks dropped.
+    static func droppingTranscriptRemarks(_ summary: String, words: [String]) -> (text: String, dropped: [String]) {
+        guard !words.isEmpty else { return (summary, []) }
+        var dropped: [String] = []
+        var lines: [String] = []
+        for line in summary.components(separatedBy: "\n") {
+            var characters = Array(line)
+            var index = 0, changed = false
+            while index < characters.count {
+                // A parenthesis right after `]` is a link's address.
+                guard characters[index] == "(", index == 0 || characters[index - 1] != "]",
+                      let close = closingParenthesis(in: characters, from: index),
+                      mentions(String(characters[index + 1..<close]), words)
+                else { index += 1; continue }
+                dropped.append(String(characters[index...close]))
+                var start = index, end = close + 1
+                // An italic remark, `_(…)_`, goes with its markers.
+                if start > 0, end < characters.count, "_*".contains(characters[start - 1]), characters[end] == characters[start - 1] {
+                    start -= 1
+                    end += 1
+                }
+                while start > 0, characters[start - 1] == " " { start -= 1 }
+                if start == 0 { while end < characters.count, characters[end] == " " { end += 1 } }
+                characters.removeSubrange(start..<end)
+                changed = true
+                index = start
+            }
+            let cleaned = String(characters)
+            // A list item or quote that was nothing but the remark goes altogether.
+            if changed, ["", "-", "*", "+", ">", "- [ ]", "- [x]"].contains(cleaned.trimmingCharacters(in: .whitespaces)) { continue }
+            lines.append(cleaned)
+        }
+        return (lines.joined(separator: "\n"), dropped)
+    }
+
+    private static func closingParenthesis(in characters: [Character], from open: Int) -> Int? {
+        var depth = 0
+        for index in open..<characters.count {
+            if characters[index] == "(" { depth += 1 }
+            if characters[index] == ")" { depth -= 1 }
+            if depth == 0 { return index }
+        }
+        return nil
+    }
+
+    /// Whether the text has one of the words, at the start of a word ("транскрипт" in «транскрипті»).
+    private static func mentions(_ text: String, _ words: [String]) -> Bool {
+        words.contains { word in
+            var range = text.startIndex..<text.endIndex
+            while let found = text.range(of: word, options: [.caseInsensitive], range: range) {
+                if found.lowerBound == text.startIndex || !text[text.index(before: found.lowerBound)].isLetter { return true }
+                range = found.upperBound..<text.endIndex
+            }
+            return false
+        }
     }
 
     /// Streams the growing summary through `onText`; returns the process so it can be cancelled.
@@ -467,9 +673,11 @@ enum Summarizer {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.currentDirectoryURL = appSupport.appendingPathComponent("run")
+        // From a file: arguments would reach Claude with «й» and «ї» decomposed (see `SecondPass.spawn`).
+        let systemFile = process.currentDirectoryURL!.appendingPathComponent("summary-\(UUID().uuidString).md")
         process.arguments = [
             "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-            "--model", model.rawValue, "--system-prompt", system,
+            "--model", model.rawValue, "--system-prompt-file", systemFile.path,
             "--tools", "", "--strict-mcp-config", "--setting-sources", "",
             "--disable-slash-commands", "--no-session-persistence",
         ]
@@ -479,8 +687,10 @@ enum Summarizer {
         process.standardError = FileHandle.nullDevice
         do {
             try FileManager.default.createDirectory(at: process.currentDirectoryURL!, withIntermediateDirectories: true)
+            try system.write(to: systemFile, atomically: true, encoding: .utf8)
             try process.run()
         } catch {
+            try? FileManager.default.removeItem(at: systemFile)
             completion(.failure(error))
             return nil
         }
@@ -515,6 +725,7 @@ enum Summarizer {
                 }
             }
             process.waitUntilExit()
+            try? FileManager.default.removeItem(at: systemFile)
             if !finished {
                 completion(.failure(ServiceError(process.terminationReason == .uncaughtSignal ? "Summary cancelled" : "Claude stopped before finishing")))
             }

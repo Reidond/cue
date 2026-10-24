@@ -81,9 +81,13 @@ struct Lexicon: Decodable {
     var sourceLabel: String
     var participantLabel: String?
     var transcriptHeading: String?
+    /// Words that give away a remark about the transcript or speech recognition ("transcript",
+    /// "misheard"): a summary's parenthetical remarks with one are dropped.
+    var transcriptRemarkWords: [String]?
 
     var participant: String { participantLabel ?? "Participant" }
     var transcript: String { transcriptHeading ?? "Transcript" }
+    var transcriptRemarks: [String] { transcriptRemarkWords ?? [] }
 
     private static var cache: [String: Lexicon] = [:]
     private static let lock = NSLock()
@@ -100,10 +104,11 @@ struct Lexicon: Decodable {
                                               hallucinations: english.hallucinations, questionLabels: english.questionLabels,
                                               answerLabels: english.answerLabels, thanksPrefix: "", defaultOpener: "",
                                               numbersLabel: english.numbersLabel, sourceLabel: english.sourceLabel)
-        // Prepared materials are often in English even when the talk is not.
+        // Prepared materials are often in English even when the talk is not (and so can be an aside in a summary).
         if code != "en" {
             lexicon.questionLabels += english.questionLabels
             lexicon.answerLabels += english.answerLabels
+            lexicon.transcriptRemarkWords = lexicon.transcriptRemarks + english.transcriptRemarks
         }
         cache[code] = lexicon
         return lexicon

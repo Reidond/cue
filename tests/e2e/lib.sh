@@ -59,6 +59,11 @@ need_whisper() {
     [[ -x /opt/homebrew/bin/whisper-server || -x /usr/local/bin/whisper-server ]] || skip "whisper-server not installed"
 }
 need_real_claude() { [[ $E2E_CLAUDE == real ]] || skip "needs --real-claude"; }
+# need_whisper_cli — the second pass's whisper-cli; its path is then in $WHISPER_CLI.
+need_whisper_cli() {
+    WHISPER_CLI=$(ls /opt/homebrew/bin/whisper-cli /usr/local/bin/whisper-cli 2> /dev/null | head -n 1)
+    [[ -x $WHISPER_CLI ]] || skip "whisper-cli not installed"
+}
 need_voice() { say -v '?' | grep -q -E "^$1( |\\()" || skip "voice '$1' is not installed"; }
 
 # MARK: Driving Cue
@@ -115,6 +120,21 @@ log_count() { grep -c -E -- "$1" "$(session_log)"; }
 
 cue_alive() { [[ -n $CUE_PID ]] && kill -0 "$CUE_PID" 2> /dev/null; }
 
+# whisper_cli_spy [SECONDS] — writes $CASE_DIR/whisper-cli, for CUE_WHISPER_CLI: it notes how Cue runs
+# it (the arguments, one per line, in whisper-args.txt; its scheduling priority in whisper-priority.txt),
+# takes SECONDS longer if given, as a long call would, and runs the real whisper-cli.
+whisper_cli_spy() {
+    need_whisper_cli
+    cat > "$CASE_DIR/whisper-cli" << EOF
+#!/bin/bash
+printf '%s\n' "\$@" > "$CASE_DIR/whisper-args.txt"
+sleep ${1:-0.5}
+ps -o pri= -p \$\$ | tr -d ' ' > "$CASE_DIR/whisper-priority.txt"
+exec "$WHISPER_CLI" "\$@"
+EOF
+    chmod +x "$CASE_DIR/whisper-cli"
+}
+
 # cue_cli ARGS… — the app's command-line modes (--inspect, --render, …).
 cue_cli() { CUE_NO_LIVE_AUDIO=1 "$CUE_BIN" "$@"; }
 
@@ -152,6 +172,9 @@ ready_notes() { grep -o 'Notes ready: .*' "$(session_log)" | tail -n 1 | cut -c 
 
 # Every Markdown note under the sandbox's Documents (materials excluded).
 find_notes() { find "$CUE_HOME/Documents" -name '*.md' -not -path '*/Materials/*' | sort; }
+
+# summary_of NOTES — a note's summary: from its title to the transcript.
+summary_of() { sed -n '/^# /,/^<!-- transcript -->$/p' "$1" | sed '$d'; }
 
 # claude_requests KIND — what Cue sent the fake claude: answer-system, ask,
 # summary-system or summary-input (all requests of that kind, oldest first).
