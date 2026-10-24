@@ -45,6 +45,7 @@ private struct ControlBar: View {
             if state.answers.count > 1 {
                 HistoryControl(state: state)
             }
+            RecordControl(state: state)
             Toggle("Auto", isOn: $profile.autoAnswer)
                 .toggleStyle(.switch)
                 .controlSize(.mini)
@@ -61,6 +62,31 @@ private struct ControlBar: View {
         .contentShape(.capsule)
         .gesture(WindowDragGesture())  // the bar is the handle for moving the overlay
         .glassEffect(.regular, in: .capsule)
+    }
+}
+
+/// Record button; while recording it turns into a red timer that stops on click.
+private struct RecordControl: View {
+    @ObservedObject var state: AppState
+
+    var body: some View {
+        if let started = state.recorder.startedAt {
+            Button(action: state.stopRecording) {
+                HStack(spacing: 5) {
+                    Image(systemName: state.recorder.stopping ? "hourglass" : "stop.circle.fill")
+                        .foregroundStyle(.red)
+                    ElapsedTime(since: started).font(.callout)
+                }
+                .frame(height: 28)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.borderless)
+            .disabled(state.recorder.stopping)
+            .help("Stop recording and write the notes (⌃⌥R)")
+            .accessibilityLabel("Stop recording")
+        } else {
+            IconButton(symbol: "record.circle", help: "Record this call (⌃⌥R)", action: state.toggleRecording)
+        }
     }
 }
 

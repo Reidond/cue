@@ -20,5 +20,7 @@
   "thanksPrefix": "Дякую за запитання. ",
   "defaultOpener": "Дякую за запитання. Дозвольте коротко пояснити.",
   "numbersLabel": "Цифри",
-  "sourceLabel": "Джерело"
+  "sourceLabel": "Джерело",
+  "participantLabel": "Учасник",
+  "transcriptHeading": "Транскрипт"
 }

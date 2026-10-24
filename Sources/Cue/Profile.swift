@@ -39,6 +39,8 @@ final class Profile: ObservableObject {
     @Published var micQuestions: Bool { didSet { defaults.set(micQuestions, forKey: "micQuestions") } }
     @Published var showTranscript: Bool { didSet { defaults.set(showTranscript, forKey: "showTranscript") } }
     @Published var textSize: Double { didSet { defaults.set(textSize, forKey: "textSize") } }
+    @Published var recordingsFolder: URL { didSet { defaults.set(recordingsFolder.path, forKey: "recordingsFolder") } }
+    @Published var summarizeRecordings: Bool { didSet { defaults.set(summarizeRecordings, forKey: "summarizeRecordings") } }
 
     init() {
         speakerName = defaults.string(forKey: "speakerName") ?? NSFullUserName()
@@ -51,6 +53,9 @@ final class Profile: ObservableObject {
         micQuestions = defaults.bool(forKey: "micQuestions")
         showTranscript = defaults.object(forKey: "showTranscript") as? Bool ?? true
         textSize = defaults.object(forKey: "textSize") as? Double ?? 15
+        recordingsFolder = defaults.string(forKey: "recordingsFolder").map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Cue Recordings")
+        summarizeRecordings = defaults.object(forKey: "summarizeRecordings") as? Bool ?? true
     }
 
     var language: SpokenLanguage { .named(languageCode) }
@@ -82,6 +87,11 @@ struct Lexicon: Decodable {
     var defaultOpener: String
     var numbersLabel: String
     var sourceLabel: String
+    var participantLabel: String?
+    var transcriptHeading: String?
+
+    var participant: String { participantLabel ?? "Participant" }
+    var transcript: String { transcriptHeading ?? "Transcript" }
 
     private static var cache: [String: Lexicon] = [:]
     private static let lock = NSLock()

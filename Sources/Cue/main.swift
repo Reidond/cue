@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Carbon
 import SwiftUI
 
@@ -15,6 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var state = AppState(profile: profile)
     private var panel: OverlayPanel!
     private var settingsWindow: NSWindow?
+    private var recordingsWindow: NSWindow?
+    private var recordingSelection = RecordingSelection()
+    private var recordingObserver: Any?
     private var statusItem: NSStatusItem!
     private var signalSources: [DispatchSourceSignal] = []
 
@@ -55,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.orderFrontRegardless()
 
         state.openSettings = { [weak self] in self?.showSettings() }
+        state.openRecordings = { [weak self] id in self?.showRecordings(selecting: id) }
         setUpStatusItem()
         setUpHotKeys()
         state.start()
@@ -88,8 +93,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
+    func showRecordings(selecting id: String? = nil) {
+        if let id { recordingSelection.id = id }
+        if recordingsWindow == nil {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 980, height: 680),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                backing: .buffered, defer: false
+            )
+            window.title = "Recordings"
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: RecordingsWindowContent(state: state, selection: recordingSelection))
+            window.center()
+            window.setFrameAutosaveName("recordings")
+            recordingsWindow = window
+        }
+        state.recordings.reload()
+        NSApp.activate()
+        recordingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
     private func setUpHotKeys() {
         HotKeys.register(keyCode: kVK_Return) { [weak self] in self?.state.answerNow() }
+        HotKeys.register(keyCode: kVK_ANSI_R) { [weak self] in self?.state.toggleRecording() }
         HotKeys.register(keyCode: kVK_ANSI_H) { [weak self] in self?.toggleOverlay() }
         HotKeys.register(keyCode: kVK_ANSI_A) { [weak self] in self?.profile.autoAnswer.toggle() }
         HotKeys.register(keyCode: kVK_LeftArrow) { [weak self] in self?.state.step(-1) }
@@ -110,18 +136,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "Show or Hide Cue  ⌃⌥H", action: #selector(menuToggle), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Answer Now  ⌃⌥⏎", action: #selector(menuAnswer), keyEquivalent: "").target = self
+        let record = menu.addItem(withTitle: "Start Recording  ⌃⌥R", action: #selector(menuRecord), keyEquivalent: "")
+        record.target = self
+        menu.addItem(withTitle: "Recordings…", action: #selector(menuRecordings), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(menuSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Restart Claude", action: #selector(menuRestart), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Cue", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
+
+        // The menu bar icon turns red while recording, even with the overlay hidden.
+        recordingObserver = state.recorder.$startedAt.sink { [weak self] started in
+            self?.statusItem.button?.contentTintColor = started == nil ? nil : .systemRed
+            record.title = started == nil ? "Start Recording  ⌃⌥R" : "Stop Recording  ⌃⌥R"
+        }
     }
 
     @objc private func menuToggle() { toggleOverlay() }
     @objc private func menuAnswer() { state.answerNow() }
     @objc private func menuSettings() { showSettings() }
     @objc private func menuRestart() { state.restartClaude() }
+    @objc private func menuRecord() { state.toggleRecording() }
+    @objc private func menuRecordings() { showRecordings() }
 
     /// Testing aid: renders the overlay (and Settings, when open) to PNGs every 2 s.
     /// Offscreen rendering shows layout and text but not the glass, which the window server composites.
@@ -137,6 +174,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if self?.settingsWindow?.isVisible == true {
                     write(self?.settingsWindow?.contentView, to: path.replacingOccurrences(of: ".png", with: "-settings.png"))
                 }
+                if self?.recordingsWindow?.isVisible == true {
+                    write(self?.recordingsWindow?.contentView, to: path.replacingOccurrences(of: ".png", with: "-recordings.png"))
+                }
             }
         }
     }
@@ -150,6 +190,36 @@ if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "--inspect" {
         print("\(document.name): \(document.error ?? document.summary)")
         for item in document.prepared {
             print("  Q\(item.who.map { " (\($0))" } ?? ""): \(item.q.prefix(90))\n  A: \(item.a.prefix(90))")
+        }
+    }
+    exit(0)
+}
+
+/// Lets the app pick which recording the library shows (e.g. the one just saved).
+@MainActor
+final class RecordingSelection: ObservableObject {
+    @Published var id: String?
+}
+
+private struct RecordingsWindowContent: View {
+    let state: AppState
+    @ObservedObject var selection: RecordingSelection
+
+    var body: some View {
+        RecordingsView(store: state.recordings, state: state, selection: $selection.id)
+    }
+}
+
+/// `Cue --render NOTES.md OUT.png` renders Markdown the way the Recordings window does.
+if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--render" {
+    MainActor.assumeIsolated {
+        let markdown = (try? String(contentsOfFile: CommandLine.arguments[2], encoding: .utf8)) ?? ""
+        let view = MarkdownView(markdown: markdown).padding(32).frame(width: 760).background(.white)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: CommandLine.arguments[3]))
         }
     }
     exit(0)

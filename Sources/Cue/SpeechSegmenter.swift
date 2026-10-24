@@ -9,7 +9,7 @@ final class SpeechSegmenter {
         case onset
         case partial([Float])
         /// Empty audio means the utterance was too short to transcribe.
-        case final([Float], speechEnded: Date)
+        case final([Float], speechStarted: Date, speechEnded: Date)
     }
 
     var onEvent: ((Event) -> Void)?
@@ -34,6 +34,7 @@ final class SpeechSegmenter {
     private var speechFrames = 0
     private var framesSincePartial = 0
     private var noiseFloor: Float = 0.002
+    private var speechStarted = Date()
 
     func push(_ samples: [Float]) {
         pending.append(contentsOf: samples)
@@ -68,6 +69,7 @@ final class SpeechSegmenter {
                 speechFrames = voicedRun
                 silentRun = 0
                 framesSincePartial = 0
+                speechStarted = Date().addingTimeInterval(-Double(voicedRun * frameSize) / whisperSampleRate)
                 onEvent?(.onset)
             }
             return
@@ -99,6 +101,6 @@ final class SpeechSegmenter {
         voicedRun = 0
         silentRun = 0
         speechFrames = 0
-        onEvent?(.final(enoughSpeech ? audio : [], speechEnded: speechEnded))
+        onEvent?(.final(enoughSpeech ? audio : [], speechStarted: speechStarted, speechEnded: speechEnded))
     }
 }

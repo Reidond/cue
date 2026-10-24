@@ -12,6 +12,8 @@ struct Utterance: Identifiable {
     let id = UUID()
     let channel: Channel
     let text: String
+    let started: Date
+    /// When the speaker stopped.
     let time: Date
 }
 
@@ -57,6 +59,8 @@ struct ServiceStatus: Equatable {
 final class AppState: ObservableObject {
     let profile: Profile
     let downloader = ModelDownloader()
+    let recorder = CallRecorder()
+    let recordings: RecordingStore
 
     @Published var utterances: [Utterance] = []
     @Published var partial: [Channel: String] = [:]
@@ -72,6 +76,7 @@ final class AppState: ObservableObject {
     @Published private(set) var readingMaterials = false
 
     var openSettings: () -> Void = {}
+    var openRecordings: (_ selecting: String?) -> Void = { _ in }
 
     private var whisperService = WhisperService()
     private var claudeService: ClaudeService?
@@ -87,6 +92,7 @@ final class AppState: ObservableObject {
 
     init(profile: Profile) {
         self.profile = profile
+        recordings = RecordingStore(profile: profile)
     }
 
     var current: Answer? { answers.indices.contains(selected) ? answers[selected] : nil }
@@ -135,6 +141,7 @@ final class AppState: ObservableObject {
     }
 
     func shutdown() {
+        recordings.cancelAll()
         micCapture.stop()
         systemCapture.stop()
         claudeService?.stop()
@@ -166,8 +173,11 @@ final class AppState: ObservableObject {
             .sink { [weak self] model in self?.restartClaude(model: model) }
             .store(in: &subscriptions)
 
-        // Re-publish so the overlay's status line follows the download.
+        // Re-publish so the overlay follows the download and the recorder.
         downloader.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &subscriptions)
+        recorder.objectWillChange
             .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &subscriptions)
     }
@@ -258,7 +268,18 @@ final class AppState: ObservableObject {
         Task {
             while !claude.ok { try? await Task.sleep(for: .milliseconds(300)) }
             do {
-                try Rehearsal.play(fileAt: path, into: { [systemSegmenter] in systemSegmenter.push($0) })
+                // CUE_REHEARSE_RECORD=1 also records the rehearsal and writes its notes.
+                let record = ProcessInfo.processInfo.environment["CUE_REHEARSE_RECORD"] == "1"
+                if record { recorder.start() }
+                var length = try Rehearsal.play(fileAt: path, into: { [systemSegmenter] in systemSegmenter.push($0) })
+                // CUE_REHEARSE_ME plays a second recording as your microphone, in parallel.
+                if let mine = ProcessInfo.processInfo.environment["CUE_REHEARSE_ME"] {
+                    length = max(length, try Rehearsal.play(fileAt: mine, into: { [micSegmenter] in micSegmenter.push($0) }))
+                }
+                if record {
+                    try? await Task.sleep(for: .seconds(length + 1))
+                    stopRecording()
+                }
             } catch {
                 call = ServiceStatus(ok: false, detail: "Rehearsal file: \(error.localizedDescription)")
             }
@@ -278,10 +299,12 @@ final class AppState: ObservableObject {
                     guard let text = await self.whisperService.transcribePartial(audio, channel: channel), !text.isEmpty else { return }
                     await MainActor.run { if self.partial[channel] != nil { self.partial[channel] = text } }
                 }
-            case .final(let audio, let speechEnded):
+            case .final(let audio, let speechStarted, let speechEnded):
                 Task {
                     let text = audio.isEmpty ? "" : await self.whisperService.transcribeFinal(audio)
-                    await MainActor.run { self.utteranceFinished(channel, text: text, speechEnded: speechEnded) }
+                    await MainActor.run {
+                        self.utteranceFinished(channel, text: text, speechStarted: speechStarted, speechEnded: speechEnded)
+                    }
                 }
             }
         }
@@ -298,14 +321,16 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func utteranceFinished(_ channel: Channel, text: String, speechEnded: Date) {
+    private func utteranceFinished(_ channel: Channel, text: String, speechStarted: Date, speechEnded: Date) {
         partial[channel] = nil
         guard !text.isEmpty, !isEcho(channel, text) else {
             if channel == .others { detector.participantsStopped(speechEnded: speechEnded) }
             return
         }
-        utterances.append(Utterance(channel: channel, text: text, time: speechEnded))
+        let utterance = Utterance(channel: channel, text: text, started: speechStarted, time: speechEnded)
+        utterances.append(utterance)
         if utterances.count > 300 { utterances.removeFirst(utterances.count - 300) }
+        recorder.add(utterance)
         log.write("**[\(promptLabel(channel))]** \(text)", at: speechEnded)
         if channel == .others || profile.micQuestions {
             detector.add(text, speechEnded: speechEnded)
@@ -327,6 +352,30 @@ final class AppState: ObservableObject {
 
     private func promptLabel(_ channel: Channel) -> String {
         channel == .me ? (profile.speakerName.isEmpty ? "Speaker" : profile.speakerName) : "Participant"
+    }
+
+    // MARK: - Recording
+
+    func toggleRecording() {
+        if recorder.isRecording { stopRecording() } else if !recorder.stopping { recorder.start() }
+    }
+
+    /// Waits for the last phrase to be transcribed, then saves and summarizes.
+    func stopRecording() {
+        guard recorder.isRecording else { return }
+        recorder.beginStop()
+        Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            guard let transcript = recorder.finish() else { return }
+            guard !transcript.lines.isEmpty else {
+                let alert = NSAlert()
+                alert.messageText = "Nothing was recorded"
+                alert.informativeText = "Cue didn't hear any speech while recording, so no notes were saved."
+                alert.runModal()
+                return
+            }
+            if let id = recordings.save(transcript) { openRecordings(id) }
+        }
     }
 
     // MARK: - Answers

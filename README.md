@@ -1,10 +1,14 @@
 # Cue
 
-A floating macOS prompter for talks, defenses and interviews. Cue listens to
-your microphone and to the call (Google Meet, Zoom, Teams — any app), notices
-when someone asks you a question and shows what to say: an instant opener,
-then a one-line answer within ~2 s, then a few short points with numbers and
-where they come from.
+A floating macOS prompter and call notetaker for talks, defenses, interviews
+and meetings. Cue listens to your microphone and to the call (Google Meet, Zoom,
+Teams — any app), notices when someone asks you a question and shows what to
+say: an instant opener, then a one-line answer within ~2 s, then a few short
+points with numbers and where they come from.
+
+It also records calls: press ⌃⌥R and Cue writes Markdown notes with a summary,
+key points, decisions, action items and the full timestamped transcript, and
+shows them in its Recordings window.
 
 Answers are grounded in your own materials. Drop in PDFs, PowerPoint decks,
 Word documents or Markdown notes; Cue reads them itself and also picks up any
@@ -63,6 +67,7 @@ signed in (`claude` in Terminal once).
 | Shortcut | Action |
 |---|---|
 | ⌃⌥⏎ | Answer now (what's being said, or the last line) |
+| ⌃⌥R | Start or stop recording the call |
 | ⌃⌥H | Show or hide Cue |
 | ⌃⌥A | Toggle automatic answers |
 | ⌃⌥← / ⌃⌥→ | Previous / next answer |
@@ -70,6 +75,49 @@ signed in (`claude` in Terminal once).
 
 Click any transcript line to get an answer for it, or type a question into the
 field at the bottom. Drag the top bar to move Cue.
+
+## Recording calls
+
+Press ⌃⌥R, the record button in Cue's top bar, or **Start Recording** in the menu
+bar. While recording, the button turns into a red timer and the menu bar icon
+turns red. When you stop, Cue saves the transcript right away, opens
+**Recordings** and streams the summary in as Claude writes it.
+
+Notes are plain Markdown files in `~/Documents/Cue Recordings` (change the
+folder in Settings), named `2026-10-24 14.05 – Title.md`:
+
+```markdown
+---
+title: "Weekly sync with the design team"
+date: 2026-10-24T11:05:00Z
+duration: 42 min
+participants: Andrii, Participant
+---
+
+# Weekly sync with the design team
+
+## Summary
+## Key points
+## Decisions
+## Action items
+- [ ] Owner: task
+## Questions and answers
+## Open questions
+
+<!-- transcript -->
+## Transcript
+
+**00:00:12 · Andrii**
+…
+```
+
+The summary and its headings are written in the language of the call. Use
+**Summarize Again** in the Recordings window to regenerate it; the transcript
+is kept as is. The files open in any Markdown editor (Obsidian, iA Writer, …).
+
+Recording is local: speech recognition runs on your Mac and only the transcript
+is sent to Claude for the summary. No audio is kept. Let people know when you
+record — consent rules vary by place.
 
 Tips:
 
@@ -88,6 +136,13 @@ build/Cue.app/Contents/MacOS/Cue --inspect slides.pptx answers.docx
 
 # Rehearsal: play a recording as the call instead of live audio
 CUE_NO_LIVE_AUDIO=1 CUE_REHEARSE_PARTICIPANT=questions.wav build/Cue.app/Contents/MacOS/Cue
+
+# A two-sided rehearsal that is also recorded and summarized
+CUE_NO_LIVE_AUDIO=1 CUE_REHEARSE_RECORD=1 CUE_REHEARSE_PARTICIPANT=call.wav CUE_REHEARSE_ME=me.wav \
+  build/Cue.app/Contents/MacOS/Cue
+
+# Render a notes file the way the Recordings window does
+build/Cue.app/Contents/MacOS/Cue --render notes.md notes.png
 ```
 
 `CUE_SNAPSHOT=/tmp/cue.png` renders the windows to PNGs every 2 s (layout and

@@ -91,6 +91,24 @@ struct SettingsView: View {
                 }
             }
 
+            Section {
+                LabeledContent("Save to") {
+                    HStack(spacing: 8) {
+                        Text(profile.recordingsFolder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundStyle(.secondary)
+                        Button("Choose…", action: chooseRecordingsFolder)
+                    }
+                }
+                Toggle("Write a summary with Claude", isOn: $profile.summarizeRecordings)
+                Button("Open Recordings") { state.openRecordings(nil) }
+            } header: {
+                Text("Recordings")
+            } footer: {
+                Text("⌃⌥R records a call. Notes are saved as Markdown with a summary and the full transcript. Let people know when you record — consent rules vary by place.")
+            }
+
             Section("Setup") {
                 ForEach(checks) { check in
                     SetupRow(check: check, downloader: downloader)
@@ -118,6 +136,16 @@ struct SettingsView: View {
         let tokens = knowledge.estimatedTokens
         let size = tokens >= 1000 ? "\(tokens / 1000)k" : "\(tokens)"
         return "~\(size) tokens · \(knowledge.prepared.count) prepared answers"
+    }
+
+    private func chooseRecordingsFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.directoryURL = profile.recordingsFolder
+        panel.prompt = "Choose"
+        if panel.runModal() == .OK, let url = panel.url { profile.recordingsFolder = url }
     }
 
     private func chooseFiles() {

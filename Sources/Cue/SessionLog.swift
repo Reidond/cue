@@ -32,7 +32,9 @@ final class SessionLog {
 /// (CUE_REHEARSE_PARTICIPANT=/path/to/audio). Handy for testing the whole
 /// pipeline with recorded questions, without Google Meet.
 enum Rehearsal {
-    static func play(fileAt path: String, into push: @escaping ([Float]) -> Void) throws {
+    /// Returns the playback length in seconds.
+    @discardableResult
+    static func play(fileAt path: String, into push: @escaping ([Float]) -> Void) throws -> TimeInterval {
         let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
         guard let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: whisperSampleRate, channels: 1, interleaved: false),
               let converter = AVAudioConverter(from: file.processingFormat, to: target),
@@ -58,5 +60,6 @@ enum Rehearsal {
                 Thread.sleep(forTimeInterval: 0.1)
             }
         }
+        return Double(samples.count) / whisperSampleRate
     }
 }

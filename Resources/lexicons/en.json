@@ -18,5 +18,7 @@
   "thanksPrefix": "Thank you for the question. ",
   "defaultOpener": "Thank you for the question. Let me briefly explain.",
   "numbersLabel": "Numbers",
-  "sourceLabel": "Source"
+  "sourceLabel": "Source",
+  "participantLabel": "Participant",
+  "transcriptHeading": "Transcript"
 }
