@@ -7,7 +7,8 @@ say: an instant opener, then a one-line answer within ~2 s, then a few short
 points with numbers and where they come from.
 
 It also records calls: press ⌃⌥R and Cue writes Markdown notes with a summary,
-key points, decisions, action items and the full timestamped transcript.
+key points, decisions, action items and the full timestamped transcript, and
+keeps the call's audio next to them.
 
 Everything is organised in **projects** — one per talk, course or series of
 calls. A project holds the occasion, the language, names and terms, your
@@ -84,7 +85,7 @@ so you can open, back up or move them:
   PhD defense/
     project.json        name, occasion, language, names & terms, created, last used
     Materials/          copies of the files you added
-    Notes/              2026-10-24 14.05 – Title.md
+    Notes/              2026-10-24 14.05 – Title.md (+ .m4a, the call's audio)
 ```
 
 When you upgrade from a version without projects, your talk settings and
@@ -123,6 +124,7 @@ date: 2026-10-24T11:05:00Z
 duration: 42 min
 participants: Andrii, Participant
 project: "PhD defense"
+audio: "2026-10-24 14.05 – Weekly sync with the design team.m4a"
 ---
 
 # Weekly sync with the design team
@@ -146,9 +148,18 @@ The summary and its headings are written in the language of the call. Use
 **Summarize Again** on the note to regenerate it; the transcript
 is kept as is. The files open in any Markdown editor (Obsidian, iA Writer, …).
 
+The call's audio — your microphone and the call mixed, about 15 MB per hour —
+is saved next to the note under the same name (`.m4a`, AAC) and renamed or
+moved to the Trash with it. An open note has a player on top (play/pause, a
+scrubber, 1× / 1.5× / 2×), and clicking a timestamp in the transcript plays
+from that moment. Turn off **Keep audio** in Settings to keep text only. While
+a note is being processed, each side is also kept on its own in
+`~/Library/Application Support/Cue/recordings/`, and deleted once the notes are
+ready.
+
 Recording is local: speech recognition runs on your Mac and only the transcript
-is sent to Claude for the summary. No audio is kept. Let people know when you
-record — consent rules vary by place.
+is sent to Claude for the summary; the audio never leaves your Mac. Let people
+know when you record — consent rules vary by place.
 
 Tips:
 
@@ -197,6 +208,6 @@ composited by the window server, so the overlay is rendered from its view).
 another `claude`, `CUE_PROJECT=name` picks the project at launch, and
 `CUE_CONTROL=file` runs each line appended to the file as a click would
 (`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
-`ask TEXT`; see `AGENTS.md`). `CUE_ALLOW_CAPTURE=1` lets screenshots see the
+`ask TEXT`, `timestamp 00:00:12`; see `AGENTS.md`). `CUE_ALLOW_CAPTURE=1` lets screenshots see the
 overlay. `swift scripts/make_icon.swift`
 regenerates the app icon.

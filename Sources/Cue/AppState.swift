@@ -62,6 +62,8 @@ final class AppState: ObservableObject {
     let downloader = ModelDownloader()
     let recorder = CallRecorder()
     let recordings: RecordingStore
+    /// Plays the audio of the note open in the dashboard.
+    let player: NotePlayer
 
     /// The project Cue answers from and records into.
     @Published private(set) var activeProject: Project?
@@ -90,6 +92,7 @@ final class AppState: ObservableObject {
     private let systemCapture = SystemAudioCapture()
     private let micSegmenter = SpeechSegmenter()
     private let systemSegmenter = SpeechSegmenter()
+    private let audioRecorder = AudioRecorder()
     private let detector = QuestionDetector()
     private let log: SessionLog
     private var meterTimer: Timer?
@@ -113,6 +116,8 @@ final class AppState: ObservableObject {
         projects.migrateLegacySettings(log: log)
         recordings = RecordingStore(preferences: preferences, projects: projects, log: log)
         recordings.reload()
+        player = NotePlayer(log: log)
+        AudioRecorder.removeStaleWorkingFolders()
         // CUE_PROJECT=name picks the project at launch (creating it when missing); otherwise the last one used.
         if let name = ProcessInfo.processInfo.environment["CUE_PROJECT"] {
             activeProject = projects.project(named: name) ?? (try? projects.create(named: name))
@@ -151,8 +156,14 @@ final class AppState: ObservableObject {
         }
         wire(micSegmenter, channel: .me)
         wire(systemSegmenter, channel: .others)
-        micCapture.onSamples = { [micSegmenter] in micSegmenter.push($0) }
-        systemCapture.onSamples = { [systemSegmenter] in systemSegmenter.push($0) }
+        micCapture.onSamples = { [micSegmenter, audioRecorder] samples, time in
+            micSegmenter.push(samples)
+            audioRecorder.push(samples, from: .me, at: time)
+        }
+        systemCapture.onSamples = { [systemSegmenter, audioRecorder] samples, time in
+            systemSegmenter.push(samples)
+            audioRecorder.push(samples, from: .others, at: time)
+        }
         systemCapture.onStop = { error in
             Task { @MainActor in self.call = ServiceStatus(ok: false, detail: "Call audio stopped: \(error.localizedDescription)") }
         }
@@ -174,6 +185,7 @@ final class AppState: ObservableObject {
 
     func shutdown() {
         recordings.cancelAll()
+        audioRecorder.cancel()
         micCapture.stop()
         systemCapture.stop()
         claudeService?.stop()
@@ -335,10 +347,17 @@ final class AppState: ObservableObject {
                 // CUE_REHEARSE_RECORD=1 also records the rehearsal and writes its notes.
                 let record = ProcessInfo.processInfo.environment["CUE_REHEARSE_RECORD"] == "1"
                 if record { startRecording() }
-                var length = try Rehearsal.play(fileAt: path, into: { [systemSegmenter] in systemSegmenter.push($0) })
+                var length = try Rehearsal.play(fileAt: path) { [systemSegmenter, audioRecorder] samples, time in
+                    systemSegmenter.push(samples)
+                    // ScreenCaptureKit delivers nothing while the Mac plays nothing; the recorder gets the same here.
+                    if samples.contains(where: { $0 != 0 }) { audioRecorder.push(samples, from: .others, at: time) }
+                }
                 // CUE_REHEARSE_ME plays a second recording as your microphone, in parallel.
                 if let mine = ProcessInfo.processInfo.environment["CUE_REHEARSE_ME"] {
-                    length = max(length, try Rehearsal.play(fileAt: mine, into: { [micSegmenter] in micSegmenter.push($0) }))
+                    length = max(length, try Rehearsal.play(fileAt: mine) { [micSegmenter, audioRecorder] samples, time in
+                        micSegmenter.push(samples)
+                        audioRecorder.push(samples, from: .me, at: time)
+                    })
                 }
                 if record {
                     try? await Task.sleep(for: .seconds(length + 1))
@@ -465,17 +484,19 @@ final class AppState: ObservableObject {
 
     func startRecording() {
         recordingProject = activeProject
-        recorder.start()
+        audioRecorder.start(at: recorder.start())
     }
 
-    /// Waits for the last phrase to be transcribed, then saves and summarizes.
+    /// Waits for the last phrase to be transcribed, then saves the notes and audio and summarizes.
     func stopRecording() {
         guard recorder.isRecording else { return }
-        recorder.beginStop()
+        audioRecorder.stop(at: recorder.beginStop())
         Task {
             try? await Task.sleep(for: .seconds(2.5))
+            let audio = await audioRecorder.finish()
             guard let transcript = recorder.finish() else { return }
             guard !transcript.lines.isEmpty else {
+                audio.map { try? FileManager.default.removeItem(at: $0.folder) }
                 let alert = NSAlert()
                 alert.messageText = "Nothing was recorded"
                 alert.informativeText = "Cue didn't hear any speech while recording, so no notes were saved."
@@ -486,7 +507,7 @@ final class AppState: ObservableObject {
             let project = recordingProject.flatMap { projects.project($0.id) } ?? activeProject
                 ?? projects.project(named: "Meetings") ?? (try? projects.create(named: "Meetings"))
             guard let project else { return }
-            if let id = recordings.save(transcript, into: project) { openRecordings(id) }
+            if let id = recordings.save(transcript, into: project, audio: audio) { openRecordings(id) }
         }
     }
 

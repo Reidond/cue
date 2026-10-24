@@ -5,7 +5,8 @@
 //   answer session (`--input-format stream-json`): answer-system, ask
 //   one-shot summary (`-p` with the transcript on stdin): summary-system, summary-input
 //
-// FAKE_CLAUDE_ANSWER (text) and FAKE_CLAUDE_SUMMARY (a file) set the replies.
+// FAKE_CLAUDE_ANSWER (text) and FAKE_CLAUDE_SUMMARY (a file) set the replies;
+// FAKE_CLAUDE_SUMMARY_DELAY (seconds) makes the summary take that long, like the real one.
 import Foundation
 
 let arguments = CommandLine.arguments
@@ -77,5 +78,6 @@ if value(after: "--input-format") == "stream-json" {
     let input = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
     record("summary-input", input)
     let summary = environment["FAKE_CLAUDE_SUMMARY"].flatMap { try? String(contentsOfFile: $0, encoding: .utf8) } ?? defaultSummary
+    if let delay = environment["FAKE_CLAUDE_SUMMARY_DELAY"].flatMap(Double.init) { Thread.sleep(forTimeInterval: delay) }
     reply(summary)
 }

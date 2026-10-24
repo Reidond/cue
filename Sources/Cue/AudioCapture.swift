@@ -5,6 +5,9 @@ import ScreenCaptureKit
 /// Both sources deliver 16 kHz mono Float32, the format Whisper expects.
 let whisperSampleRate = 16_000.0
 
+/// Now on the host clock, in seconds: both sources timestamp their audio with it.
+func hostSeconds() -> TimeInterval { AVAudioTime.seconds(forHostTime: mach_absolute_time()) }
+
 enum CaptureError: LocalizedError {
     case noDisplay
     case micDenied
@@ -22,7 +25,8 @@ enum CaptureError: LocalizedError {
 /// The presenter's own voice.
 final class MicCapture {
     private let engine = AVAudioEngine()
-    var onSamples: (([Float]) -> Void)?
+    /// Samples and the host time the first of them was captured at.
+    var onSamples: (([Float], TimeInterval) -> Void)?
 
     func start() async throws {
         guard await AVCaptureDevice.requestAccess(for: .audio) else { throw CaptureError.micDenied }
@@ -32,7 +36,9 @@ final class MicCapture {
               let converter = AVAudioConverter(from: sourceFormat, to: target)
         else { throw CaptureError.converter }
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: sourceFormat) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 4096, format: sourceFormat) { [weak self] buffer, when in
+            let time = when.isHostTimeValid ? AVAudioTime.seconds(forHostTime: when.hostTime)
+                : hostSeconds() - Double(buffer.frameLength) / sourceFormat.sampleRate
             let capacity = AVAudioFrameCount(Double(buffer.frameLength) * whisperSampleRate / sourceFormat.sampleRate) + 64
             guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
             var consumed = false
@@ -46,7 +52,7 @@ final class MicCapture {
                 return buffer
             }
             guard let channel = out.floatChannelData?[0], out.frameLength > 0 else { return }
-            self?.onSamples?(Array(UnsafeBufferPointer(start: channel, count: Int(out.frameLength))))
+            self?.onSamples?(Array(UnsafeBufferPointer(start: channel, count: Int(out.frameLength))), time)
         }
         engine.prepare()
         try engine.start()
@@ -65,7 +71,8 @@ final class MicCapture {
 final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     private let queue = DispatchQueue(label: "system-audio")
-    var onSamples: (([Float]) -> Void)?
+    /// Samples and the host time the first of them was captured at.
+    var onSamples: (([Float], TimeInterval) -> Void)?
     var onStop: ((Error) -> Void)?
 
     func start() async throws {
@@ -112,7 +119,10 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             } else {
                 samples = Array(UnsafeBufferPointer(start: floats, count: count))
             }
-            onSamples?(samples)
+            // Stamped on the host clock, a moment ago; a buffer without such a stamp counts as captured just now.
+            let now = hostSeconds(), stamp = sampleBuffer.presentationTimeStamp.seconds
+            let recent = stamp.isFinite && stamp > now - 2 && stamp < now + 0.1
+            onSamples?(samples, recent ? stamp : now - Double(samples.count) / whisperSampleRate)
         }
     }
 
