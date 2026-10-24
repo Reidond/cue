@@ -11,27 +11,35 @@ actor WhisperService {
     /// Outside actor isolation so the app can kill it synchronously while quitting.
     private nonisolated let server = ChildProcess()
     private let endpoint = URL(string: "http://127.0.0.1:\(port)/inference")!
-    private let vocabularyPrompt: String
+    private var language = "en"
+    private var vocabularyPrompt = ""
+    private var hallucinations: [String] = []
     private var busy = false
     private var finals: [(audio: [Float], done: CheckedContinuation<String, Never>)] = []
     private var partials: [Channel: (audio: [Float], done: CheckedContinuation<String?, Never>)] = [:]
 
-    init(vocabularyPrompt: String) {
+    static var serverBinary: String? { serverCandidates.first(where: FileManager.default.isExecutableFile) }
+    static var modelInstalled: Bool { FileManager.default.fileExists(atPath: modelPath) }
+
+    /// Language, vocabulary and known artefacts apply from the next request on.
+    func configure(language: String, vocabularyPrompt: String, hallucinations: [String]) {
+        self.language = language
         self.vocabularyPrompt = vocabularyPrompt
+        self.hallucinations = hallucinations
     }
 
     func start() async throws {
         if await isHealthy() { return }  // reuse a server that is already running
-        guard let binary = Self.serverCandidates.first(where: FileManager.default.isExecutableFile) else {
-            throw ServiceError("whisper-server not found. Install it: brew install whisper-cpp")
+        guard let binary = Self.serverBinary else {
+            throw ServiceError("whisper-server is not installed")
         }
-        guard FileManager.default.fileExists(atPath: Self.modelPath) else {
-            throw ServiceError("Whisper model missing: \(Self.modelPath)")
+        guard Self.modelInstalled else {
+            throw ServiceError("Speech model not downloaded")
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = ["-m", Self.modelPath, "--host", "127.0.0.1", "--port", "\(Self.port)",
-                             "-l", "uk", "-t", "8", "-nt"]
+                             "-t", "8", "-nt"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
@@ -95,7 +103,7 @@ actor WhisperService {
             body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".data(using: .utf8)!)
         }
         field("response_format", "json")
-        field("language", "uk")
+        field("language", language)
         field("temperature", "0")
         field("prompt", vocabularyPrompt)
         body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\nContent-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
@@ -109,7 +117,7 @@ actor WhisperService {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = json["text"] as? String
         else { return "" }
-        return Self.clean(text)
+        return Self.clean(text, hallucinations: hallucinations)
     }
 
     private func isHealthy() async -> Bool {
@@ -119,10 +127,10 @@ actor WhisperService {
     }
 
     /// Drops the phrases Whisper invents on silence or music (listed in the lexicon).
-    static func clean(_ raw: String) -> String {
+    static func clean(_ raw: String, hallucinations: [String]) -> String {
         let text = raw.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
         let lower = text.lowercased()
-        if lower.count < 2 || Lexicon.shared.hallucinations.contains(where: { lower.contains($0) && lower.count < $0.count + 25 }) {
+        if lower.count < 2 || hallucinations.contains(where: { lower.contains($0) && lower.count < $0.count + 25 }) {
             return ""
         }
         if text.hasPrefix("[") && text.hasSuffix("]") { return "" }  // [music], [BLANK_AUDIO]
@@ -162,7 +170,7 @@ struct ServiceError: LocalizedError {
 
 let appSupport: URL = {
     let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("SeminarOverlay")
+        .appendingPathComponent("Cue")
     try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
 }()

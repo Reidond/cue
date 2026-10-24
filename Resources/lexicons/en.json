@@ -1,0 +1,22 @@
+{
+  "name": "English",
+  "questionCues": [
+    "how", "why", "what", "which", "who", "whom", "whose", "when", "where", "whether", "is it", "are you",
+    "do you", "did you", "does it", "can you", "could you", "would you", "explain", "describe", "elaborate",
+    "clarify", "comment on", "tell us", "walk us through", "question", "wondering", "curious"
+  ],
+  "stopWords": [
+    "what", "which", "that", "this", "these", "those", "with", "from", "your", "have", "does", "could",
+    "would", "please", "about", "there", "their", "they", "were", "been", "into", "also", "tell"
+  ],
+  "hallucinations": [
+    "thank you for watching", "thanks for watching", "subscribe", "subtitles by", "amara.org",
+    "see you in the next video"
+  ],
+  "questionLabels": ["question", "q", "possible question", "they may ask"],
+  "answerLabels": ["answer", "a"],
+  "thanksPrefix": "Thank you for the question. ",
+  "defaultOpener": "Thank you for the question. Let me briefly explain.",
+  "numbersLabel": "Numbers",
+  "sourceLabel": "Source"
+}

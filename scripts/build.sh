@@ -1,23 +1,17 @@
 #!/bin/bash
-# Builds build/SeminarOverlay.app with the knowledge base baked into its resources.
+# Builds build/Cue.app.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [ ! -f knowledge/qa.json ]; then
-    echo "knowledge/ is missing — run scripts/prepare_knowledge.py first" >&2
-    exit 1
-fi
-
 swift build -c release
-APP=build/SeminarOverlay.app
+APP=build/Cue.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp .build/release/SeminarOverlay "$APP/Contents/MacOS/"
+cp .build/release/Cue "$APP/Contents/MacOS/"
 cp Resources/Info.plist "$APP/Contents/"
-cp Resources/prompt.md Resources/whisper_prompt.txt Resources/lexicon.json "$APP/Contents/Resources/"
-cp -R knowledge "$APP/Contents/Resources/knowledge"
+cp -R Resources/prompt.md Resources/lexicons Resources/AppIcon.icns "$APP/Contents/Resources/"
 # Signing with a real certificate keeps the microphone / screen-audio permissions
 # across rebuilds; an ad-hoc signature works too but asks again after every build.
 IDENTITY=$(security find-identity -v -p codesigning | awk -F'"' '/Apple Development|Developer ID Application/ {print $2; exit}')
-codesign --force --sign "${IDENTITY:--}" --identifier com.andriishafar.seminar-overlay "$APP"
+codesign --force --sign "${IDENTITY:--}" --identifier com.andriishafar.cue "$APP"
 echo "Built $APP"

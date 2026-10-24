@@ -17,7 +17,7 @@ final class SessionLog {
         let stamp = DateFormatter()
         stamp.dateFormat = "yyyy-MM-dd-HHmmss"
         url = folder.appendingPathComponent("\(stamp.string(from: Date())).md")
-        FileManager.default.createFile(atPath: url.path, contents: Data("# Seminar session\n\n".utf8))
+        FileManager.default.createFile(atPath: url.path, contents: Data("# Cue session\n\n".utf8))
         handle = try? FileHandle(forWritingTo: url)
         _ = try? handle?.seekToEnd()
     }
@@ -29,7 +29,7 @@ final class SessionLog {
 }
 
 /// Rehearsal mode: plays an audio file into a channel as if it were live speech
-/// (SEMINAR_REHEARSE_PARTICIPANT=/path/to/audio). Handy for testing the whole
+/// (CUE_REHEARSE_PARTICIPANT=/path/to/audio). Handy for testing the whole
 /// pipeline with recorded questions, without Google Meet.
 enum Rehearsal {
     static func play(fileAt path: String, into push: @escaping ([Float]) -> Void) throws {

@@ -5,7 +5,7 @@ import Foundation
 /// Participant utterances collect into a buffer. Once the buffer contains
 /// something question-like, it fires when the participants have been quiet for
 /// `quietGap` since they stopped talking, or immediately when the presenter
-/// starts talking (he is answering). New participant speech postpones it.
+/// starts talking (they are answering). New participant speech postpones it.
 final class QuestionDetector {
     var onQuestion: ((String) -> Void)?
 
@@ -15,9 +15,12 @@ final class QuestionDetector {
     private var armed = false
     private var timer: Timer?
 
-    static func looksLikeQuestion(_ text: String) -> Bool {
+    /// Interrogative words of the spoken language, from its lexicon.
+    var cues: [String] = []
+
+    func looksLikeQuestion(_ text: String) -> Bool {
         let words = " " + text.lowercased().components(separatedBy: CharacterSet.letters.inverted).joined(separator: " ") + " "
-        return text.contains("?") || Lexicon.shared.questionCues.contains { words.contains(" \($0) ") }
+        return text.contains("?") || cues.contains { words.contains(" \($0) ") }
     }
 
     /// A finished participant utterance.
@@ -26,7 +29,7 @@ final class QuestionDetector {
         if Date().timeIntervalSince(lastAdded) > 45 { buffer.removeAll(); armed = false }
         buffer.append(text)
         lastAdded = Date()
-        if Self.looksLikeQuestion(text) { armed = true }
+        if looksLikeQuestion(text) { armed = true }
         participantsStopped(speechEnded: speechEnded)
     }
 

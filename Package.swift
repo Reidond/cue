@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "SeminarOverlay",
-    platforms: [.macOS(.v15)],
+    name: "Cue",
+    platforms: [.macOS("26.0")],
     targets: [
         .executableTarget(
-            name: "SeminarOverlay",
-            path: "Sources/SeminarOverlay",
+            name: "Cue",
+            path: "Sources/Cue",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]

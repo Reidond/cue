@@ -3,26 +3,28 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.andriishafar.seminar-overlay</string>
+    <string>com.andriishafar.cue</string>
     <key>CFBundleName</key>
-    <string>SeminarOverlay</string>
+    <string>Cue</string>
     <key>CFBundleDisplayName</key>
-    <string>Seminar Overlay</string>
+    <string>Cue</string>
     <key>CFBundleExecutable</key>
-    <string>SeminarOverlay</string>
+    <string>Cue</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.1</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>LSMinimumSystemVersion</key>
-    <string>15.0</string>
+    <string>26.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Розпізнавання вашого мовлення під час доповіді.</string>
+    <string>Cue transcribes what you say so it knows the context of each question.</string>
     <key>NSAudioCaptureUsageDescription</key>
-    <string>Розпізнавання питань учасників Google Meet.</string>
+    <string>Cue transcribes the other people on the call to catch their questions.</string>
 </dict>
 </plist>

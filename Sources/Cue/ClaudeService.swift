@@ -5,8 +5,8 @@ import Foundation
 /// holding the dissertation. Uses the user's Claude Code login — no API key.
 final class ClaudeService {
     enum Model: String, CaseIterable {
-        case haiku, sonnet
-        var title: String { self == .haiku ? "Haiku (faster)" : "Sonnet (more precise)" }
+        case sonnet, haiku
+        var title: String { self == .sonnet ? "Sonnet (best answers)" : "Haiku (fastest)" }
     }
 
     struct Handlers {
@@ -64,7 +64,7 @@ final class ClaudeService {
     private func launch() {
         shutdown()
         guard let binary = Self.findBinary() else {
-            handlers.onReady(false, "claude CLI not found")
+            handlers.onReady(false, "Claude Code not found")
             return
         }
         let workDir = appSupport.appendingPathComponent("run")
@@ -100,17 +100,17 @@ final class ClaudeService {
         do {
             try process.run()
         } catch {
-            handlers.onReady(false, "Could not start claude: \(error.localizedDescription)")
+            handlers.onReady(false, "Couldn't start Claude Code: \(error.localizedDescription)")
             return
         }
         self.process = process
         stdin = input.fileHandleForWriting
-        handlers.onReady(false, "Claude: warming up \(model.rawValue)…")
+        handlers.onReady(false, "Warming up Claude \(model.rawValue.capitalized)…")
 
         // The first turn of a session is slow (~8 s); pay it now, not on the first question.
         let warmup = UUID()
         warmupID = warmup
-        send("Connection check before the seminar. There is no question here.", id: warmup)
+        send("Connection check before the talk. There is no question here.", id: warmup)
 
         DispatchQueue.main.async { [weak self] in
             self?.keepAlive?.invalidate()
@@ -177,7 +177,7 @@ final class ClaudeService {
             let failed = event["is_error"] as? Bool == true
             if current == warmupID {
                 warmupID = nil
-                handlers.onReady(!failed, failed ? "Claude: warm-up failed" : "Claude \(model.rawValue) ready")
+                handlers.onReady(!failed, failed ? "Claude didn't answer — is Claude Code signed in?" : "Claude \(model.rawValue.capitalized) ready")
             } else {
                 handlers.onDone(current, failed ? (event["result"] as? String ?? "Claude error") : nil)
             }
