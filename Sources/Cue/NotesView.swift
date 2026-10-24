@@ -90,6 +90,10 @@ private struct RecordingDetail: View {
     let player: NotePlayer
     let file: RecordingFile
     @State private var confirmTrash = false
+    /// The person being renamed, and the name being typed.
+    @State private var renaming = ""
+    @State private var newName = ""
+    @State private var showRename = false
 
     var body: some View {
         ScrollView {
@@ -106,8 +110,20 @@ private struct RecordingDetail: View {
                 } else if let failure = store.failures[file.id] {
                     FailureBanner(message: failure) { store.summarize(file.id) }
                 }
+                if !file.suggestions.isEmpty, !store.isProcessing(file.id) {
+                    NameSuggestions(suggestions: file.suggestions) { label in
+                        store.rename(speaker: label, to: file.suggestions[label] ?? label, in: file.id)
+                    } dismiss: { label in
+                        store.dismissSuggestion(for: label, in: file.id)
+                    }
+                }
                 MarkdownView(markdown: store.contents(file.id),
-                             onTimestamp: file.audio == nil ? nil : { [player] in player.play(from: $0) })
+                             onTimestamp: file.audio == nil ? nil : { [player] in player.play(from: $0) },
+                             onSpeaker: store.isProcessing(file.id) ? nil : { name in
+                                 renaming = name
+                                 newName = name
+                                 showRename = true
+                             })
             }
             // A comfortable reading measure, centred in wide windows.
             .frame(maxWidth: 720, alignment: .leading)
@@ -143,6 +159,13 @@ private struct RecordingDetail: View {
                 Button("Move to Trash", systemImage: "trash") { confirmTrash = true }
                     .help("Move to Trash")
             }
+        }
+        .alert("Rename “\(renaming)”", isPresented: $showRename) {
+            TextField("Name", text: $newName)
+            Button("Rename") { store.rename(speaker: renaming, to: newName, in: file.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The name changes everywhere in this note: the transcript, the summary and the participants.")
         }
         .confirmationDialog("Move “\(file.title)” to the Trash?", isPresented: $confirmTrash) {
             Button("Move to Trash", role: .destructive) { store.moveToTrash(file.id) }
@@ -291,6 +314,38 @@ private struct PlayerBar: View {
         .padding(.trailing, 8)
         .padding(.vertical, 8)
         .glassEffect(.regular, in: .capsule)
+    }
+}
+
+/// Who the summary thinks the people on the call are, each with Apply (renames them in the note).
+private struct NameSuggestions: View {
+    let suggestions: [String: String]
+    let apply: (String) -> Void
+    let dismiss: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(suggestions.keys.sorted(), id: \.self) { label in
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle.badge.questionmark")
+                        .foregroundStyle(.secondary)
+                    Text("\(label) → \(suggestions[label] ?? "")?")
+                    Button("Apply") { apply(label) }
+                        .controlSize(.small)
+                    Button("Dismiss", systemImage: "xmark") { dismiss(label) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                        .help("Dismiss the suggestion")
+                }
+                .padding(.leading, 12)
+                .padding(.trailing, 8)
+                .padding(.vertical, 6)
+                .background(.quaternary.opacity(0.4), in: .capsule)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Suggested names")
     }
 }
 

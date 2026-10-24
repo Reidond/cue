@@ -1,0 +1,6 @@
+# Two people on the call side and you on the microphone; the second one, Olena (Karen), is thanked by name.
+call | Daniel   | Good morning. I wanted to talk about the plan for the new reading room.
+call | Karen    | Good morning. The visitor survey asked for more quiet desks near the windows.
+me   | Samantha | Good morning. I can draft the floor plan by Thursday.
+call | Daniel   | Thank you, Olena. Let us meet again on Monday.
+call | Karen    | Great, I will send the survey summary before then.

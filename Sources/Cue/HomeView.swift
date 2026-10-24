@@ -9,6 +9,7 @@ struct HomeView: View {
     @ObservedObject var projects: ProjectStore
     @ObservedObject var recordings: RecordingStore
     @ObservedObject var downloader: ModelDownloader
+    @ObservedObject var speakers: SpeakerModels
     @ObservedObject var model: DashboardModel
     @State private var checks = SetupCheck.all()
 
@@ -21,7 +22,7 @@ struct HomeView: View {
                     FirstProject { model.creatingProject = true }
                 }
                 if !checks.allSatisfy(\.ok) {
-                    SetupCard(checks: checks, downloader: downloader, calendar: state.calendar)
+                    SetupCard(checks: checks, downloader: downloader, speakers: speakers, calendar: state.calendar)
                 }
                 if !projects.projects.isEmpty {
                     RecentNotes(files: Array(recordings.files.prefix(8)), projects: projects) { model.show($0) }
@@ -36,6 +37,7 @@ struct HomeView: View {
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("Home")
         .onReceive(refresh) { _ in checks = SetupCheck.all() }
+        .onChange(of: speakers.progress == nil) { checks = SetupCheck.all() }
         .onAppear { recordings.reload() }
     }
 }
@@ -69,6 +71,7 @@ private struct FirstProject: View {
 private struct SetupCard: View {
     let checks: [SetupCheck]
     @ObservedObject var downloader: ModelDownloader
+    let speakers: SpeakerModels
     let calendar: MeetingCalendar
 
     var body: some View {
@@ -84,7 +87,7 @@ private struct SetupCard: View {
                 VStack(spacing: 0) {
                     ForEach(Array(checks.enumerated()), id: \.element.id) { index, check in
                         if index > 0 { Divider() }
-                        SetupRow(check: check, downloader: downloader, calendar: calendar).padding(.vertical, 8)
+                        SetupRow(check: check, downloader: downloader, speakers: speakers, calendar: calendar).padding(.vertical, 8)
                     }
                 }
                 .padding(.horizontal, 6)
@@ -96,6 +99,7 @@ private struct SetupCard: View {
 struct SetupRow: View {
     let check: SetupCheck
     @ObservedObject var downloader: ModelDownloader
+    @ObservedObject var speakers: SpeakerModels
     let calendar: MeetingCalendar
 
     var body: some View {
@@ -115,7 +119,13 @@ struct SetupRow: View {
         }
     }
 
-    private var downloadError: String? { check.item == .model ? downloader.error : nil }
+    private var downloadError: String? {
+        switch check.item {
+        case .model: downloader.error
+        case .speakerModels: speakers.error
+        default: nil
+        }
+    }
 
     @ViewBuilder private var action: some View {
         if !check.ok {
@@ -126,6 +136,12 @@ struct SetupRow: View {
                     Button("Cancel", action: downloader.cancel)
                 } else {
                     Button("Download", action: downloader.start)
+                }
+            case .speakerModels:
+                if let progress = speakers.progress {
+                    ProgressView(value: progress).frame(width: 90)
+                } else {
+                    Button("Download", action: speakers.start)
                 }
             case .whisper:
                 Button("Copy Command") {

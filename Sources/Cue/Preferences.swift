@@ -80,12 +80,24 @@ struct Lexicon: Decodable {
     var numbersLabel: String
     var sourceLabel: String
     var participantLabel: String?
+    /// One of several voices told apart on the call side: "Participant %d".
+    var numberedParticipantLabel: String?
     var transcriptHeading: String?
     /// Words that give away a remark about the transcript or speech recognition ("transcript",
     /// "misheard"): a summary's parenthetical remarks with one are dropped.
     var transcriptRemarkWords: [String]?
 
     var participant: String { participantLabel ?? "Participant" }
+    /// «Учасник 2», "Participant 2".
+    func numberedParticipant(_ number: Int) -> String {
+        (numberedParticipantLabel ?? participant + " %d").replacingOccurrences(of: "%d", with: String(number))
+    }
+    /// Whether a name is one of the labels Cue gives the people on the call, rather than a name.
+    func isParticipantLabel(_ name: String) -> Bool {
+        let numbered = (numberedParticipantLabel ?? participant + " %d").components(separatedBy: "%d")
+        return name == participant || numbered.count == 2 && name.hasPrefix(numbered[0]) && name.hasSuffix(numbered[1])
+            && Int(name.dropFirst(numbered[0].count).dropLast(numbered[1].count)) != nil
+    }
     var transcript: String { transcriptHeading ?? "Transcript" }
     var transcriptRemarks: [String] { transcriptRemarkWords ?? [] }
 

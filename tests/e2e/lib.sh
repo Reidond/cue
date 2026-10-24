@@ -23,6 +23,12 @@ SUPPORT=$CUE_HOME/Application\ Support/Cue
 mkdir -p "$SUPPORT" "$CUE_HOME/Documents"
 # The speech model is 1.6 GB: link it in, never copy or download it.
 [[ -d $REAL_SUPPORT/models ]] && ln -s "$REAL_SUPPORT/models" "$SUPPORT/models"
+# The speaker models come in with it once they are downloaded; until then Cue downloads them on
+# first use into the checkout's e2e cache, and later cases and runs reuse them from there.
+SPEAKER_FILES=(Segmentation.mlmodelc/coremldata.bin FBank.mlmodelc/coremldata.bin Embedding.mlmodelc/coremldata.bin
+    PldaRho.mlmodelc/coremldata.bin plda-parameters.json)
+_speaker_models_in() { local file; for file in "${SPEAKER_FILES[@]}"; do [[ -f $1/speaker-diarization/$file ]] || return 1; done; }
+_speaker_models_in "$REAL_SUPPORT/models" || export CUE_SPEAKER_MODELS=$E2E_WORK/cache/speaker-models
 defaults delete $DOMAIN > /dev/null 2>&1
 # Own settings domain and whisper-server port, so checkouts can run cases at the same time.
 export CUE_DEFAULTS_DOMAIN=$DOMAIN
@@ -101,7 +107,8 @@ cue_stop() {
 # cue_control COMMAND… — does in the running Cue what a click would (CUE_CONTROL):
 # `new NAME`, `add PATH`, `start NAME`, `project NAME`, `ask TEXT`, `timestamp HH:MM:SS`,
 # `page home|upcoming|NAME|NAME/answers|NAME/notes` for the dashboard,
-# `assign EVENT | PROJECT` (quote it) and `notification record|dismiss`.
+# `assign EVENT | PROJECT` (quote it), `notification record|dismiss`, for the open note
+# `rename NAME | NEW` (quote it), `apply LABEL` and `dismiss LABEL`, and `download speakers`.
 cue_control() { echo "$*" >> "$CASE_DIR/control"; }
 
 # minutes_from_now N — the time N minutes from now (negative: ago) in ISO 8601, for $EVENTS:
@@ -133,6 +140,17 @@ ps -o pri= -p \$\$ | tr -d ' ' > "$CASE_DIR/whisper-priority.txt"
 exec "$WHISPER_CLI" "\$@"
 EOF
     chmod +x "$CASE_DIR/whisper-cli"
+}
+
+# turn_speakers NOTES TIMELINE — who the transcript says said each line of a dialogue: for every line
+# of its timeline.tsv, the voice and the label of the transcript turn that starts with it (within 2 s,
+# or "?"), tab-separated: `Karen	Participant 2`.
+turn_speakers() {
+    awk -F'|' 'NR == FNR { split($1, t, " "); time[++turns] = t[1] * 3600 + t[2] * 60 + t[3]; label[turns] = $2; next }
+        { best = "?"; nearest = 2
+          for (i = 1; i <= turns; i++) { d = $1 - time[i]; if (d < 0) d = -d; if (d <= nearest) { nearest = d; best = label[i] } }
+          print $4 "\t" best }' \
+        <(sed -n -E 's/^\*\*([0-9]{2}):([0-9]{2}):([0-9]{2}) · (.+)\*\*$/\1 \2 \3|\4/p' "$1") <(tr '\t' '|' < "$2")
 }
 
 # cue_cli ARGS… — the app's command-line modes (--inspect, --render, …).

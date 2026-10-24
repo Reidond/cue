@@ -335,8 +335,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu),
     /// `page home|upcoming|NAME|NAME/answers|NAME/notes` (a dashboard page), `ask TEXT`
     /// (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript),
-    /// `assign EVENT | PROJECT` (an Upcoming call's project picker) and
-    /// `notification record|dismiss` (the latest Record / Not Now prompt).
+    /// `assign EVENT | PROJECT` (an Upcoming call's project picker),
+    /// `notification record|dismiss` (the latest Record / Not Now prompt), `rename NAME | NEW`
+    /// (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL`
+    /// (a name suggestion on the open note) and `download speakers` (Home's Download for the
+    /// speaker models).
     private func startControl(from path: String) {
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -374,6 +377,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         case "notification":
             state.meetings.answerLatestPrompt(record: argument == "record")
+        case "rename":
+            let sides = argument.components(separatedBy: " | ")
+            if sides.count == 2, let note = dashboard.note { state.recordings.rename(speaker: sides[0], to: sides[1], in: note) }
+        case "apply":
+            if let note = dashboard.note, let name = state.recordings.file(note)?.suggestions[argument] {
+                state.recordings.rename(speaker: argument, to: name, in: note)
+            }
+        case "dismiss":
+            if let note = dashboard.note { state.recordings.dismissSuggestion(for: argument, in: note) }
+        case "download":
+            if argument == "speakers" { state.speakerModels.start() }
         case "page":
             showDashboard()
             switch argument {
