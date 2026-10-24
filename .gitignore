@@ -1,0 +1,6 @@
+.build/
+build/
+.swiftpm/
+# Generated from the private seminar materials by scripts/prepare_knowledge.py
+knowledge/
+.DS_Store
