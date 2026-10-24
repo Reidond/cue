@@ -52,7 +52,7 @@ speakers, `6x` calendar). It sources `tests/e2e/lib.sh`, which gives it:
   `cue_cli ARGS…` (command-line modes), `cue_control COMMAND…` (what a click
   would do, through `CUE_CONTROL`), `dashboard_page PAGE REGEX` (show a
   dashboard page and read its snapshot);
-- `minutes_from_now N` (event times for `$EVENTS`), `mic_apps BUNDLE_ID…`
+- `minutes_from_now N`, `tomorrow_at HH:MM` (event times for `$EVENTS`), `mic_apps BUNDLE_ID…`
   (who is on the microphone now; none when the call app lets go);
 - `wait_for "what" SECONDS command…`, `wait_log PATTERN SECONDS`,
   `log_count PATTERN`, `session_log`, `find_notes`;

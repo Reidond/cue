@@ -11,7 +11,7 @@ cat > "$EVENTS" << EOF
     "location": "Café on the corner" },
   { "title": "Teams planning", "start": "$(minutes_from_now 120)", "end": "$(minutes_from_now 180)", "calendar": "Work",
     "notes": "Join: https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0 — agenda to follow" },
-  { "title": "Zoom standup", "start": "$(minutes_from_now 1440)", "end": "$(minutes_from_now 1455)", "calendar": "Work",
+  { "title": "Zoom standup", "start": "$(tomorrow_at 10:00)", "end": "$(tomorrow_at 10:15)", "calendar": "Work",
     "location": "https://us02web.zoom.us/j/123456789?pwd=abc", "recurring": true },
   { "title": "Family call", "start": "$(minutes_from_now 30)", "end": "$(minutes_from_now 60)", "calendar": "Personal",
     "url": "https://meet.google.com/xyz-abcd-efg" },

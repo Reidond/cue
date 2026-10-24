@@ -104,6 +104,9 @@ cue_control() { echo "$*" >> "$CASE_DIR/control"; }
 # notes, attendees, recurring}.
 minutes_from_now() { date -u -v"$( (($1 < 0)) && echo "$1" || echo "+$1")"M +%Y-%m-%dT%H:%M:%SZ; }
 
+# tomorrow_at HH:MM — that local time tomorrow, by the calendar (a day is not always 24 h: DST).
+tomorrow_at() { date -u -r "$(date -v+1d -v"${1%%:*}"H -v"${1#*:}"M -v0S +%s)" +%Y-%m-%dT%H:%M:%SZ; }
+
 # mic_apps [BUNDLE_ID…] — the processes using the microphone right now; none when the call app let go.
 mic_apps() { printf '%s\n' "$@" > "$MIC_APPS"; }
 
