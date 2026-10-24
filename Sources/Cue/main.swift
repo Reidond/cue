@@ -289,7 +289,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                     if let table = subview as? NSTableView {
                         for row in 0..<table.numberOfRows {
-                            if let rowView = table.rowView(atRow: row, makeIfNecessary: false) { draw(rowView, background: false) }
+                            guard let rowView = table.rowView(atRow: row, makeIfNecessary: false) else { continue }
+                            // While Cue is the active app the selected row is a material that caches as a
+                            // solid bar, hiding its text: draw the row unselected.
+                            let selected = rowView.isSelected
+                            rowView.isSelected = false
+                            rowView.layoutSubtreeIfNeeded()
+                            draw(rowView, background: false)
+                            rowView.isSelected = selected
                         }
                     }
                     glass(in: subview)
