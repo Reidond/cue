@@ -1,0 +1,13 @@
+# A planning call with three people on the call side, each with a voice of their own,
+# and you on the microphone. Olena (Karen) and Petro (Fred) are thanked by name.
+call | Daniel   | Good morning, everyone. Today we need to agree on the plan for the new reading room.
+call | Karen    | Good morning. I brought the results of the visitor survey from last month.
+me   | Samantha | Good morning. Let us start with the survey, please.
+call | Karen    | Most visitors asked for longer opening hours and more quiet desks near the windows.
+call | Daniel   | Thank you, Olena, that is very helpful.
+call | Fred     | Before we go on, I should say that the budget for the furniture is not approved yet.
+call | Daniel   | Thanks, Petro. We will keep the budget in mind.
+me   | Samantha | I can draft the floor plan by Thursday and send it to all of you.
+call | Fred     | Good. I will ask the finance office about the budget this week.
+call | Karen    | Then I will prepare a short summary of the survey for the next meeting.
+call | Daniel   | Perfect. Let us meet again on Monday at ten.

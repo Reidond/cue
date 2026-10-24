@@ -8,12 +8,14 @@ struct MarkdownView: View {
     let markdown: String
     /// Makes the speaker lines' timestamps clickable; called with the offset in seconds.
     var onTimestamp: ((TimeInterval) -> Void)?
+    /// Makes the speaker lines' names clickable; called with the name.
+    var onSpeaker: ((String) -> Void)?
 
     var body: some View {
         let document = MarkdownDocument(markdown)
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(document.blocks.enumerated()), id: \.offset) { index, block in
-                BlockView(block: block, onTimestamp: onTimestamp)
+                BlockView(block: block, onTimestamp: onTimestamp, onSpeaker: onSpeaker)
                     .padding(.top, index == 0 ? 0 : block.spacingAbove)
             }
         }
@@ -71,13 +73,13 @@ struct MarkdownDocument {
         var lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")[...]
 
         // YAML front matter shown as a compact metadata row; the title (and the event it is named
-        // after) repeats as the H1 and the audio has its own player.
+        // after) repeats as the H1, the audio has its own player and name suggestions their chips.
         if lines.first == "---", let end = lines.dropFirst().firstIndex(of: "---") {
             let pairs = lines[lines.startIndex + 1..<end].compactMap { line -> (key: String, value: String)? in
                 guard let colon = line.firstIndex(of: ":") else { return nil }
                 let key = line[..<colon].trimmingCharacters(in: .whitespaces)
                 let value = line[line.index(after: colon)...].trimmingCharacters(in: CharacterSet.whitespaces.union(["\""]))
-                return ["title", "event", "audio"].contains(key) || value.isEmpty || value == "[]" ? nil : (key, value)
+                return ["title", "event", "audio", "suggestions"].contains(key) || value.isEmpty || value == "[]" ? nil : (key, value)
             }
             if !pairs.isEmpty { blocks.append(.metadata(pairs)) }
             lines = lines[(end + 1)...]
@@ -137,6 +139,7 @@ struct MarkdownDocument {
 private struct BlockView: View {
     let block: MarkdownBlock
     let onTimestamp: ((TimeInterval) -> Void)?
+    let onSpeaker: ((String) -> Void)?
 
     var body: some View {
         switch block {
@@ -176,7 +179,14 @@ private struct BlockView: View {
                 .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 8))
         case .speaker(let time, let name):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(name).font(.body.weight(.semibold))
+                if let onSpeaker {
+                    Button(name) { onSpeaker(name) }
+                        .buttonStyle(.plain)
+                        .font(.body.weight(.semibold))
+                        .help("Rename \(name)")
+                } else {
+                    Text(name).font(.body.weight(.semibold))
+                }
                 if let onTimestamp, let seconds = MarkdownView.seconds(time) {
                     Button(time) { onTimestamp(seconds) }
                         .buttonStyle(.plain)
@@ -194,8 +204,8 @@ private struct BlockView: View {
     }
 
     private func display(_ key: String, _ value: String) -> String {
-        if key == "attendees" {
-            let names = RecordingFile.list(value)
+        if key == "attendees" || key == "participants" {
+            let names = key == "attendees" ? RecordingFile.list(value) : RecordingFile.participants(value)
             return names.count > 3 ? "\(names.prefix(2).joined(separator: ", ")) and \(names.count - 2) more" : names.joined(separator: ", ")
         }
         guard key == "date", let date = ISO8601DateFormatter().date(from: value) else { return value }

@@ -15,6 +15,8 @@ struct Utterance: Identifiable {
     let started: Date
     /// When the speaker stopped.
     let time: Date
+    /// Which of the call's voices said it (1, 2, …), once they have been told apart.
+    var speaker: Int?
 
     /// The microphone picking up the call through speakers produces a near-copy of a participant line.
     static func isEcho(_ text: String, of other: String, stopWords: Set<String>) -> Bool {
@@ -68,6 +70,8 @@ final class AppState: ObservableObject {
     let preferences: Preferences
     let projects: ProjectStore
     let downloader = ModelDownloader()
+    /// The models that tell the voices on a call apart.
+    let speakerModels: SpeakerModels
     let recorder = CallRecorder()
     let recordings: RecordingStore
     /// Plays the audio of the note open in the dashboard.
@@ -126,7 +130,8 @@ final class AppState: ObservableObject {
         self.log = log
         projects = ProjectStore(preferences: preferences)
         projects.migrateLegacySettings(log: log)
-        recordings = RecordingStore(preferences: preferences, projects: projects, log: log)
+        speakerModels = SpeakerModels(log: log)
+        recordings = RecordingStore(preferences: preferences, projects: projects, speakerModels: speakerModels, log: log)
         recordings.reload()
         player = NotePlayer(log: log)
         AudioRecorder.removeStaleWorkingFolders()

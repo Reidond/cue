@@ -20,6 +20,7 @@
   "numbersLabel": "Numbers",
   "sourceLabel": "Source",
   "participantLabel": "Participant",
+  "numberedParticipantLabel": "Participant %d",
   "transcriptHeading": "Transcript",
   "transcriptRemarkWords": [
     "transcript", "transcribed as", "speech recognition", "recognition error", "recognized as", "misrecogni",

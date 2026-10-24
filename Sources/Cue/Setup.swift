@@ -79,7 +79,7 @@ final class ModelDownloader: NSObject, ObservableObject {
 
 /// What Cue needs from the Mac, checked on demand for the Settings window.
 struct SetupCheck: Identifiable {
-    enum Item: String { case whisper, model, claude, microphone, screenAudio, calendar }
+    enum Item: String { case whisper, model, speakerModels, claude, microphone, screenAudio, calendar }
 
     let item: Item
     let ok: Bool
@@ -89,6 +89,7 @@ struct SetupCheck: Identifiable {
         switch item {
         case .whisper: "Speech recognizer"
         case .model: "Speech model"
+        case .speakerModels: "Speaker models"
         case .claude: "Claude Code"
         case .microphone: "Microphone access"
         case .screenAudio: "Call audio access"
@@ -102,6 +103,8 @@ struct SetupCheck: Identifiable {
         case (.whisper, false): "Install with Homebrew: brew install whisper-cpp"
         case (.model, true): "Whisper large-v3-turbo, runs on this Mac"
         case (.model, false): "1.6 GB download, stays on this Mac"
+        case (.speakerModels, true): "Tell the people on a call apart, on this Mac"
+        case (.speakerModels, false): "22 MB download, stays on this Mac; otherwise the first recording downloads them"
         case (.claude, true): "Answers use your Claude Code login"
         case (.claude, false): "Install Claude Code and sign in once in Terminal"
         case (.microphone, true): "Hears your side of the conversation"
@@ -117,6 +120,7 @@ struct SetupCheck: Identifiable {
         [
             SetupCheck(item: .whisper, ok: WhisperService.serverBinary != nil),
             SetupCheck(item: .model, ok: WhisperService.modelInstalled),
+            SetupCheck(item: .speakerModels, ok: SpeakerModels.installed),
             SetupCheck(item: .claude, ok: ClaudeService.findBinary() != nil),
             SetupCheck(item: .microphone, ok: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized),
             SetupCheck(item: .screenAudio, ok: CGPreflightScreenCaptureAccess()),

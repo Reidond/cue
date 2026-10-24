@@ -33,7 +33,10 @@ call audio ──┘   (ScreenCaptureKit)                            └─ Clau
 - **Speech recognition** runs on your Mac with `whisper-server` and the
   `large-v3-turbo` model (~1 s for a 10 s phrase on Apple silicon).
 - **Who is speaking** comes from the source: the microphone is you, system
-  audio is everyone else on the call.
+  audio is everyone else on the call. In a recording's notes, the people on
+  the call are told apart by voice afterwards, on your Mac, with
+  [FluidAudio](https://github.com/FluidInference/FluidAudio)'s offline
+  speaker diarization.
 - **Question detection** fires after a participant line with a question cue
   (`?` or words like "why", "explain") once they pause, or as soon as you start
   talking. Cues per language live in `Resources/lexicons/`.
@@ -55,7 +58,8 @@ open build/Cue.app
 
 Cue opens its dashboard. On **Home**:
 
-1. **Download** the speech model (1.6 GB, once) and allow **Microphone** and
+1. **Download** the speech model (1.6 GB, once) and the speaker models
+   (22 MB; otherwise the first recording downloads them), and allow **Microphone** and
    **Screen & System Audio Recording** when macOS asks; after granting the
    second one, quit and reopen Cue. The checklist shows what is still missing.
    Claude Code must be installed and signed in (`claude` in Terminal once).
@@ -121,7 +125,12 @@ note in the dashboard, where a list shows the steps it goes through next:
    and its transcript replaces the live one — each line still at the moment it
    was said. This takes about 6 minutes per hour of call on an M2 Pro, and runs
    at background priority, so a call you start meanwhile isn't slowed down.
-3. **Writing summary** — Claude's summary streams in as it is written.
+3. **Finding speakers** — everyone on the call shares the call's audio, so
+   Cue tells their voices apart in it and gives each line the voice heard
+   most while it was said: «Учасник 1», «Учасник 2»… (Participant 1, 2… in
+   English); a call with one other person keeps the plain «Учасник». This
+   takes about 20 seconds per hour of call on an M2 Pro.
+4. **Writing summary** — Claude's summary streams in as it is written.
 
 If a step fails, the note keeps what it had (the live transcript, say) and the
 list stays on the page with the reason; the other steps run all the same.
@@ -135,7 +144,7 @@ any project exists goes into **Meetings**), as plain Markdown files named
 title: "Weekly sync with the design team"
 date: 2026-10-24T11:05:00Z
 duration: 42 min
-participants: Andrii, Participant
+participants: Andrii, Participant 1, Participant 2
 project: "PhD defense"
 audio: "2026-10-24 14.05 – Weekly sync with the design team.m4a"
 ---
@@ -164,6 +173,18 @@ speech recognition, and remarks like «(у транскрипті — „дот�
 through anyway are dropped (the words that give them away are listed per
 language in `Resources/lexicons/`). Use **Summarize Again** on the note to
 regenerate it; the transcript is kept as is. The files open in any Markdown editor (Obsidian, iA Writer, …).
+
+Click a speaker's name in the transcript to rename them: Cue replaces the name
+everywhere in the note — the transcript, the summary, the title (and so the
+file names) and `participants:`. Where the call makes it clear who someone is
+(«Дякую, Олено», or a calendar invitation), Claude suggests a name, and the
+note shows it as a chip — **Учасник 2 → Олена Мулеса?** — with **Apply**. The
+suggestions are kept in the front matter until you apply or dismiss them:
+
+```markdown
+participants: Andrii, Participant 1, Participant 2
+suggestions: {"Participant 2": "Olena Mulesa"}
+```
 
 The call's audio — your microphone and the call mixed, about 15 MB per hour —
 is saved next to the note under the same name (`.m4a`, AAC) and renamed or
@@ -255,11 +276,13 @@ to `cue.png`, the dashboard to `cue-dashboard.png`, Settings to
 composited by the window server, so the overlay is rendered from its view).
 `CUE_HOME=dir` keeps all files and settings in `dir`, `CUE_CLAUDE_BIN` swaps in
 another `claude` and `CUE_WHISPER_CLI` another `whisper-cli` for the second
-pass, `CUE_PROJECT=name` picks the project at launch, and
+pass, `CUE_SPEAKER_MODELS=dir` keeps the speaker models in `dir`,
+`CUE_PROJECT=name` picks the project at launch, and
 `CUE_CONTROL=file` runs each line appended to the file as a click would
 (`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
 `ask TEXT`, `timestamp 00:00:12`, `assign EVENT | PROJECT`,
-`notification record|dismiss`; see `AGENTS.md`) and keeps notifications in the
+`notification record|dismiss`, `rename NAME | NEW`, `apply LABEL`,
+`download speakers`; see `AGENTS.md`) and keeps notifications in the
 session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` reads the
 calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs using the
 microphone from a text file, both again on every check; `CUE_MEETING_TICK` and

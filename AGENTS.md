@@ -45,7 +45,9 @@ speakers, `6x` calendar). It sources `tests/e2e/lib.sh`, which gives it:
 - a sandbox: `CUE_HOME` (a fresh folder holding `Application Support/Cue`
   and `Documents`), its own defaults domain and whisper-server port, all
   wiped after the case, so checkouts can run cases at the same time; the
-  speech model is linked in, never copied; the calendar and the apps using
+  speech model is linked in, never copied, and so are the speaker models
+  once they are downloaded (until then Cue downloads them on first use into
+  the checkout's e2e cache, `CUE_SPEAKER_MODELS`); the calendar and the apps using
   the microphone are read from the case's `$EVENTS` and `$MIC_APPS` files,
   never from the Mac;
 - `cue_defaults KEY TYPE VALUE`, `cue_launch [VAR=value …]`, `cue_stop`,
@@ -63,7 +65,9 @@ speakers, `6x` calendar). It sources `tests/e2e/lib.sh`, which gives it:
 - `speech OUT.wav VOICE "text"` and `dialogue SCRIPT OUTDIR` (multi-voice
   calls built with `say`, one WAV per side plus `timeline.tsv`), `ocr PNG`,
   `audio_length FILE`, `audio_sync AUDIO TIMELINE [SIDE…]` (each line of a
-  dialogue where its timeline puts it, silence elsewhere);
+  dialogue where its timeline puts it, silence elsewhere), `turn_speakers
+  NOTES TIMELINE` (each line of a dialogue with its voice and the label of
+  the transcript turn it starts);
 - `assert_file`, `assert_contains`, `assert_not_contains`, `assert_eq`,
   `assert_between`, `fail`, `skip`, and `need_whisper`, `need_whisper_cli`,
   `need_real_claude`, `need_voice`.
@@ -83,12 +87,13 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_WHISPER_PORT=n` | Run (or reuse) whisper-server on this port instead of 8178. |
 | `CUE_CLAUDE_BIN=path` | Use this binary instead of `claude`. |
 | `CUE_WHISPER_CLI=path` | Run this binary for the second pass over a recording instead of `whisper-cli` (a missing or failing one: the live transcript is kept). |
+| `CUE_SPEAKER_MODELS=dir` | Keep the speaker models (FluidAudio's `speaker-diarization/` folder) in `dir` instead of `Application Support/Cue/models` (an empty folder: Home offers the download; a file in the way: Finding speakers fails and the transcript is kept). |
 | `CUE_NO_LIVE_AUDIO=1` | Don't open the microphone or call audio. |
 | `CUE_REHEARSE_PARTICIPANT=wav` / `CUE_REHEARSE_ME=wav` | Play a file as the call / as your microphone, in real time; a recording gets its audio too (digital silence on the call side is left out, as ScreenCaptureKit delivers nothing while the Mac is silent). |
 | `CUE_REHEARSE_RECORD=1` | Record the rehearsal and write its notes. |
 | `CUE_SNAPSHOT=png` | Render the overlay to `png` every 2 s, and the dashboard and Settings, when open, to `…-dashboard.png` / `…-settings.png` (whole window, light appearance). |
 | `CUE_PROJECT=name` | Make this project active at launch, creating it if there is none by that name. |
-| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
+| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `download speakers` (Download on Home's Speaker models row). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
 | `CUE_CALENDAR_EVENTS=file.json` | Read the calendar from this file instead of EventKit (no permission asked), again on every check: a JSON array of `{title, start, end}` (ISO 8601) with optional `id`, `series` (shared by a recurring event's occurrences), `calendar` (name), `url`, `location`, `notes`, `attendees` (names), `recurring`. |
 | `CUE_MIC_APPS=file` | The bundle IDs using the microphone right now, one per line, read on every check instead of Core Audio's process list. |
 | `CUE_MEETING_TICK=s` / `CUE_MIC_RELEASE=s` | Check for calls every `s` seconds instead of 5; stop a call's recording once the call app has been off the microphone for `s` seconds instead of 60. |
@@ -99,7 +104,10 @@ The session log (`Application Support/Cue/sessions/*.md`) is the app's
 progress record and what cases wait on: keep writing a line for every step a
 recording goes through (`🎙 Transcript saved: …`, `🔊 Audio saved: …`,
 `🎚 Working audio: …`, `🔁 Improving transcript…`, `✅ Transcript improved: …`
-or `⚠︎ Couldn't improve the transcript: …`, `✍️ Writing summary…`,
+or `⚠︎ Couldn't improve the transcript: …`, `👥 Finding speakers…`,
+`✅ Speakers: N …` or `⚠︎ Couldn't tell speakers apart: …`, `✍️ Writing summary…`,
+`💡 Suggested name: LABEL → NAME`, `✏️ Renamed “OLD” to “NEW” in …`,
+`👥 Speaker models downloaded: … MB`,
 `📝 Notes ready: …`, `📅 Recording “Title” into Project`, `🔔 Record “Title”?`
 for every notification, and so on), and never rename existing lines without
 updating the cases.
