@@ -4,7 +4,8 @@ import Foundation
 /// The server handles one request at a time, so finals queue ahead of partials
 /// and a newer partial replaces an older one that has not started yet.
 actor WhisperService {
-    static let port = 8178
+    /// CUE_WHISPER_PORT lets end-to-end runs in parallel each have their own server.
+    static let port = Int(ProcessInfo.processInfo.environment["CUE_WHISPER_PORT"] ?? "") ?? 8178
     static let modelPath = appSupport.appendingPathComponent("models/ggml-large-v3-turbo.bin").path
     static let serverCandidates = ["/opt/homebrew/bin/whisper-server", "/usr/local/bin/whisper-server"]
 

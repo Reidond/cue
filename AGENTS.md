@@ -18,11 +18,17 @@ This rule is strict and has no exceptions.
   (`--inspect`, `--render`, …) — against real files, real audio, real
   `whisper-server` and real child processes, and checks what a user would see:
   the notes on disk, the audio files, the session log, the rendered windows.
-- The only stand-in allowed is at the process boundary for a paid external
-  service: `tests/e2e/tools/fake-claude.swift` replaces the `claude` CLI
-  (through `CUE_CLAUDE_BIN`) so cases are fast and deterministic. Cases that
-  judge Claude's actual writing run against the real CLI with
-  `tests/e2e/run.sh --real-claude`.
+- Stand-ins are allowed only at the outer boundary, never for Cue's own code:
+  - the paid external service: `tests/e2e/tools/fake-claude.swift` replaces
+    the `claude` CLI (through `CUE_CLAUDE_BIN`) so cases are fast and
+    deterministic. Cases that judge Claude's actual writing run against the
+    real CLI with `tests/e2e/run.sh --real-claude`;
+  - system sources that need the user's permission or a live person (the
+    microphone, call audio, the calendar database, which apps use the
+    microphone, the answer to a notification): an environment hook feeds the
+    input at the exact point where Cue reads it from the system (as
+    `CUE_REHEARSE_*` does for audio), and everything after that point runs
+    for real.
 - A feature is done when its case passes: `tests/e2e/run.sh` (all cases) or
   `tests/e2e/run.sh 20-` (cases whose name starts with `20-`). Report the
   PASS / FAIL / SKIP summary, with the failing output, in the PR description.
@@ -37,8 +43,9 @@ projects and dashboard, `3x` call audio, `4x` second-pass transcript, `5x`
 speakers, `6x` calendar). It sources `tests/e2e/lib.sh`, which gives it:
 
 - a sandbox: `CUE_HOME` (a fresh folder holding `Application Support/Cue`
-  and `Documents`) and the `com.andriishafar.cue.e2e` defaults domain, wiped
-  before each case; the speech model is linked in, never copied;
+  and `Documents`), its own defaults domain and whisper-server port, all
+  wiped after the case, so checkouts can run cases at the same time; the
+  speech model is linked in, never copied;
 - `cue_defaults KEY TYPE VALUE`, `cue_launch [VAR=value …]`, `cue_stop`,
   `cue_cli ARGS…` (command-line modes), `cue_control COMMAND…` (what a click
   would do, through `CUE_CONTROL`);
@@ -60,6 +67,8 @@ code paths and document new ones here and in `README.md` › Testing.
 | Variable | Effect |
 |---|---|
 | `CUE_HOME=dir` | All files under `dir`, settings in the `com.andriishafar.cue.e2e` domain (`Sources/Cue/Storage.swift`). |
+| `CUE_DEFAULTS_DOMAIN=name` | With `CUE_HOME`, keep settings in this defaults domain. |
+| `CUE_WHISPER_PORT=n` | Run (or reuse) whisper-server on this port instead of 8178. |
 | `CUE_CLAUDE_BIN=path` | Use this binary instead of `claude`. |
 | `CUE_NO_LIVE_AUDIO=1` | Don't open the microphone or call audio. |
 | `CUE_REHEARSE_PARTICIPANT=wav` / `CUE_REHEARSE_ME=wav` | Play a file as the call / as your microphone. |

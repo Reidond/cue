@@ -17,5 +17,6 @@ let appSupport: URL = {
 let documentsFolder: URL = sandbox?.appendingPathComponent("Documents")
     ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
 
-/// Cue's settings; the `com.andriishafar.cue.e2e` domain under test.
-let appDefaults: UserDefaults = sandbox == nil ? .standard : UserDefaults(suiteName: "com.andriishafar.cue.e2e")!
+/// Cue's settings; under test, the CUE_DEFAULTS_DOMAIN domain (default `com.andriishafar.cue.e2e`).
+let appDefaults: UserDefaults = sandbox == nil ? .standard
+    : UserDefaults(suiteName: ProcessInfo.processInfo.environment["CUE_DEFAULTS_DOMAIN"] ?? "com.andriishafar.cue.e2e")!

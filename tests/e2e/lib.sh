@@ -6,7 +6,7 @@ set -uo pipefail
 
 CUE_BIN=$CUE_APP/Contents/MacOS/Cue
 FIXTURES=$E2E_ROOT/fixtures
-DOMAIN=com.andriishafar.cue.e2e
+DOMAIN=com.andriishafar.cue.e2e.$E2E_CASE-$$
 REAL_SUPPORT="$HOME/Library/Application Support/Cue"
 CUE_PID=
 
@@ -24,6 +24,9 @@ mkdir -p "$SUPPORT" "$CUE_HOME/Documents"
 # The speech model is 1.6 GB: link it in, never copy or download it.
 [[ -d $REAL_SUPPORT/models ]] && ln -s "$REAL_SUPPORT/models" "$SUPPORT/models"
 defaults delete $DOMAIN > /dev/null 2>&1
+# Own settings domain and whisper-server port, so checkouts can run cases at the same time.
+export CUE_DEFAULTS_DOMAIN=$DOMAIN
+export CUE_WHISPER_PORT=$(for _ in $(seq 50); do port=$((20000 + RANDOM % 20000)); lsof -nP -iTCP:$port -sTCP:LISTEN > /dev/null 2>&1 || { echo $port; break; }; done)
 
 if [[ $E2E_CLAUDE == fake ]]; then
     export CUE_CLAUDE_BIN=$E2E_BIN/fake-claude
@@ -34,7 +37,9 @@ fi
 _finish() {
     local status=$?
     cue_stop
+    pkill -f -- "whisper-server .*--port $CUE_WHISPER_PORT( |\$)" 2> /dev/null  # left behind if Cue was killed
     defaults delete $DOMAIN > /dev/null 2>&1
+    rm -f "$HOME/Library/Preferences/$DOMAIN.plist"
     if [[ ($status == 0 || $status == 77) && $E2E_KEEP != 1 ]]; then
         rm -rf "$CASE_DIR"
     else

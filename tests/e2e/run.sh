@@ -34,7 +34,8 @@ export CUE_APP=$ROOT/build/Cue.app
 [[ -x $CUE_APP/Contents/MacOS/Cue ]] || { echo "No $CUE_APP — run without --no-build"; exit 1; }
 
 export E2E_ROOT=$E2E
-export E2E_WORK=${E2E_WORK:-${TMPDIR:-/tmp}/cue-e2e}
+# One work folder per checkout, so worktrees running cases at once keep their own tools.
+export E2E_WORK=${E2E_WORK:-${TMPDIR:-/tmp}/cue-e2e-$(echo "$ROOT" | shasum | cut -c 1-8)}
 export E2E_BIN=$E2E_WORK/bin
 mkdir -p "$E2E_BIN" "$E2E_WORK/cache"
 
