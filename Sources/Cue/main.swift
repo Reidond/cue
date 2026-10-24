@@ -168,9 +168,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             view.cacheDisplay(in: view.bounds, to: rep)
             try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
         }
+        // The overlay is all glass, which caches as a blank window: render its view instead.
+        func writeOverlay(_ delegate: AppDelegate, to path: String) {
+            let size = delegate.panel.frame.size
+            let renderer = ImageRenderer(content: OverlayView(state: delegate.state, profile: delegate.profile)
+                .frame(width: size.width, height: size.height))
+            renderer.scale = 2
+            if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: path))
+            }
+        }
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                write(self?.panel.contentView, to: path)
+                if let self { writeOverlay(self, to: path) }
                 if self?.settingsWindow?.isVisible == true {
                     write(self?.settingsWindow?.contentView, to: path.replacingOccurrences(of: ".png", with: "-settings.png"))
                 }

@@ -1,0 +1,3 @@
+# A participant asks a question that matches a prepared answer in talk.md.
+call | Daniel | Thank you for the talk. How many hives did you study?
+pause | 2

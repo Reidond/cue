@@ -142,7 +142,7 @@ speech() {
 # timeline.tsv (start, end, side, voice, text). Cached across runs.
 dialogue() {
     local script=$1 out=$2 voice
-    while IFS= read -r voice; do need_voice "$voice"; done < <(grep -v -E '^\s*(#|$)' "$script" | cut -d'|' -f2 | sed 's/^ *//; s/ *$//' | sort -u)
+    while IFS= read -r voice; do need_voice "$voice"; done < <(grep -v -E '^\s*(#|$|pause\s*\|)' "$script" | cut -d'|' -f2 | sed 's/^ *//; s/ *$//' | sort -u)
     local cache=$E2E_WORK/cache/$(shasum "$script" | cut -c 1-16)
     if [[ ! -f $cache/timeline.tsv ]]; then
         "$E2E_BIN/dialogue" "$script" "$cache" || fail "couldn't build dialogue from $script"

@@ -1,0 +1,5 @@
+# A short two-sided call: the participant on the call, you on the microphone.
+call | Daniel   | Good morning. I wanted to ask about the beekeeping report.
+me   | Samantha | Good morning. The report is almost finished.
+call | Daniel   | Great. When can you send it?
+me   | Samantha | I will send it by Friday.

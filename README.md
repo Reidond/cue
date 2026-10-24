@@ -130,6 +130,19 @@ Tips:
 
 ## Testing
 
+Cue is tested end to end only — no unit tests (see `AGENTS.md`). The cases in
+`tests/e2e/cases/` run the built app in a sandbox (`CUE_HOME`), feed it speech
+made with macOS voices, and check the notes, audio, session log and rendered
+windows:
+
+```bash
+tests/e2e/run.sh                 # build, then run every case
+tests/e2e/run.sh --no-build 1    # only cases whose name starts with 1
+tests/e2e/run.sh --real-claude   # use the real Claude Code instead of the stand-in
+```
+
+The same hooks work by hand:
+
 ```bash
 # What Cue extracts from files, including prepared answers
 build/Cue.app/Contents/MacOS/Cue --inspect slides.pptx answers.docx
@@ -146,6 +159,8 @@ build/Cue.app/Contents/MacOS/Cue --render notes.md notes.png
 ```
 
 `CUE_SNAPSHOT=/tmp/cue.png` renders the windows to PNGs every 2 s (layout and
-text only — the glass is composited by the window server), and
-`CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay. `swift scripts/make_icon.swift`
+text only — the glass is composited by the window server, so the overlay is
+rendered from its view), `CUE_HOME=dir` keeps all files and settings in `dir`,
+`CUE_CLAUDE_BIN` swaps in another `claude`, and `CUE_ALLOW_CAPTURE=1` lets
+screenshots see the overlay. `swift scripts/make_icon.swift`
 regenerates the app icon.
