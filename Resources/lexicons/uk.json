@@ -22,5 +22,9 @@
   "numbersLabel": "Цифри",
   "sourceLabel": "Джерело",
   "participantLabel": "Учасник",
-  "transcriptHeading": "Транскрипт"
+  "transcriptHeading": "Транскрипт",
+  "transcriptRemarkWords": [
+    "транскрипт", "транскрибов", "розшифров", "розпізнав", "розпізнан", "у записі", "в записі", "почулося",
+    "нерозбірлив"
+  ]
 }

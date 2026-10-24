@@ -21,12 +21,12 @@ struct ProjectNotesView: View {
         HSplitView {
             List(selection: $selection) {
                 ForEach(filtered) { file in
-                    RecordingRow(file: file, summarizing: store.summarizing.contains(file.id))
+                    RecordingRow(file: file, processing: store.isProcessing(file.id))
                         .tag(file.id)
                         .contextMenu {
                             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file.url]) }
                             Button("Summarize Again") { store.summarize(file.id) }
-                                .disabled(store.summarizing.contains(file.id))
+                                .disabled(store.isProcessing(file.id))
                             Divider()
                             Button("Move to Trash", role: .destructive) { store.moveToTrash(file.id) }
                         }
@@ -67,7 +67,7 @@ struct ProjectNotesView: View {
 
 private struct RecordingRow: View {
     let file: RecordingFile
-    let summarizing: Bool
+    let processing: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -75,7 +75,7 @@ private struct RecordingRow: View {
             HStack(spacing: 6) {
                 Text(file.date.formatted(date: .abbreviated, time: .shortened))
                 if !file.duration.isEmpty { Text("·"); Text(file.duration) }
-                if summarizing { ProgressView().controlSize(.mini) }
+                if processing { ProgressView().controlSize(.mini) }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -94,15 +94,16 @@ private struct RecordingDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                if store.summarizing.contains(file.id), (store.liveSummary[file.id] ?? "").isEmpty {
+                if let steps = store.progress[file.id] {
+                    NoteSteps(steps: steps) { store.summarize(file.id) }
+                } else if store.summarizing.contains(file.id), (store.liveSummary[file.id] ?? "").isEmpty {
                     Label {
                         Text("Writing the summary…")
                     } icon: {
                         ProgressView().controlSize(.small)
                     }
                     .foregroundStyle(.secondary)
-                }
-                if let failure = store.failures[file.id] {
+                } else if let failure = store.failures[file.id] {
                     FailureBanner(message: failure) { store.summarize(file.id) }
                 }
                 MarkdownView(markdown: store.contents(file.id),
@@ -128,7 +129,7 @@ private struct RecordingDetail: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button("Summarize Again", systemImage: "arrow.clockwise") { store.summarize(file.id) }
-                    .disabled(store.summarizing.contains(file.id))
+                    .disabled(store.isProcessing(file.id))
                     .help("Summarize again")
                 Button("Copy Markdown", systemImage: "doc.on.doc") {
                     NSPasteboard.general.clearContents()
@@ -290,6 +291,64 @@ private struct PlayerBar: View {
         .padding(.trailing, 8)
         .padding(.vertical, 8)
         .glassEffect(.regular, in: .capsule)
+    }
+}
+
+/// What happens to a new note after Stop, step by step; it stays on the page if a step failed.
+private struct NoteSteps: View {
+    let steps: [NoteProgress]
+    let retrySummary: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(steps) { step in
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    icon(step.state)
+                        .frame(width: 18)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(step.step.title)
+                            .foregroundStyle(step.state == .pending ? .secondary : .primary)
+                        if let detail = detail(step.state) {
+                            Text(detail)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    if step.step == .writingSummary, step.failed {
+                        Button("Try Again", action: retrySummary)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Processing steps")
+    }
+
+    @ViewBuilder
+    private func icon(_ state: NoteProgress.State) -> some View {
+        switch state {
+        case .pending:
+            Image(systemName: "circle.dashed").foregroundStyle(.tertiary)
+        case .running:
+            ProgressView().controlSize(.small)
+        case .done:
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+        }
+    }
+
+    private func detail(_ state: NoteProgress.State) -> String? {
+        switch state {
+        case .pending: nil
+        case .running(let detail), .done(let detail): detail
+        case .failed(let reason): reason
+        }
     }
 }
 

@@ -74,7 +74,8 @@ if value(after: "--input-format") == "stream-json" {
         reply(content.hasPrefix("Connection check") ? "—" : answer)
     }
 } else {
-    record("summary-system", value(after: "--system-prompt") ?? "")
+    let system = value(after: "--system-prompt-file").flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+    record("summary-system", system ?? value(after: "--system-prompt") ?? "")
     let input = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
     record("summary-input", input)
     let summary = environment["FAKE_CLAUDE_SUMMARY"].flatMap { try? String(contentsOfFile: $0, encoding: .utf8) } ?? defaultSummary

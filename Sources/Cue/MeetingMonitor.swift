@@ -234,7 +234,7 @@ final class MeetingMonitor: ObservableObject {
         state.stopRecording(automatically: true) { [weak self] id in
             guard let self else { return }
             guard let id else { return self.notifier.nothingRecorded(title: call.title) }
-            if self.state.recordings.summarizing.contains(id) {
+            if self.state.recordings.isProcessing(id) {
                 self.waitingForNotes.insert(id)
             } else {
                 self.notifier.notesReady(title: self.state.recordings.file(id)?.title ?? call.title, note: id)

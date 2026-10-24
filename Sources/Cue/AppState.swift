@@ -15,6 +15,14 @@ struct Utterance: Identifiable {
     let started: Date
     /// When the speaker stopped.
     let time: Date
+
+    /// The microphone picking up the call through speakers produces a near-copy of a participant line.
+    static func isEcho(_ text: String, of other: String, stopWords: Set<String>) -> Bool {
+        let words = Set(KnowledgeBase.stems(text, stopWords: stopWords))
+        guard words.count >= 3 else { return false }
+        let otherWords = Set(KnowledgeBase.stems(other, stopWords: stopWords))
+        return Double(words.intersection(otherWords).count) / Double(words.count) > 0.6
+    }
 }
 
 struct Answer: Identifiable {
@@ -430,12 +438,9 @@ final class AppState: ObservableObject {
     private func isEcho(_ channel: Channel, _ text: String) -> Bool {
         guard channel == .me else { return false }
         let stopWords = lexicon.stopWords
-        let words = Set(KnowledgeBase.stems(text, stopWords: stopWords))
-        guard words.count >= 3 else { return false }
         return utterances.suffix(4).contains { other in
-            guard other.channel == .others, Date().timeIntervalSince(other.time) < 15 else { return false }
-            let otherWords = Set(KnowledgeBase.stems(other.text, stopWords: stopWords))
-            return Double(words.intersection(otherWords).count) / Double(words.count) > 0.6
+            other.channel == .others && Date().timeIntervalSince(other.time) < 15
+                && Utterance.isEcho(text, of: other.text, stopWords: stopWords)
         }
     }
 

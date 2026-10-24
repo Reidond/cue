@@ -55,14 +55,18 @@ speakers, `6x` calendar). It sources `tests/e2e/lib.sh`, which gives it:
 - `minutes_from_now N`, `tomorrow_at HH:MM` (event times for `$EVENTS`), `mic_apps BUNDLE_ID…`
   (who is on the microphone now; none when the call app lets go);
 - `wait_for "what" SECONDS command…`, `wait_log PATTERN SECONDS`,
-  `log_count PATTERN`, `session_log`, `find_notes`;
+  `log_count PATTERN`, `session_log`, `find_notes`, `summary_of NOTES` (a
+  note's summary, without the transcript);
+- `whisper_cli_spy [SECONDS]` (a `whisper-cli` for `CUE_WHISPER_CLI` that
+  notes how Cue ran it — arguments, priority — optionally takes longer, and
+  runs the real one);
 - `speech OUT.wav VOICE "text"` and `dialogue SCRIPT OUTDIR` (multi-voice
   calls built with `say`, one WAV per side plus `timeline.tsv`), `ocr PNG`,
   `audio_length FILE`, `audio_sync AUDIO TIMELINE [SIDE…]` (each line of a
   dialogue where its timeline puts it, silence elsewhere);
 - `assert_file`, `assert_contains`, `assert_not_contains`, `assert_eq`,
-  `assert_between`, `fail`, `skip`, and `need_whisper`, `need_real_claude`,
-  `need_voice`.
+  `assert_between`, `fail`, `skip`, and `need_whisper`, `need_whisper_cli`,
+  `need_real_claude`, `need_voice`.
 
 Look at the existing cases before writing a new one, and keep each case
 focused on one user-visible behaviour.
@@ -78,6 +82,7 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_DEFAULTS_DOMAIN=name` | With `CUE_HOME`, keep settings in this defaults domain. |
 | `CUE_WHISPER_PORT=n` | Run (or reuse) whisper-server on this port instead of 8178. |
 | `CUE_CLAUDE_BIN=path` | Use this binary instead of `claude`. |
+| `CUE_WHISPER_CLI=path` | Run this binary for the second pass over a recording instead of `whisper-cli` (a missing or failing one: the live transcript is kept). |
 | `CUE_NO_LIVE_AUDIO=1` | Don't open the microphone or call audio. |
 | `CUE_REHEARSE_PARTICIPANT=wav` / `CUE_REHEARSE_ME=wav` | Play a file as the call / as your microphone, in real time; a recording gets its audio too (digital silence on the call side is left out, as ScreenCaptureKit delivers nothing while the Mac is silent). |
 | `CUE_REHEARSE_RECORD=1` | Record the rehearsal and write its notes. |
@@ -93,9 +98,11 @@ code paths and document new ones here and in `README.md` › Testing.
 The session log (`Application Support/Cue/sessions/*.md`) is the app's
 progress record and what cases wait on: keep writing a line for every step a
 recording goes through (`🎙 Transcript saved: …`, `🔊 Audio saved: …`,
-`🎚 Working audio: …`, `📝 Notes ready: …`, `📅 Recording “Title” into
-Project`, `🔔 Record “Title”?` for every notification, and so on), and never
-rename existing lines without updating the cases.
+`🎚 Working audio: …`, `🔁 Improving transcript…`, `✅ Transcript improved: …`
+or `⚠︎ Couldn't improve the transcript: …`, `✍️ Writing summary…`,
+`📝 Notes ready: …`, `📅 Recording “Title” into Project`, `🔔 Record “Title”?`
+for every notification, and so on), and never rename existing lines without
+updating the cases.
 
 ## Rules for changes
 

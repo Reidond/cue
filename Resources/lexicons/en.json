@@ -20,5 +20,9 @@
   "numbersLabel": "Numbers",
   "sourceLabel": "Source",
   "participantLabel": "Participant",
-  "transcriptHeading": "Transcript"
+  "transcriptHeading": "Transcript",
+  "transcriptRemarkWords": [
+    "transcript", "transcribed as", "speech recognition", "recognition error", "recognized as", "misrecogni",
+    "misheard", "mis-heard", "mishear", "inaudible", "in the recording", "the recording says"
+  ]
 }
