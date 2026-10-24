@@ -74,20 +74,37 @@ struct CallTranscript {
 /// transcript after an HTML comment marker so the summary can be replaced later.
 struct RecordingFile: Identifiable, Hashable {
     let url: URL
-    let id: String          // start time; stays the same when the title (and file name) changes
+    let id: String          // project folder and start time; stays the same when the title (and file name) changes
     let title: String
     let date: Date
     let duration: String
 
     static let transcriptMarker = "<!-- transcript -->"
 
+    /// Folder name of the project the note belongs to (`<project>/Notes/<note>.md`).
+    var projectID: String { url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent }
+
     static func load(_ url: URL) -> RecordingFile? {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         let front = frontMatter(text)
-        guard let id = front["date"], let date = ISO8601DateFormatter().date(from: id) else { return nil }
-        return RecordingFile(url: url, id: id, title: front["title"] ?? url.deletingPathExtension().lastPathComponent,
+        guard let stamp = front["date"], let date = ISO8601DateFormatter().date(from: stamp) else { return nil }
+        let project = url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent
+        return RecordingFile(url: url, id: id(project: project, stamp: stamp), title: front["title"] ?? url.deletingPathExtension().lastPathComponent,
                              date: date, duration: front["duration"] ?? "")
     }
+
+    static func id(project: String, stamp: String) -> String { "\(project)/\(stamp)" }
+
+    /// Records the project in a note's front matter (notes moved in from before projects).
+    static func setProject(_ name: String, in url: URL) {
+        guard var text = try? String(contentsOf: url, encoding: .utf8), frontMatter(text)["project"] == nil,
+              text.hasPrefix("---\n"), let end = text.range(of: "\n---\n", range: text.index(text.startIndex, offsetBy: 3)..<text.endIndex)
+        else { return }
+        text.insert(contentsOf: "\nproject: \(quoted(name))", at: end.lowerBound)
+        try? text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    static func quoted(_ value: String) -> String { "\"\(value.replacingOccurrences(of: "\"", with: "\\\""))\"" }
 
     static func frontMatter(_ text: String) -> [String: String] {
         let lines = text.components(separatedBy: "\n")
@@ -104,7 +121,7 @@ struct RecordingFile: Identifiable, Hashable {
     }
 }
 
-/// Saves recordings as Markdown in the user's folder and keeps them listed.
+/// Saves recordings as Markdown in each project's `Notes/` and keeps them listed, newest first.
 @MainActor
 final class RecordingStore: ObservableObject {
     @Published private(set) var files: [RecordingFile] = []
@@ -113,25 +130,29 @@ final class RecordingStore: ObservableObject {
     @Published private(set) var summarizing: Set<String> = []
     @Published private(set) var failures: [String: String] = [:]
 
-    private let profile: Profile
+    private let preferences: Preferences
+    private let projects: ProjectStore
     private let log: SessionLog
     private var summarizers: [String: Process] = [:]
 
-    init(profile: Profile, log: SessionLog) {
-        self.profile = profile
+    init(preferences: Preferences, projects: ProjectStore, log: SessionLog) {
+        self.preferences = preferences
+        self.projects = projects
         self.log = log
     }
 
-    var folder: URL { profile.recordingsFolder }
-
     func reload() {
-        let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        let urls = projects.projects.flatMap { project in
+            (try? FileManager.default.contentsOfDirectory(at: project.notesFolder, includingPropertiesForKeys: nil)) ?? []
+        }
         files = urls.filter { $0.pathExtension == "md" }
             .compactMap(RecordingFile.load)
             .sorted { $0.date > $1.date }
     }
 
     func file(_ id: String) -> RecordingFile? { files.first { $0.id == id } }
+
+    func files(in project: Project) -> [RecordingFile] { files.filter { $0.projectID == project.id } }
 
     func contents(_ id: String) -> String {
         guard let file = file(id), var text = try? String(contentsOf: file.url, encoding: .utf8) else { return "" }
@@ -141,22 +162,25 @@ final class RecordingStore: ObservableObject {
         return text
     }
 
-    /// Writes the transcript right away so nothing is lost, then summarizes it.
-    func save(_ transcript: CallTranscript) -> String? {
-        let lexicon = profile.lexicon
-        let speaker = profile.speakerName.isEmpty ? "You" : profile.speakerName
+    /// Writes the transcript into the project's notes right away so nothing is lost, then summarizes it.
+    func save(_ transcript: CallTranscript, into project: Project) -> String? {
+        let lexicon = project.lexicon
+        let speaker = preferences.speakerName.isEmpty ? "You" : preferences.speakerName
         let names: (Channel) -> String = { $0 == .me ? speaker : lexicon.participant }
-        let id = ISO8601DateFormatter().string(from: transcript.startedAt)
+        let stamp = ISO8601DateFormatter().string(from: transcript.startedAt)
+        let id = RecordingFile.id(project: project.id, stamp: stamp)
         let title = "Call " + transcript.startedAt.formatted(date: .abbreviated, time: .shortened)
         let duration = Duration.seconds(transcript.endedAt.timeIntervalSince(transcript.startedAt))
             .formatted(.units(allowed: [.hours, .minutes], width: .abbreviated, zeroValueUnits: .hide))
-        let summarize = profile.summarizeRecordings
+        let summarize = preferences.summarizeRecordings
+        let folder = project.notesFolder
         let document = """
         ---
         title: "\(title)"
-        date: \(id)
+        date: \(stamp)
         duration: \(duration.isEmpty ? "<1 min" : duration)
         participants: \(speaker), \(lexicon.participant)
+        project: \(RecordingFile.quoted(project.name))
         ---
 
         # \(title)
@@ -169,7 +193,7 @@ final class RecordingStore: ObservableObject {
         \(transcript.markdown(names: names))
 
         """
-        let url = folder.appendingPathComponent(fileName(date: transcript.startedAt, title: "Call"))
+        let url = folder.appendingPathComponent(Self.fileName(date: transcript.startedAt, title: "Call"))
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try document.write(to: url, atomically: true, encoding: .utf8)
@@ -195,8 +219,10 @@ final class RecordingStore: ObservableObject {
         summarizing.insert(id)
         failures[id] = nil
         liveSummary[id] = ""
-        let prompt = Summarizer.systemPrompt(speaker: profile.speakerName, language: profile.lexicon.name, occasion: profile.occasion)
-        summarizers[id] = Summarizer.run(system: prompt, transcript: text, model: profile.model, onText: { [weak self] partial in
+        let project = projects.project(file.projectID)
+        let prompt = Summarizer.systemPrompt(speaker: preferences.speakerName, language: (project?.lexicon ?? Lexicon.load("en")).name,
+                                             occasion: project?.occasion ?? "")
+        summarizers[id] = Summarizer.run(system: prompt, transcript: text, model: preferences.model, onText: { [weak self] partial in
             Task { @MainActor in if self?.summarizing.contains(id) == true { self?.liveSummary[id] = partial } }
         }, completion: { [weak self] result in
             Task { @MainActor in self?.finishSummary(id, result) }
@@ -221,7 +247,7 @@ final class RecordingStore: ObservableObject {
             updated = updated.replacingOccurrences(of: "title: \"\(file.title.replacingOccurrences(of: "\"", with: "\\\""))\"",
                                                    with: "title: \"\(title.replacingOccurrences(of: "\"", with: "\\\""))\"")
             updated = updated.replacingOccurrences(of: "\n# \(file.title)\n", with: "\n# \(title)\n")
-            let renamed = folder.appendingPathComponent(fileName(date: file.date, title: title))
+            let renamed = file.url.deletingLastPathComponent().appendingPathComponent(Self.fileName(date: file.date, title: title))
             do {
                 try updated.write(to: file.url, atomically: true, encoding: .utf8)
                 if renamed != file.url, !FileManager.default.fileExists(atPath: renamed.path) {
@@ -283,9 +309,9 @@ final class RecordingStore: ObservableObject {
     }()
 
     /// "2026-10-24 14.05 – Title.md": sorts by date in Finder.
-    private func fileName(date: Date, title: String) -> String {
+    private static func fileName(date: Date, title: String) -> String {
         let safe = title.components(separatedBy: CharacterSet(charactersIn: "/:\\\n")).joined(separator: "-").prefix(80)
-        return "\(Self.stampFormat.string(from: date)) – \(safe).md"
+        return "\(stampFormat.string(from: date)) – \(safe).md"
     }
 }
 

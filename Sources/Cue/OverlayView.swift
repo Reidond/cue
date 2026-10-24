@@ -6,25 +6,25 @@ import SwiftUI
 /// glass can keep it legible over any background.
 struct OverlayView: View {
     @ObservedObject var state: AppState
-    @ObservedObject var profile: Profile
+    @ObservedObject var preferences: Preferences
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var size: CGFloat { CGFloat(profile.textSize) }
+    private var size: CGFloat { CGFloat(preferences.textSize) }
 
     var body: some View {
         // Spacing below the gaps keeps the pieces distinct instead of melting together.
         GlassEffectContainer(spacing: 4) {
             VStack(spacing: 10) {
-                ControlBar(state: state, profile: profile)
+                ControlBar(state: state, preferences: preferences)
                 AnswerCard(state: state, size: size)
                     .frame(maxHeight: .infinity)
-                if profile.showTranscript {
+                if preferences.showTranscript {
                     TranscriptCard(state: state, size: size)
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 6)))
                 }
                 AskBar(state: state)
             }
-            .animation(.smooth(duration: 0.2), value: profile.showTranscript)
+            .animation(.smooth(duration: 0.2), value: preferences.showTranscript)
         }
         .padding(10)
     }
@@ -34,24 +34,25 @@ struct OverlayView: View {
 
 private struct ControlBar: View {
     @ObservedObject var state: AppState
-    @ObservedObject var profile: Profile
+    @ObservedObject var preferences: Preferences
 
     var body: some View {
         HStack(spacing: 12) {
             LevelIcon(symbol: "mic.fill", level: state.micLevel, ok: state.mic.ok, help: state.mic.detail)
             LevelIcon(symbol: "speaker.wave.3.fill", level: state.callLevel, ok: state.call.ok, help: state.call.detail)
+            ProjectMenu(state: state)
             StatusLabel(state: state)
             Spacer(minLength: 4)
             if state.answers.count > 1 {
                 HistoryControl(state: state)
             }
             RecordControl(state: state)
-            Toggle("Auto", isOn: $profile.autoAnswer)
+            Toggle("Auto", isOn: $preferences.autoAnswer)
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .help("Answer questions automatically (⌃⌥A)")
-            IconButton(symbol: "text.bubble", active: profile.showTranscript, help: "Show transcript") {
-                profile.showTranscript.toggle()
+            IconButton(symbol: "text.bubble", active: preferences.showTranscript, help: "Show transcript") {
+                preferences.showTranscript.toggle()
             }
             IconButton(symbol: "gearshape", help: "Settings") { state.openSettings() }
         }
@@ -62,6 +63,40 @@ private struct ControlBar: View {
         .contentShape(.capsule)
         .gesture(WindowDragGesture())  // the bar is the handle for moving the overlay
         .glassEffect(.regular, in: .capsule)
+    }
+}
+
+/// The project Cue answers from and records into, with a menu to switch it or open the dashboard.
+private struct ProjectMenu: View {
+    @ObservedObject var state: AppState
+
+    var body: some View {
+        Menu {
+            ForEach(state.projects.projects) { project in
+                Toggle(project.name, isOn: Binding(get: { project.id == state.activeProject?.id },
+                                                   set: { _ in state.activate(project) }))
+            }
+            if !state.projects.projects.isEmpty { Divider() }
+            Button("Open Dashboard…", action: state.openDashboard)
+        } label: {
+            HStack(spacing: 3) {
+                Text(name).fontWeight(.semibold)
+                Image(systemName: "chevron.up.chevron.down")
+                    .imageScale(.small)
+                    .foregroundStyle(.secondary)
+            }
+            .contentShape(.rect)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("Project — switch it, or open the dashboard")
+    }
+
+    /// Short enough to leave room for the status.
+    private var name: String {
+        let name = state.activeProject?.name ?? "No Project"
+        return name.count > 22 ? String(name.prefix(21)) + "…" : name
     }
 }
 
@@ -113,7 +148,7 @@ private struct StatusLabel: View {
 
     var body: some View {
         let status = state.status
-        Button(action: state.openSettings) {
+        Button(action: state.openDashboard) {
             HStack(spacing: 6) {
                 switch status.kind {
                 case .ready: Circle().fill(.green).frame(width: 7, height: 7)
@@ -128,7 +163,7 @@ private struct StatusLabel: View {
         }
         .buttonStyle(.plain)
         .disabled(status.kind == .ready)
-        .help(status.kind == .problem ? "Open Settings to fix this" : status.text)
+        .help(status.kind == .problem ? "Open the dashboard to fix this" : status.text)
         .animation(.smooth(duration: 0.2), value: status.text)
     }
 }
@@ -179,7 +214,7 @@ private struct AnswerCard: View {
         Group {
             if let answer = state.current {
                 ScrollView {
-                    AnswerContent(answer: answer, size: size, lexicon: state.profile.lexicon)
+                    AnswerContent(answer: answer, size: size, lexicon: state.lexicon)
                         .id(answer.id)
                         .transition(reduceMotion ? AnyTransition.opacity : AnyTransition(.blurReplace))
                         .padding(18)
@@ -357,13 +392,22 @@ private struct EmptyState: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if state.profile.materials.isEmpty {
+        if state.activeProject == nil {
+            ContentUnavailableView {
+                Label("Create a project", systemImage: "rectangle.stack.badge.plus")
+            } description: {
+                Text("A project holds your slides, documents and prepared answers for a talk. Cue answers from them.")
+            } actions: {
+                Button("Open Dashboard", action: state.openDashboard)
+                    .buttonStyle(.glassProminent)
+            }
+        } else if state.activeProject?.materials.isEmpty == true {
             ContentUnavailableView {
                 Label("Add your materials", systemImage: "doc.on.doc")
             } description: {
-                Text("Drop your slides, documents and prepared answers into Settings. Cue reads them and answers from them.")
+                Text("Drop your slides, documents and prepared answers onto the project in the dashboard. Cue reads them and answers from them.")
             } actions: {
-                Button("Open Settings", action: state.openSettings)
+                Button("Open Dashboard", action: state.openDashboard)
                     .buttonStyle(.glassProminent)
             }
         } else {

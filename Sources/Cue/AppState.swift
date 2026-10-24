@@ -57,10 +57,14 @@ struct ServiceStatus: Equatable {
 /// Orchestrates audio → speech recognition → question detection → answers.
 @MainActor
 final class AppState: ObservableObject {
-    let profile: Profile
+    let preferences: Preferences
+    let projects: ProjectStore
     let downloader = ModelDownloader()
     let recorder = CallRecorder()
     let recordings: RecordingStore
+
+    /// The project Cue answers from and records into.
+    @Published private(set) var activeProject: Project?
 
     @Published var utterances: [Utterance] = []
     @Published var partial: [Channel: String] = [:]
@@ -76,7 +80,9 @@ final class AppState: ObservableObject {
     @Published private(set) var readingMaterials = false
 
     var openSettings: () -> Void = {}
+    var openDashboard: () -> Void = {}
     var openRecordings: (_ selecting: String?) -> Void = { _ in }
+    var showOverlay: () -> Void = {}
 
     private var whisperService = WhisperService()
     private var claudeService: ClaudeService?
@@ -89,15 +95,38 @@ final class AppState: ObservableObject {
     private var meterTimer: Timer?
     private var subscriptions: Set<AnyCancellable> = []
     private var knowledgeGeneration = 0
+    /// What the current knowledge was built from, so unrelated project edits don't re-read the materials.
+    private var knowledgeInputs: KnowledgeInputs?
+    /// Where the recording in progress goes, even if the user switches project meanwhile.
+    private var recordingProject: Project?
 
-    init(profile: Profile) {
-        self.profile = profile
+    private struct KnowledgeInputs: Equatable {
+        var materials: [URL]
+        var context: PromptContext
+    }
+
+    init(preferences: Preferences) {
+        self.preferences = preferences
         let log = SessionLog()
         self.log = log
-        recordings = RecordingStore(profile: profile, log: log)
+        projects = ProjectStore(preferences: preferences)
+        projects.migrateLegacySettings(log: log)
+        recordings = RecordingStore(preferences: preferences, projects: projects, log: log)
+        recordings.reload()
+        // CUE_PROJECT=name picks the project at launch (creating it when missing); otherwise the last one used.
+        if let name = ProcessInfo.processInfo.environment["CUE_PROJECT"] {
+            activeProject = projects.project(named: name) ?? (try? projects.create(named: name))
+        } else {
+            activeProject = projects.project(preferences.activeProject) ?? projects.mostRecent
+        }
+        preferences.activeProject = activeProject?.id
+        if let activeProject { log.write("📁 Project: \(activeProject.name)") }
     }
 
     var current: Answer? { answers.indices.contains(selected) ? answers[selected] : nil }
+
+    /// The active project's language data.
+    var lexicon: Lexicon { activeProject?.lexicon ?? Lexicon.load(Project.defaultLanguage) }
 
     /// One line for the control bar: what Cue is doing, or the first thing that needs attention.
     var status: (text: String, kind: StatusKind) {
@@ -106,7 +135,8 @@ final class AppState: ObservableObject {
         if !whisper.ok { return (whisper.detail, whisper.detail.hasPrefix("Starting") ? .working : .problem) }
         if !claude.ok { return (claude.detail, claude.detail.contains("…") ? .working : .problem) }
         if !call.ok && !mic.ok { return ("No audio", .problem) }
-        if profile.materials.isEmpty { return ("No materials", .problem) }
+        guard let activeProject else { return ("No project", .problem) }
+        if activeProject.materials.isEmpty { return ("No materials", .problem) }
         return ("Listening", .ready)
     }
 
@@ -116,7 +146,7 @@ final class AppState: ObservableObject {
 
     func start() {
         detector.onQuestion = { [weak self] question in
-            guard let self, self.profile.autoAnswer else { return }
+            guard let self, self.preferences.autoAnswer else { return }
             self.ask(question)
         }
         wire(micSegmenter, channel: .me)
@@ -132,7 +162,7 @@ final class AppState: ObservableObject {
         rebuildKnowledge()
         startWhisper()
         startAudio()
-        observeProfile()
+        observeSettings()
 
         meterTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             Task { @MainActor in
@@ -150,29 +180,52 @@ final class AppState: ObservableObject {
         whisperService.stop()
     }
 
-    private func observeProfile() {
-        // Anything that changes the system prompt rebuilds it; Claude restarts only if the bytes changed.
-        Publishers.Merge4(
-            profile.$materials.map { _ in () },
-            profile.$speakerName.map { _ in () },
-            profile.$occasion.map { _ in () },
-            profile.$languageCode.map { _ in () }
-        )
-        .dropFirst(4)
-        .debounce(for: .seconds(1.2), scheduler: RunLoop.main)
-        .sink { [weak self] in
-            self?.applyLanguage()
-            self?.rebuildKnowledge()
-        }
-        .store(in: &subscriptions)
+    private func observeSettings() {
+        // Edits to the active project on its page (and files added to it) arrive through the store.
+        projects.$projects
+            .sink { [weak self] projects in
+                guard let self, let id = self.activeProject?.id,
+                      let updated = projects.first(where: { $0.id == id }), updated != self.activeProject else { return }
+                self.activeProject = updated
+            }
+            .store(in: &subscriptions)
+        projects.$projects.map { $0.map(\.id) }.removeDuplicates().dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.recordings.reload() }
+            .store(in: &subscriptions)
+        preferences.$libraryFolder.dropFirst().removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.projects.reload()
+                self?.projectsChanged()
+            }
+            .store(in: &subscriptions)
 
-        profile.$vocabulary.dropFirst()
+        // Anything that changes the system prompt rebuilds it; Claude restarts only if the bytes changed.
+        // @Published sends the new value before storing it, so build the inputs from what was sent.
+        Publishers.CombineLatest($activeProject, preferences.$speakerName)
+            .map { Self.knowledgeInputs(project: $0, speaker: $1) }
+            .removeDuplicates()
+            .dropFirst()
+            .debounce(for: .seconds(1.2), scheduler: RunLoop.main)
+            .sink { [weak self] inputs in
+                guard let self, inputs != self.knowledgeInputs else { return }
+                self.applyLanguage()
+                self.rebuildKnowledge()
+            }
+            .store(in: &subscriptions)
+
+        $activeProject.map { $0?.whisperPrompt }.removeDuplicates().dropFirst()
             .debounce(for: .seconds(0.5), scheduler: RunLoop.main)
             .sink { [weak self] _ in self?.applyLanguage() }
             .store(in: &subscriptions)
 
-        profile.$model.dropFirst().removeDuplicates()
+        preferences.$model.dropFirst().removeDuplicates()
             .sink { [weak self] model in self?.restartClaude(model: model) }
+            .store(in: &subscriptions)
+
+        projects.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &subscriptions)
 
         // Re-publish so the overlay follows the download and the recorder.
@@ -185,18 +238,27 @@ final class AppState: ObservableObject {
     }
 
     private func applyLanguage() {
-        let lexicon = profile.lexicon
+        let lexicon = self.lexicon
         detector.cues = lexicon.questionCues
         let whisperService = whisperService
-        let language = profile.languageCode, prompt = profile.whisperPrompt, hallucinations = lexicon.hallucinations
+        let language = activeProject?.language ?? Project.defaultLanguage, prompt = activeProject?.whisperPrompt ?? ""
+        let hallucinations = lexicon.hallucinations
         Task { await whisperService.configure(language: language, vocabularyPrompt: prompt, hallucinations: hallucinations) }
+    }
+
+    private static func knowledgeInputs(project: Project?, speaker: String) -> KnowledgeInputs {
+        KnowledgeInputs(materials: project?.materials ?? [],
+                        context: PromptContext(speaker: speaker, occasion: project?.occasion ?? "",
+                                               languageCode: project?.language ?? Project.defaultLanguage))
     }
 
     func rebuildKnowledge() {
         knowledgeGeneration += 1
         let generation = knowledgeGeneration
-        let materials = profile.materials
-        let context = PromptContext(speaker: profile.speakerName, occasion: profile.occasion, languageCode: profile.languageCode)
+        let inputs = Self.knowledgeInputs(project: activeProject, speaker: preferences.speakerName)
+        knowledgeInputs = inputs
+        let materials = inputs.materials, context = inputs.context
+        let project = activeProject?.name ?? "no project"
         readingMaterials = true
         Task.detached(priority: .userInitiated) {
             let knowledge = KnowledgeBase.build(materials: materials, context: context)
@@ -206,8 +268,8 @@ final class AppState: ObservableObject {
                 self.knowledge = knowledge
                 self.readingMaterials = false
                 let files = knowledge.documents.map { "\($0.name) — \($0.error ?? $0.summary)" }.joined(separator: "; ")
-                self.log.write("📚 Materials (~\(knowledge.estimatedTokens / 1000)k tokens): \(files.isEmpty ? "none" : files)")
-                if changed || self.claudeService == nil { self.restartClaude(model: self.profile.model) }
+                self.log.write("📚 Materials for \(project) (~\(knowledge.estimatedTokens / 1000)k tokens): \(files.isEmpty ? "none" : files)")
+                if changed || self.claudeService == nil { self.restartClaude(model: self.preferences.model) }
             }
         }
     }
@@ -216,13 +278,13 @@ final class AppState: ObservableObject {
         guard knowledge != nil else { return }
         claude = ServiceStatus(ok: false, detail: "Warming up…")
         if claudeService == nil {
-            claudeService = ClaudeService(systemPromptFile: KnowledgeBase.systemPromptFile, model: profile.model, handlers: .init(
+            claudeService = ClaudeService(systemPromptFile: KnowledgeBase.systemPromptFile, model: preferences.model, handlers: .init(
                 onDelta: { id, text in Task { @MainActor in self.appendDelta(id, text) } },
                 onDone: { id, error in Task { @MainActor in self.finish(id, error: error) } },
                 onReady: { ready, detail in Task { @MainActor in self.claude = ServiceStatus(ok: ready, detail: detail) } }
             ))
         }
-        claudeService?.start(model: model ?? profile.model)
+        claudeService?.start(model: model ?? preferences.model)
     }
 
     func startWhisper() {
@@ -272,7 +334,7 @@ final class AppState: ObservableObject {
             do {
                 // CUE_REHEARSE_RECORD=1 also records the rehearsal and writes its notes.
                 let record = ProcessInfo.processInfo.environment["CUE_REHEARSE_RECORD"] == "1"
-                if record { recorder.start() }
+                if record { startRecording() }
                 var length = try Rehearsal.play(fileAt: path, into: { [systemSegmenter] in systemSegmenter.push($0) })
                 // CUE_REHEARSE_ME plays a second recording as your microphone, in parallel.
                 if let mine = ProcessInfo.processInfo.environment["CUE_REHEARSE_ME"] {
@@ -334,7 +396,7 @@ final class AppState: ObservableObject {
         if utterances.count > 300 { utterances.removeFirst(utterances.count - 300) }
         recorder.add(utterance)
         log.write("**[\(promptLabel(channel))]** \(text)", at: speechEnded)
-        if channel == .others || profile.micQuestions {
+        if channel == .others || preferences.micQuestions {
             detector.add(text, speechEnded: speechEnded)
         }
     }
@@ -342,7 +404,7 @@ final class AppState: ObservableObject {
     /// The mic picking up the call through speakers produces a near-copy of a participant line.
     private func isEcho(_ channel: Channel, _ text: String) -> Bool {
         guard channel == .me else { return false }
-        let stopWords = profile.lexicon.stopWords
+        let stopWords = lexicon.stopWords
         let words = Set(KnowledgeBase.stems(text, stopWords: stopWords))
         guard words.count >= 3 else { return false }
         return utterances.suffix(4).contains { other in
@@ -353,13 +415,57 @@ final class AppState: ObservableObject {
     }
 
     private func promptLabel(_ channel: Channel) -> String {
-        channel == .me ? (profile.speakerName.isEmpty ? "Speaker" : profile.speakerName) : "Participant"
+        channel == .me ? (preferences.speakerName.isEmpty ? "Speaker" : preferences.speakerName) : "Participant"
+    }
+
+    // MARK: - Projects
+
+    /// Binds Cue to a project: its materials, language and names and terms.
+    func activate(_ project: Project) {
+        var project = projects.project(project.id) ?? project
+        project.lastUsed = Date()
+        projects.update(project)
+        guard project.id != activeProject?.id else { return }
+        activeProject = project
+        preferences.activeProject = project.id
+        log.write("📁 Project: \(project.name)")
+        applyLanguage()
+        rebuildKnowledge()
+    }
+
+    /// The project page's Start Cue: shows the overlay, answering from this project.
+    func startCue(_ project: Project) {
+        activate(project)
+        showOverlay()
+    }
+
+    /// After a rename or delete on the dashboard.
+    func projectsChanged(renamed old: Project? = nil, to new: Project? = nil) {
+        if let old, let new, old.id == activeProject?.id {
+            activeProject = new
+            preferences.activeProject = new.id
+        } else if let active = activeProject, projects.project(active.id) == nil {
+            activeProject = nil
+            preferences.activeProject = nil
+            if let next = projects.mostRecent {
+                activate(next)
+            } else {
+                applyLanguage()
+                rebuildKnowledge()
+            }
+        }
+        recordings.reload()
     }
 
     // MARK: - Recording
 
     func toggleRecording() {
-        if recorder.isRecording { stopRecording() } else if !recorder.stopping { recorder.start() }
+        if recorder.isRecording { stopRecording() } else if !recorder.stopping { startRecording() }
+    }
+
+    func startRecording() {
+        recordingProject = activeProject
+        recorder.start()
     }
 
     /// Waits for the last phrase to be transcribed, then saves and summarizes.
@@ -376,7 +482,11 @@ final class AppState: ObservableObject {
                 alert.runModal()
                 return
             }
-            if let id = recordings.save(transcript) { openRecordings(id) }
+            // Without a project (none created yet), recordings go to "Meetings".
+            let project = recordingProject.flatMap { projects.project($0.id) } ?? activeProject
+                ?? projects.project(named: "Meetings") ?? (try? projects.create(named: "Meetings"))
+            guard let project else { return }
+            if let id = recordings.save(transcript, into: project) { openRecordings(id) }
         }
     }
 
@@ -395,7 +505,7 @@ final class AppState: ObservableObject {
 
     func ask(_ question: String, force: Bool = false) {
         guard let claudeService else { return }
-        let lexicon = profile.lexicon
+        let lexicon = self.lexicon
         let match = knowledge?.match(question)
         let opener = match.flatMap { Self.firstSentence($0.answer.a, dropping: lexicon.thanksPrefix) }
             ?? (lexicon.defaultOpener.isEmpty ? nil : lexicon.defaultOpener)

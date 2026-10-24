@@ -1,6 +1,7 @@
 // `ocr IMAGE` prints the text macOS Vision reads in an image, one block per
 // line, top to bottom — how end-to-end cases check rendered windows.
 import AppKit
+import CoreML
 import Vision
 
 guard CommandLine.arguments.count == 2 else {
@@ -26,27 +27,31 @@ func flattened(on color: CGColor) -> CGImage? {
     return context?.makeImage()
 }
 
-func read(_ image: CGImage) -> [VNRecognizedTextObservation] {
+/// Text and position of each block. Read the candidates right away: an observation's
+/// text can come back empty once another request has run.
+func read(_ image: CGImage) -> [(text: String, box: CGRect)] {
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     request.usesLanguageCorrection = false
     let supported = (try? request.supportedRecognitionLanguages()) ?? []
     request.recognitionLanguages = ["en-US", "uk-UA"].filter(supported.contains)
+    // On the Neural Engine, Vision reuses models compiled into ~/Library/Caches/<process name>;
+    // with a stale copy there it dropped most of a page. The CPU reads the same every time.
+    for (stage, devices) in (try? request.supportedComputeStageDevices) ?? [:] {
+        if let cpu = devices.first(where: { if case .cpu = $0 { true } else { false } }) { request.setComputeDevice(cpu, for: stage) }
+    }
     try? VNImageRequestHandler(cgImage: image).perform([request])
-    return request.results ?? []
+    return (request.results ?? []).compactMap { block in block.topCandidates(1).first.map { ($0.string, block.boundingBox) } }
 }
 
 let light = flattened(on: CGColor(gray: 1, alpha: 1)).map(read) ?? []
 let dark = flattened(on: CGColor(gray: 0, alpha: 1)).map(read) ?? []
 // Keep whichever background read more text, then add lines only the other one found.
 var blocks = light.count >= dark.count ? light : dark
-let found = Set(blocks.compactMap { $0.topCandidates(1).first?.string })
-blocks += (light.count >= dark.count ? dark : light).filter { $0.topCandidates(1).first.map { !found.contains($0.string) } ?? false }
+let found = Set(blocks.map(\.text))
+blocks += (light.count >= dark.count ? dark : light).filter { !found.contains($0.text) }
 blocks.sort {
     // Vision's origin is bottom-left; read top to bottom, then left to right.
-    abs($0.boundingBox.midY - $1.boundingBox.midY) > 0.01 ? $0.boundingBox.midY > $1.boundingBox.midY
-        : $0.boundingBox.minX < $1.boundingBox.minX
+    abs($0.box.midY - $1.box.midY) > 0.01 ? $0.box.midY > $1.box.midY : $0.box.minX < $1.box.minX
 }
-for block in blocks {
-    if let text = block.topCandidates(1).first?.string { print(text) }
-}
+for block in blocks { print(block.text) }
