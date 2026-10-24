@@ -184,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 /// `Cue --inspect FILE…` prints what Cue reads from each file, including prepared answers.
 if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "--inspect" {
-    let lexicon = Lexicon.load(UserDefaults.standard.string(forKey: "language") ?? "en")
+    let lexicon = Lexicon.load(appDefaults.string(forKey: "language") ?? "en")
     for path in CommandLine.arguments.dropFirst(2) {
         let document = Materials.read(URL(fileURLWithPath: path), lexicon: lexicon)
         print("\(document.name): \(document.error ?? document.summary)")

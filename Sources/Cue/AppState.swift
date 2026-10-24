@@ -85,14 +85,16 @@ final class AppState: ObservableObject {
     private let micSegmenter = SpeechSegmenter()
     private let systemSegmenter = SpeechSegmenter()
     private let detector = QuestionDetector()
-    private let log = SessionLog()
+    private let log: SessionLog
     private var meterTimer: Timer?
     private var subscriptions: Set<AnyCancellable> = []
     private var knowledgeGeneration = 0
 
     init(profile: Profile) {
         self.profile = profile
-        recordings = RecordingStore(profile: profile)
+        let log = SessionLog()
+        self.log = log
+        recordings = RecordingStore(profile: profile, log: log)
     }
 
     var current: Answer? { answers.indices.contains(selected) ? answers[selected] : nil }

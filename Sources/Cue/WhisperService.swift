@@ -167,10 +167,3 @@ struct ServiceError: LocalizedError {
     init(_ message: String) { self.message = message }
     var errorDescription: String? { message }
 }
-
-let appSupport: URL = {
-    let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Cue")
-    try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    return url
-}()

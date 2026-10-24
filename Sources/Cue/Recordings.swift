@@ -114,10 +114,12 @@ final class RecordingStore: ObservableObject {
     @Published private(set) var failures: [String: String] = [:]
 
     private let profile: Profile
+    private let log: SessionLog
     private var summarizers: [String: Process] = [:]
 
-    init(profile: Profile) {
+    init(profile: Profile, log: SessionLog) {
         self.profile = profile
+        self.log = log
     }
 
     var folder: URL { profile.recordingsFolder }
@@ -167,16 +169,21 @@ final class RecordingStore: ObservableObject {
         \(transcript.markdown(names: names))
 
         """
+        let url = folder.appendingPathComponent(fileName(date: transcript.startedAt, title: "Call"))
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let url = folder.appendingPathComponent(fileName(date: transcript.startedAt, title: "Call"))
             try document.write(to: url, atomically: true, encoding: .utf8)
         } catch {
             NSAlert(error: error).runModal()
             return nil
         }
+        log.write("🎙 Transcript saved: \(url.path)")
         reload()
-        if summarize { self.summarize(id, transcript: transcript.plainText(names: names)) }
+        if summarize {
+            self.summarize(id, transcript: transcript.plainText(names: names))
+        } else {
+            log.write("📝 Notes ready: \(url.path)")
+        }
         return id
     }
 
@@ -201,9 +208,12 @@ final class RecordingStore: ObservableObject {
         summarizers[id] = nil
         liveSummary[id] = nil
         guard let file = file(id), let text = try? String(contentsOf: file.url, encoding: .utf8) else { return }
+        // Tests and the session log both wait for "Notes ready".
+        defer { log.write("📝 Notes ready: \((self.file(id)?.url ?? file.url).path)") }
         switch result {
         case .failure(let error):
             failures[id] = error.localizedDescription
+            log.write("⚠︎ Summary failed: \(error.localizedDescription)")
             try? replacingSummary(in: text, with: "").write(to: file.url, atomically: true, encoding: .utf8)
         case .success(let summary):
             let title = Self.title(of: summary) ?? file.title

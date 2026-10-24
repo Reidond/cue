@@ -26,7 +26,7 @@ struct SpokenLanguage: Identifiable, Hashable {
 /// Everything the user configures, persisted in UserDefaults.
 @MainActor
 final class Profile: ObservableObject {
-    private let defaults = UserDefaults.standard
+    private let defaults = appDefaults
 
     @Published var speakerName: String { didSet { defaults.set(speakerName, forKey: "speakerName") } }
     @Published var occasion: String { didSet { defaults.set(occasion, forKey: "occasion") } }
@@ -54,7 +54,7 @@ final class Profile: ObservableObject {
         showTranscript = defaults.object(forKey: "showTranscript") as? Bool ?? true
         textSize = defaults.object(forKey: "textSize") as? Double ?? 15
         recordingsFolder = defaults.string(forKey: "recordingsFolder").map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Cue Recordings")
+            ?? documentsFolder.appendingPathComponent("Cue Recordings")
         summarizeRecordings = defaults.object(forKey: "summarizeRecordings") as? Bool ?? true
     }
 

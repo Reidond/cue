@@ -35,6 +35,8 @@ final class ClaudeService {
     }
 
     static func findBinary() -> String? {
+        // End-to-end tests point this at a stand-in that speaks the same stream-json.
+        if let override = ProcessInfo.processInfo.environment["CUE_CLAUDE_BIN"] { return override }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let candidates = ["\(home)/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude", "\(home)/.claude/local/claude"]
         return candidates.first(where: FileManager.default.isExecutableFile)
