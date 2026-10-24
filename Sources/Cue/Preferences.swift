@@ -23,54 +23,34 @@ struct SpokenLanguage: Identifiable, Hashable {
     }
 }
 
-/// Everything the user configures, persisted in UserDefaults.
+/// Global preferences, persisted in UserDefaults; everything about a talk lives in its `Project`.
 @MainActor
-final class Profile: ObservableObject {
+final class Preferences: ObservableObject {
     private let defaults = appDefaults
 
     @Published var speakerName: String { didSet { defaults.set(speakerName, forKey: "speakerName") } }
-    @Published var occasion: String { didSet { defaults.set(occasion, forKey: "occasion") } }
-    @Published var languageCode: String { didSet { defaults.set(languageCode, forKey: "language") } }
-    @Published var vocabulary: String { didSet { defaults.set(vocabulary, forKey: "vocabulary") } }
-    @Published var materials: [URL] { didSet { defaults.set(materials.map(\.path), forKey: "materials") } }
     @Published var model: ClaudeService.Model { didSet { defaults.set(model.rawValue, forKey: "model") } }
     @Published var autoAnswer: Bool { didSet { defaults.set(autoAnswer, forKey: "autoAnswer") } }
     /// Also treat questions the microphone picks up (people in the room) as questions.
     @Published var micQuestions: Bool { didSet { defaults.set(micQuestions, forKey: "micQuestions") } }
     @Published var showTranscript: Bool { didSet { defaults.set(showTranscript, forKey: "showTranscript") } }
     @Published var textSize: Double { didSet { defaults.set(textSize, forKey: "textSize") } }
-    @Published var recordingsFolder: URL { didSet { defaults.set(recordingsFolder.path, forKey: "recordingsFolder") } }
+    @Published var libraryFolder: URL { didSet { defaults.set(libraryFolder.path, forKey: "libraryFolder") } }
     @Published var summarizeRecordings: Bool { didSet { defaults.set(summarizeRecordings, forKey: "summarizeRecordings") } }
+    /// Folder name of the project Cue was last bound to.
+    @Published var activeProject: String? { didSet { defaults.set(activeProject, forKey: "activeProject") } }
 
     init() {
         speakerName = defaults.string(forKey: "speakerName") ?? NSFullUserName()
-        occasion = defaults.string(forKey: "occasion") ?? ""
-        languageCode = defaults.string(forKey: "language") ?? Locale.current.language.languageCode?.identifier ?? "en"
-        vocabulary = defaults.string(forKey: "vocabulary") ?? ""
-        materials = (defaults.stringArray(forKey: "materials") ?? []).map { URL(fileURLWithPath: $0) }
         model = ClaudeService.Model(rawValue: defaults.string(forKey: "model") ?? "") ?? .sonnet
         autoAnswer = defaults.object(forKey: "autoAnswer") as? Bool ?? true
         micQuestions = defaults.bool(forKey: "micQuestions")
         showTranscript = defaults.object(forKey: "showTranscript") as? Bool ?? true
         textSize = defaults.object(forKey: "textSize") as? Double ?? 15
-        recordingsFolder = defaults.string(forKey: "recordingsFolder").map { URL(fileURLWithPath: $0) }
-            ?? documentsFolder.appendingPathComponent("Cue Recordings")
+        libraryFolder = defaults.string(forKey: "libraryFolder").map { URL(fileURLWithPath: $0) }
+            ?? documentsFolder.appendingPathComponent("Cue")
         summarizeRecordings = defaults.object(forKey: "summarizeRecordings") as? Bool ?? true
-    }
-
-    var language: SpokenLanguage { .named(languageCode) }
-    var lexicon: Lexicon { Lexicon.load(languageCode) }
-
-    /// Initial prompt for Whisper: biases recognition towards the names and terms that will come up.
-    var whisperPrompt: String {
-        [occasion, vocabulary].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: ". ")
-    }
-
-    func addMaterials(_ urls: [URL]) {
-        let new = urls.filter { url in Materials.supportedExtensions.contains(url.pathExtension.lowercased()) && !materials.contains(url) }
-        materials.append(contentsOf: new)
+        activeProject = defaults.string(forKey: "activeProject")
     }
 }
 

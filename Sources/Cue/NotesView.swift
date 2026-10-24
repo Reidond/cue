@@ -1,20 +1,23 @@
 import AppKit
 import SwiftUI
 
-/// Library of recorded calls: list on the left, the rendered notes on the right.
-struct RecordingsView: View {
+/// A project's notes: the list on the left, the rendered notes on the right.
+struct ProjectNotesView: View {
     @ObservedObject var store: RecordingStore
     @ObservedObject var state: AppState
+    let project: Project
     @Binding var selection: String?
     @State private var search = ""
 
+    private var files: [RecordingFile] { store.files(in: project) }
+
     private var filtered: [RecordingFile] {
-        guard !search.isEmpty else { return store.files }
-        return store.files.filter { $0.title.localizedCaseInsensitiveContains(search) }
+        guard !search.isEmpty else { return files }
+        return files.filter { $0.title.localizedCaseInsensitiveContains(search) }
     }
 
     var body: some View {
-        NavigationSplitView {
+        HSplitView {
             List(selection: $selection) {
                 ForEach(filtered) { file in
                     RecordingRow(file: file, summarizing: store.summarizing.contains(file.id))
@@ -28,31 +31,36 @@ struct RecordingsView: View {
                         }
                 }
             }
-            .searchable(text: $search, placement: .sidebar, prompt: "Search")
-            .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+            .searchable(text: $search, prompt: "Search notes")
+            .frame(minWidth: 220, idealWidth: 270, maxWidth: 380)
             .overlay {
-                if store.files.isEmpty {
-                    ContentUnavailableView("No Recordings", systemImage: "waveform",
-                                           description: Text("Press ⌃⌥R or the record button in Cue to record a call."))
+                if files.isEmpty {
+                    ContentUnavailableView("No Notes", systemImage: "waveform",
+                                           description: Text("Press ⌃⌥R or the record button in Cue to record a call into this project."))
                 } else if filtered.isEmpty {
                     ContentUnavailableView.search(text: search)
                 }
             }
-        } detail: {
-            if let id = selection, let file = store.file(id) {
-                RecordingDetail(store: store, file: file)
-            } else {
-                ContentUnavailableView("Select a Recording", systemImage: "doc.text",
-                                       description: Text("Summaries and transcripts are saved as Markdown in \(store.folder.lastPathComponent)."))
+
+            Group {
+                if let id = selection, let file = store.file(id), file.projectID == project.id {
+                    RecordingDetail(store: store, file: file)
+                } else {
+                    ContentUnavailableView("Select a Note", systemImage: "doc.text",
+                                           description: Text("Summaries and transcripts are saved as Markdown in the project’s Notes folder."))
+                }
             }
+            .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 RecordToolbarButton(state: state)
             }
         }
-        .onAppear { store.reload() }
-        .frame(minWidth: 760, minHeight: 480)
+        .onAppear {
+            store.reload()
+            if selection.flatMap(store.file)?.projectID != project.id { selection = files.first?.id }
+        }
     }
 }
 
@@ -103,8 +111,6 @@ private struct RecordingDetail: View {
             .frame(maxWidth: .infinity)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
-        .navigationTitle(file.title)
-        .navigationSubtitle(file.date.formatted(date: .long, time: .shortened))
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button("Summarize Again", systemImage: "arrow.clockwise") { store.summarize(file.id) }
@@ -150,7 +156,7 @@ private struct FailureBanner: View {
     }
 }
 
-/// Start/stop recording from the library window too.
+/// Start/stop recording from the dashboard too.
 struct RecordToolbarButton: View {
     @ObservedObject var state: AppState
 

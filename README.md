@@ -7,12 +7,14 @@ say: an instant opener, then a one-line answer within ~2 s, then a few short
 points with numbers and where they come from.
 
 It also records calls: press ⌃⌥R and Cue writes Markdown notes with a summary,
-key points, decisions, action items and the full timestamped transcript, and
-shows them in its Recordings window.
+key points, decisions, action items and the full timestamped transcript.
 
-Answers are grounded in your own materials. Drop in PDFs, PowerPoint decks,
-Word documents or Markdown notes; Cue reads them itself and also picks up any
-prepared questions and answers it finds in them.
+Everything is organised in **projects** — one per talk, course or series of
+calls. A project holds the occasion, the language, names and terms, your
+materials and the notes of its calls. Answers are grounded in the materials of
+the current project: drop in PDFs, PowerPoint decks, Word documents or
+Markdown notes; Cue reads them itself and also picks up any prepared questions
+and answers it finds in them.
 
 ## How it works
 
@@ -50,17 +52,44 @@ brew install whisper-cpp
 open build/Cue.app
 ```
 
-Then in **Settings** (menu bar ⟶ Cue ⟶ Settings…):
+Cue opens its dashboard. On **Home**:
 
-1. **Download** the speech model (1.6 GB, once).
-2. Add your **materials** — drag files onto the Materials section.
-3. Set your **name**, the **occasion** (one or two sentences) and the
-   **language**. Add **names and terms** that recognition should spell right.
-4. Allow **Microphone** and **Screen & System Audio Recording** when macOS
-   asks; after granting the second one, quit and reopen Cue.
+1. **Download** the speech model (1.6 GB, once) and allow **Microphone** and
+   **Screen & System Audio Recording** when macOS asks; after granting the
+   second one, quit and reopen Cue. The checklist shows what is still missing.
+   Claude Code must be installed and signed in (`claude` in Terminal once).
+2. Click **New Project** (⌘N) and name it.
 
-The Setup section shows what is missing. Claude Code must be installed and
-signed in (`claude` in Terminal once).
+On the project's page:
+
+3. Describe the **occasion** (one or two sentences), pick the **language** and
+   add **names and terms** that recognition should spell right.
+4. Drop your **materials** onto the Materials section. They are copied into
+   the project, so cleaning up Downloads later doesn't break anything.
+   **Prepared Answers** shows the questions and answers Cue found in them.
+5. Press **Start Cue** (⌘↩): the overlay appears and answers from this project.
+
+Your name, the Claude model, text size and the library folder are in
+**Settings** (⌘,). The overlay's top bar shows the current project; click it to
+switch project or open the dashboard. Cue also keeps a menu bar item for quick
+actions.
+
+### Library
+
+Projects live in `~/Documents/Cue` (change it in Settings), one folder each,
+so you can open, back up or move them:
+
+```
+~/Documents/Cue/
+  PhD defense/
+    project.json        name, occasion, language, names & terms, created, last used
+    Materials/          copies of the files you added
+    Notes/              2026-10-24 14.05 – Title.md
+```
+
+When you upgrade from a version without projects, your talk settings and
+materials become the project **My project** (rename it from its context menu)
+and your notes move from `~/Documents/Cue Recordings` into its `Notes/`.
 
 ## During the talk
 
@@ -80,11 +109,12 @@ field at the bottom. Drag the top bar to move Cue.
 
 Press ⌃⌥R, the record button in Cue's top bar, or **Start Recording** in the menu
 bar. While recording, the button turns into a red timer and the menu bar icon
-turns red. When you stop, Cue saves the transcript right away, opens
-**Recordings** and streams the summary in as Claude writes it.
+turns red. When you stop, Cue saves the transcript right away, opens the note
+in the dashboard and streams the summary in as Claude writes it.
 
-Notes are plain Markdown files in `~/Documents/Cue Recordings` (change the
-folder in Settings), named `2026-10-24 14.05 – Title.md`:
+Notes go into the current project's `Notes/` folder (a recording made before
+any project exists goes into **Meetings**), as plain Markdown files named
+`2026-10-24 14.05 – Title.md`:
 
 ```markdown
 ---
@@ -92,6 +122,7 @@ title: "Weekly sync with the design team"
 date: 2026-10-24T11:05:00Z
 duration: 42 min
 participants: Andrii, Participant
+project: "PhD defense"
 ---
 
 # Weekly sync with the design team
@@ -112,7 +143,7 @@ participants: Andrii, Participant
 ```
 
 The summary and its headings are written in the language of the call. Use
-**Summarize Again** in the Recordings window to regenerate it; the transcript
+**Summarize Again** on the note to regenerate it; the transcript
 is kept as is. The files open in any Markdown editor (Obsidian, iA Writer, …).
 
 Recording is local: speech recognition runs on your Mac and only the transcript
@@ -154,13 +185,18 @@ CUE_NO_LIVE_AUDIO=1 CUE_REHEARSE_PARTICIPANT=questions.wav build/Cue.app/Content
 CUE_NO_LIVE_AUDIO=1 CUE_REHEARSE_RECORD=1 CUE_REHEARSE_PARTICIPANT=call.wav CUE_REHEARSE_ME=me.wav \
   build/Cue.app/Contents/MacOS/Cue
 
-# Render a notes file the way the Recordings window does
+# Render a notes file the way the dashboard shows it
 build/Cue.app/Contents/MacOS/Cue --render notes.md notes.png
 ```
 
-`CUE_SNAPSHOT=/tmp/cue.png` renders the windows to PNGs every 2 s (layout and
-text only — the glass is composited by the window server, so the overlay is
-rendered from its view), `CUE_HOME=dir` keeps all files and settings in `dir`,
-`CUE_CLAUDE_BIN` swaps in another `claude`, and `CUE_ALLOW_CAPTURE=1` lets
-screenshots see the overlay. `swift scripts/make_icon.swift`
+`CUE_SNAPSHOT=/tmp/cue.png` renders the windows to PNGs every 2 s — the overlay
+to `cue.png`, the dashboard to `cue-dashboard.png`, Settings to
+`cue-settings.png` (layout and text only, in the light appearance — the glass is
+composited by the window server, so the overlay is rendered from its view).
+`CUE_HOME=dir` keeps all files and settings in `dir`, `CUE_CLAUDE_BIN` swaps in
+another `claude`, `CUE_PROJECT=name` picks the project at launch, and
+`CUE_CONTROL=file` runs each line appended to the file as a click would
+(`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
+`ask TEXT`; see `AGENTS.md`). `CUE_ALLOW_CAPTURE=1` lets screenshots see the
+overlay. `swift scripts/make_icon.swift`
 regenerates the app icon.

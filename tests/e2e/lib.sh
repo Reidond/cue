@@ -61,13 +61,16 @@ cue_defaults() { defaults write $DOMAIN "$1" "-$2" "${@:3}"; }
 # cue_launch [VAR=value…] — starts the app in the background with live audio off
 # (pass CUE_NO_LIVE_AUDIO=0 to override) and waits for its session log.
 cue_launch() {
+    local previous; previous=$(session_log)
+    : > "$CASE_DIR/control"
     (
-        export CUE_NO_LIVE_AUDIO=1
+        export CUE_NO_LIVE_AUDIO=1 CUE_CONTROL=$CASE_DIR/control
         for assignment in "$@"; do export "$assignment"; done
         exec "$CUE_BIN"
     ) >> "$CASE_DIR/cue.out" 2>&1 &
     CUE_PID=$!
-    wait_for "Cue to start" 30 _has_session_log
+    # A relaunch in the same case starts a new log (they are named by the second).
+    wait_for "Cue to start" 30 _has_new_session_log "$previous"
 }
 
 # cue_stop — quits the app the way Ctrl-C does (clean shutdown), then makes sure.
@@ -79,6 +82,11 @@ cue_stop() {
     wait "$CUE_PID" 2> /dev/null
     CUE_PID=
 }
+
+# cue_control COMMAND… — does in the running Cue what a click would (CUE_CONTROL):
+# `new NAME`, `add PATH`, `start NAME`, `project NAME`, `ask TEXT`, and
+# `page home|upcoming|NAME|NAME/answers|NAME/notes` for the dashboard.
+cue_control() { echo "$*" >> "$CASE_DIR/control"; }
 
 cue_alive() { [[ -n $CUE_PID ]] && kill -0 "$CUE_PID" 2> /dev/null; }
 
@@ -108,7 +116,7 @@ wait_for() {
 
 # The newest session log (Application Support/Cue/sessions/*.md).
 session_log() { ls -t "$SUPPORT"/sessions/*.md 2> /dev/null | head -n 1; }
-_has_session_log() { [[ -n $(session_log) ]]; }
+_has_new_session_log() { local log; log=$(session_log); [[ -n $log && $log != "$1" ]]; }
 _log_has() { local log; log=$(session_log); [[ -n $log ]] && grep -q -E -- "$1" "$log"; }
 
 # wait_log REGEX SECONDS — waits for a line in the session log.

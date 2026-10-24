@@ -183,6 +183,7 @@ private struct BlockView: View {
         case "date": "calendar"
         case "duration": "clock"
         case "participants": "person.2"
+        case "project": "folder"
         default: "info.circle"
         }
     }
