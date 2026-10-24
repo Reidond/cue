@@ -69,8 +69,8 @@ On the project's page:
    **Prepared Answers** shows the questions and answers Cue found in them.
 5. Press **Start Cue** (⌘↩): the overlay appears and answers from this project.
 
-Your name, the Claude model, text size and the library folder are in
-**Settings** (⌘,). The overlay's top bar shows the current project; click it to
+Your name, the Claude model, text size, the library folder and what Cue does
+when a meeting starts are in **Settings** (⌘,). The overlay's top bar shows the current project; click it to
 switch project or open the dashboard. Cue also keeps a menu bar item for quick
 actions.
 
@@ -159,6 +159,38 @@ Tips:
   faster to finish. Switch in Settings.
 - Each session is saved as Markdown in `~/Library/Application Support/Cue/sessions/`.
 
+### Meetings from your calendar
+
+Allow **Calendar access** (Home, or **Upcoming** in the sidebar). **Upcoming**
+lists today's and tomorrow's events that have a Google Meet, Zoom, Teams or
+Webex link (in the event's URL, location or notes), each with a link to join
+the call and the project its notes go to: **Meetings** unless you pick another one. The
+pick is remembered for every occurrence of a recurring meeting.
+
+When a call starts — from five minutes before the event until it ends — and a
+call app is using the microphone (Chrome, Safari, Arc, Edge, Zoom, Teams, Webex,
+FaceTime or Slack), Cue asks in a notification: **Record “Weekly sync”?** with
+**Record** and **Not Now**. Clicking the notification also records; after Not
+Now it doesn't ask about that meeting again. A call in Zoom, Teams, Webex,
+FaceTime or Slack that isn't in your calendar is offered too, and goes to
+**Meetings**. In **Settings › Calendar** choose what happens when a meeting
+starts — **Ask** (default), **Record automatically** or **Do nothing** — and
+which calendars Cue looks at.
+
+A meeting's note is named after the event and lists who was invited, which also
+helps Claude with names in the summary:
+
+```markdown
+title: "Weekly sync"
+project: "Meetings"
+event: "Weekly sync"
+attendees: ["Olena Mulesa", "Petro Ivanenko"]
+```
+
+When the call app has let go of the microphone for a minute, Cue stops,
+writes the notes and tells you in a notification; click it to open them. You
+can also record a call in progress from its row in Upcoming.
+
 ## Testing
 
 Cue is tested end to end only — no unit tests (see `AGENTS.md`). The cases in
@@ -197,6 +229,11 @@ composited by the window server, so the overlay is rendered from its view).
 another `claude`, `CUE_PROJECT=name` picks the project at launch, and
 `CUE_CONTROL=file` runs each line appended to the file as a click would
 (`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
-`ask TEXT`; see `AGENTS.md`). `CUE_ALLOW_CAPTURE=1` lets screenshots see the
-overlay. `swift scripts/make_icon.swift`
+`ask TEXT`, `assign EVENT | PROJECT`, `notification record|dismiss`; see
+`AGENTS.md`) and keeps notifications in the session log (`🔔 Record “Title”?`).
+`CUE_CALENDAR_EVENTS=events.json` reads the calendar from a JSON file and
+`CUE_MIC_APPS=file` the bundle IDs using the microphone from a text file, both
+again on every check; `CUE_MEETING_TICK` and `CUE_MIC_RELEASE` shorten the 5 s
+check and the 60 s wait after a call app lets go of the microphone.
+`CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay. `swift scripts/make_icon.swift`
 regenerates the app icon.

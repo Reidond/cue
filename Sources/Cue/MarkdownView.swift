@@ -67,7 +67,7 @@ struct MarkdownDocument {
                 guard let colon = line.firstIndex(of: ":") else { return nil }
                 let key = line[..<colon].trimmingCharacters(in: .whitespaces)
                 let value = line[line.index(after: colon)...].trimmingCharacters(in: CharacterSet.whitespaces.union(["\""]))
-                return key == "title" || value.isEmpty ? nil : (key, value)
+                return key == "title" || key == "event" || value.isEmpty || value == "[]" ? nil : (key, value)
             }
             if !pairs.isEmpty { blocks.append(.metadata(pairs)) }
             lines = lines[(end + 1)...]
@@ -174,6 +174,10 @@ private struct BlockView: View {
     }
 
     private func display(_ key: String, _ value: String) -> String {
+        if key == "attendees" {
+            let names = RecordingFile.list(value)
+            return names.count > 3 ? "\(names.prefix(2).joined(separator: ", ")) and \(names.count - 2) more" : names.joined(separator: ", ")
+        }
         guard key == "date", let date = ISO8601DateFormatter().date(from: value) else { return value }
         return date.formatted(date: .abbreviated, time: .shortened)
     }
@@ -183,6 +187,7 @@ private struct BlockView: View {
         case "date": "calendar"
         case "duration": "clock"
         case "participants": "person.2"
+        case "attendees": "person.crop.circle.badge.checkmark"
         case "project": "folder"
         default: "info.circle"
         }

@@ -87,7 +87,8 @@ struct DashboardView: View {
             case .home, nil:
                 HomeView(state: state, projects: projects, recordings: state.recordings, downloader: state.downloader, model: model)
             case .upcoming:
-                UpcomingView()
+                UpcomingView(calendar: state.calendar, meetings: state.meetings, projects: projects, recorder: state.recorder,
+                             preferences: state.preferences, openSettings: state.openSettings)
             case .project(let id):
                 if let project = projects.project(id) {
                     ProjectView(state: state, projects: projects, recordings: state.recordings, model: model, project: project)
@@ -174,17 +175,5 @@ private struct ProjectSidebarRow: View {
         } icon: {
             Image(systemName: "folder")
         }
-    }
-}
-
-/// Calendar events show up here once Cue can read the calendar.
-struct UpcomingView: View {
-    var body: some View {
-        ContentUnavailableView {
-            Label("No Upcoming Calls", systemImage: "calendar")
-        } description: {
-            Text("Calls from your calendar will appear here, so Cue can offer to record them.")
-        }
-        .navigationTitle("Upcoming")
     }
 }

@@ -39,6 +39,12 @@ final class Preferences: ObservableObject {
     @Published var summarizeRecordings: Bool { didSet { defaults.set(summarizeRecordings, forKey: "summarizeRecordings") } }
     /// Folder name of the project Cue was last bound to.
     @Published var activeProject: String? { didSet { defaults.set(activeProject, forKey: "activeProject") } }
+    /// When a meeting starts: ask to record it, record it, or do nothing.
+    @Published var meetingAction: MeetingAction { didSet { defaults.set(meetingAction.rawValue, forKey: "meetingAction") } }
+    /// Calendars Cue doesn't look in for calls, by identifier; new calendars are watched.
+    @Published var unwatchedCalendars: Set<String> { didSet { defaults.set(unwatchedCalendars.sorted(), forKey: "unwatchedCalendars") } }
+    /// Project folder for each calendar event series, picked on the Upcoming page.
+    @Published var meetingProjects: [String: String] { didSet { defaults.set(meetingProjects, forKey: "meetingProjects") } }
 
     init() {
         speakerName = defaults.string(forKey: "speakerName") ?? NSFullUserName()
@@ -51,6 +57,9 @@ final class Preferences: ObservableObject {
             ?? documentsFolder.appendingPathComponent("Cue")
         summarizeRecordings = defaults.object(forKey: "summarizeRecordings") as? Bool ?? true
         activeProject = defaults.string(forKey: "activeProject")
+        meetingAction = MeetingAction(rawValue: defaults.string(forKey: "meetingAction") ?? "") ?? .ask
+        unwatchedCalendars = Set(defaults.stringArray(forKey: "unwatchedCalendars") ?? [])
+        meetingProjects = defaults.dictionary(forKey: "meetingProjects") as? [String: String] ?? [:]
     }
 }
 

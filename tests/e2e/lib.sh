@@ -26,6 +26,10 @@ mkdir -p "$SUPPORT" "$CUE_HOME/Documents"
 defaults delete $DOMAIN > /dev/null 2>&1
 # Own settings domain and whisper-server port, so checkouts can run cases at the same time.
 export CUE_DEFAULTS_DOMAIN=$DOMAIN
+# The calendar and the apps using the microphone come from these files, never from the Mac
+# (see `minutes_from_now` and `mic_apps`).
+EVENTS=$CASE_DIR/events.json
+MIC_APPS=$CASE_DIR/mic-apps
 export CUE_WHISPER_PORT=$(for _ in $(seq 50); do port=$((20000 + RANDOM % 20000)); lsof -nP -iTCP:$port -sTCP:LISTEN > /dev/null 2>&1 || { echo $port; break; }; done)
 
 if [[ $E2E_CLAUDE == fake ]]; then
@@ -64,12 +68,13 @@ need_voice() { say -v '?' | grep -q -E "^$1( |\\()" || skip "voice '$1' is not i
 cue_defaults() { defaults write $DOMAIN "$1" "-$2" "${@:3}"; }
 
 # cue_launch [VAR=value…] — starts the app in the background with live audio off
-# (pass CUE_NO_LIVE_AUDIO=0 to override) and waits for its session log.
+# (pass CUE_NO_LIVE_AUDIO=0 to override), the calendar read from $EVENTS and the
+# microphone users from $MIC_APPS, and waits for its session log.
 cue_launch() {
     local previous; previous=$(session_log)
     : > "$CASE_DIR/control"
     (
-        export CUE_NO_LIVE_AUDIO=1 CUE_CONTROL=$CASE_DIR/control
+        export CUE_NO_LIVE_AUDIO=1 CUE_CONTROL=$CASE_DIR/control CUE_CALENDAR_EVENTS=$EVENTS CUE_MIC_APPS=$MIC_APPS
         for assignment in "$@"; do export "$assignment"; done
         exec "$CUE_BIN"
     ) >> "$CASE_DIR/cue.out" 2>&1 &
@@ -89,9 +94,21 @@ cue_stop() {
 }
 
 # cue_control COMMAND… — does in the running Cue what a click would (CUE_CONTROL):
-# `new NAME`, `add PATH`, `start NAME`, `project NAME`, `ask TEXT`, and
-# `page home|upcoming|NAME|NAME/answers|NAME/notes` for the dashboard.
+# `new NAME`, `add PATH`, `start NAME`, `project NAME`, `ask TEXT`,
+# `page home|upcoming|NAME|NAME/answers|NAME/notes` for the dashboard,
+# `assign EVENT | PROJECT` (quote it) and `notification record|dismiss`.
 cue_control() { echo "$*" >> "$CASE_DIR/control"; }
+
+# minutes_from_now N — the time N minutes from now (negative: ago) in ISO 8601, for $EVENTS:
+# a JSON array of {title, start, end, and optionally id, series, calendar, url, location,
+# notes, attendees, recurring}.
+minutes_from_now() { date -u -v"$( (($1 < 0)) && echo "$1" || echo "+$1")"M +%Y-%m-%dT%H:%M:%SZ; }
+
+# mic_apps [BUNDLE_ID…] — the processes using the microphone right now; none when the call app let go.
+mic_apps() { printf '%s\n' "$@" > "$MIC_APPS"; }
+
+# log_count REGEX — how many session log lines match.
+log_count() { grep -c -E -- "$1" "$(session_log)"; }
 
 cue_alive() { [[ -n $CUE_PID ]] && kill -0 "$CUE_PID" 2> /dev/null; }
 
@@ -165,6 +182,17 @@ dialogue() {
 
 # ocr PNG — the text Vision reads in an image, one line per text block.
 ocr() { "$E2E_BIN/ocr" "$1"; }
+
+# dashboard_page PAGE REGEX — with CUE_SNAPSHOT=$CASE_DIR/cue.png, shows a dashboard page
+# and waits until its snapshot reads REGEX; the page's text is then in $CASE_DIR/page.txt.
+dashboard_page() {
+    cue_control page "$1"
+    wait_for "the $1 page to show /$2/" 20 _dashboard_shows "$2"
+}
+_dashboard_shows() {
+    local png=$CASE_DIR/cue-dashboard.png
+    [[ -s $png ]] && ocr "$png" > "$CASE_DIR/page.txt" && grep -q -i -E -- "$1" "$CASE_DIR/page.txt"
+}
 
 # Waits for CUE_SNAPSHOT to write a PNG and prints its text.
 snapshot_text() {

@@ -1,0 +1,6 @@
+# A calendar call. It opens with silence: Cue notices the meeting and starts
+# recording while the call is still connecting.
+pause | 5
+call | Daniel   | Good morning. Let us review the onboarding screens today.
+me   | Samantha | Good morning. The screens are ready, I will send them on Thursday.
+call | Daniel   | Thank you. Talk to you next week.

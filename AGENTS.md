@@ -45,12 +45,17 @@ speakers, `6x` calendar). It sources `tests/e2e/lib.sh`, which gives it:
 - a sandbox: `CUE_HOME` (a fresh folder holding `Application Support/Cue`
   and `Documents`), its own defaults domain and whisper-server port, all
   wiped after the case, so checkouts can run cases at the same time; the
-  speech model is linked in, never copied;
+  speech model is linked in, never copied; the calendar and the apps using
+  the microphone are read from the case's `$EVENTS` and `$MIC_APPS` files,
+  never from the Mac;
 - `cue_defaults KEY TYPE VALUE`, `cue_launch [VAR=value …]`, `cue_stop`,
   `cue_cli ARGS…` (command-line modes), `cue_control COMMAND…` (what a click
-  would do, through `CUE_CONTROL`);
+  would do, through `CUE_CONTROL`), `dashboard_page PAGE REGEX` (show a
+  dashboard page and read its snapshot);
+- `minutes_from_now N` (event times for `$EVENTS`), `mic_apps BUNDLE_ID…`
+  (who is on the microphone now; none when the call app lets go);
 - `wait_for "what" SECONDS command…`, `wait_log PATTERN SECONDS`,
-  `session_log`, `find_notes`;
+  `log_count PATTERN`, `session_log`, `find_notes`;
 - `speech OUT.wav VOICE "text"` and `dialogue SCRIPT OUTDIR` (multi-voice
   calls built with `say`, one WAV per side plus `timeline.tsv`), `ocr PNG`;
 - `assert_file`, `assert_contains`, `assert_not_contains`, `assert_eq`,
@@ -75,14 +80,19 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_REHEARSE_RECORD=1` | Record the rehearsal and write its notes. |
 | `CUE_SNAPSHOT=png` | Render the overlay to `png` every 2 s, and the dashboard and Settings, when open, to `…-dashboard.png` / `…-settings.png` (whole window, light appearance). |
 | `CUE_PROJECT=name` | Make this project active at launch, creating it if there is none by that name. |
-| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field). |
+| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
+| `CUE_CALENDAR_EVENTS=file.json` | Read the calendar from this file instead of EventKit (no permission asked), again on every check: a JSON array of `{title, start, end}` (ISO 8601) with optional `id`, `series` (shared by a recurring event's occurrences), `calendar` (name), `url`, `location`, `notes`, `attendees` (names), `recurring`. |
+| `CUE_MIC_APPS=file` | The bundle IDs using the microphone right now, one per line, read on every check instead of Core Audio's process list. |
+| `CUE_MEETING_TICK=s` / `CUE_MIC_RELEASE=s` | Check for calls every `s` seconds instead of 5; stop a call's recording once the call app has been off the microphone for `s` seconds instead of 60. |
 | `CUE_ALLOW_CAPTURE=1` | Let screenshots see the overlay. |
 | `CUE_SHOW_SETTINGS=1` | Open Settings at launch. |
 
 The session log (`Application Support/Cue/sessions/*.md`) is the app's
 progress record and what cases wait on: keep writing a line for every step a
-recording goes through (`🎙 Transcript saved: …`, `📝 Notes ready: …`, and so
-on), and never rename existing lines without updating the cases.
+recording goes through (`🎙 Transcript saved: …`, `📝 Notes ready: …`,
+`📅 Recording “Title” into Project`, `🔔 Record “Title”?` for every
+notification, and so on), and never rename existing lines without updating
+the cases.
 
 ## Rules for changes
 
