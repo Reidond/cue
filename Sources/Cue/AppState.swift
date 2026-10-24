@@ -64,6 +64,8 @@ final class AppState: ObservableObject {
     let recordings: RecordingStore
     /// Plays the audio of the note open in the dashboard.
     let player: NotePlayer
+    let calendar: MeetingCalendar
+    private(set) lazy var meetings = MeetingMonitor(state: self)
 
     /// The project Cue answers from and records into.
     @Published private(set) var activeProject: Project?
@@ -94,7 +96,7 @@ final class AppState: ObservableObject {
     private let systemSegmenter = SpeechSegmenter()
     private let audioRecorder = AudioRecorder()
     private let detector = QuestionDetector()
-    private let log: SessionLog
+    let log: SessionLog
     private var meterTimer: Timer?
     private var subscriptions: Set<AnyCancellable> = []
     private var knowledgeGeneration = 0
@@ -102,6 +104,8 @@ final class AppState: ObservableObject {
     private var knowledgeInputs: KnowledgeInputs?
     /// Where the recording in progress goes, even if the user switches project meanwhile.
     private var recordingProject: Project?
+    /// The calendar event being recorded, if the recording is for one.
+    private var recordingMeeting: MeetingDetails?
 
     private struct KnowledgeInputs: Equatable {
         var materials: [URL]
@@ -118,6 +122,7 @@ final class AppState: ObservableObject {
         recordings.reload()
         player = NotePlayer(log: log)
         AudioRecorder.removeStaleWorkingFolders()
+        calendar = MeetingCalendar(preferences: preferences)
         // CUE_PROJECT=name picks the project at launch (creating it when missing); otherwise the last one used.
         if let name = ProcessInfo.processInfo.environment["CUE_PROJECT"] {
             activeProject = projects.project(named: name) ?? (try? projects.create(named: name))
@@ -174,6 +179,7 @@ final class AppState: ObservableObject {
         startWhisper()
         startAudio()
         observeSettings()
+        meetings.start()
 
         meterTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             Task { @MainActor in
@@ -460,6 +466,7 @@ final class AppState: ObservableObject {
 
     /// After a rename or delete on the dashboard.
     func projectsChanged(renamed old: Project? = nil, to new: Project? = nil) {
+        if let old, let new { calendar.projectRenamed(from: old.id, to: new.id) }
         if let old, let new, old.id == activeProject?.id {
             activeProject = new
             preferences.activeProject = new.id
@@ -483,20 +490,36 @@ final class AppState: ObservableObject {
     }
 
     func startRecording() {
-        recordingProject = activeProject
+        startRecording(into: activeProject)
+    }
+
+    /// Records into a given project, e.g. a calendar event's, named after the event when there is one.
+    func startRecording(into project: Project?, meeting: MeetingDetails? = nil) {
+        recordingProject = project
+        recordingMeeting = meeting
         audioRecorder.start(at: recorder.start())
     }
 
     /// Waits for the last phrase to be transcribed, then saves the notes and audio and summarizes.
     func stopRecording() {
+        stopRecording(automatically: false)
+    }
+
+    /// `automatically` when Cue ends the recording itself because the call ended: the note isn't
+    /// opened and an empty recording isn't an alert. `saved` gets the note's id (nil if nothing was heard).
+    func stopRecording(automatically: Bool, saved: @escaping (String?) -> Void = { _ in }) {
         guard recorder.isRecording else { return }
         audioRecorder.stop(at: recorder.beginStop())
+        let meeting = recordingMeeting
+        recordingMeeting = nil
         Task {
             try? await Task.sleep(for: .seconds(2.5))
             let audio = await audioRecorder.finish()
             guard let transcript = recorder.finish() else { return }
             guard !transcript.lines.isEmpty else {
                 audio.map { try? FileManager.default.removeItem(at: $0.folder) }
+                saved(nil)
+                guard !automatically else { return }
                 let alert = NSAlert()
                 alert.messageText = "Nothing was recorded"
                 alert.informativeText = "Cue didn't hear any speech while recording, so no notes were saved."
@@ -507,7 +530,9 @@ final class AppState: ObservableObject {
             let project = recordingProject.flatMap { projects.project($0.id) } ?? activeProject
                 ?? projects.project(named: "Meetings") ?? (try? projects.create(named: "Meetings"))
             guard let project else { return }
-            if let id = recordings.save(transcript, into: project, audio: audio) { openRecordings(id) }
+            let id = recordings.save(transcript, into: project, meeting: meeting, audio: audio)
+            if let id, !automatically { openRecordings(id) }
+            saved(id)
         }
     }
 

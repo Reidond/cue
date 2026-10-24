@@ -24,5 +24,7 @@
     <string>Cue transcribes what you say so it knows the context of each question.</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>Cue transcribes the other people on the call to catch their questions.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Cue finds the calls in your calendar so it can offer to record each one when it starts, and names the notes after the meeting.</string>
 </dict>
 </plist>

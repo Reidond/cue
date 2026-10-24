@@ -121,6 +121,13 @@ struct RecordingFile: Identifiable, Hashable {
 
     static func quoted(_ value: String) -> String { "\"\(value.replacingOccurrences(of: "\"", with: "\\\""))\"" }
 
+    /// A list of names as YAML (and JSON): `["Olena Mulesa", "Petro Ivanenko"]`.
+    static func list(_ values: [String]) -> String { "[" + values.map(quoted).joined(separator: ", ") + "]" }
+
+    static func list(_ value: String?) -> [String] {
+        value.flatMap { try? JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? []
+    }
+
     static func frontMatter(_ text: String) -> [String: String] {
         let lines = text.components(separatedBy: "\n")
         guard lines.first == "---", let end = lines.dropFirst().firstIndex(of: "---") else { return [:] }
@@ -136,6 +143,13 @@ struct RecordingFile: Identifiable, Hashable {
     }
 }
 
+/// The calendar event a call was recorded for: the note is named after it, and its attendees
+/// go into the front matter and the summary prompt.
+struct MeetingDetails {
+    let title: String
+    let attendees: [String]
+}
+
 /// Saves recordings as Markdown in each project's `Notes/` and keeps them listed, newest first.
 @MainActor
 final class RecordingStore: ObservableObject {
@@ -144,6 +158,8 @@ final class RecordingStore: ObservableObject {
     @Published private(set) var liveSummary: [String: String] = [:]
     @Published private(set) var summarizing: Set<String> = []
     @Published private(set) var failures: [String: String] = [:]
+    /// Called with a recording's id once its summary is written (or has failed).
+    var onNotesReady: (String) -> Void = { _ in }
 
     private let preferences: Preferences
     private let projects: ProjectStore
@@ -178,19 +194,22 @@ final class RecordingStore: ObservableObject {
     }
 
     /// Writes the transcript into the project's notes right away so nothing is lost, puts the call's
-    /// audio next to it (with Keep audio on), then summarizes it.
-    func save(_ transcript: CallTranscript, into project: Project, audio: AudioRecorder.Recording? = nil) -> String? {
+    /// audio next to it (with Keep audio on), then summarizes it. A call recorded for a calendar
+    /// event is named after the event and lists its attendees.
+    func save(_ transcript: CallTranscript, into project: Project, meeting: MeetingDetails? = nil,
+              audio: AudioRecorder.Recording? = nil) -> String? {
         let lexicon = project.lexicon
         let speaker = preferences.speakerName.isEmpty ? "You" : preferences.speakerName
         let names: (Channel) -> String = { $0 == .me ? speaker : lexicon.participant }
         let stamp = ISO8601DateFormatter().string(from: transcript.startedAt)
         let id = RecordingFile.id(project: project.id, stamp: stamp)
-        let title = "Call " + transcript.startedAt.formatted(date: .abbreviated, time: .shortened)
+        let title = meeting?.title ?? "Call " + transcript.startedAt.formatted(date: .abbreviated, time: .shortened)
         let duration = Duration.seconds(transcript.endedAt.timeIntervalSince(transcript.startedAt))
             .formatted(.units(allowed: [.hours, .minutes], width: .abbreviated, zeroValueUnits: .hide))
         let summarize = preferences.summarizeRecordings
         let folder = project.notesFolder
-        let url = folder.appendingPathComponent(Self.fileName(date: transcript.startedAt, title: "Call"))
+        let event = meeting.map { "\nevent: \(RecordingFile.quoted($0.title))\nattendees: \(RecordingFile.list($0.attendees))" } ?? ""
+        let url = folder.appendingPathComponent(Self.fileName(date: transcript.startedAt, title: meeting?.title ?? "Call"))
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         } catch {
@@ -215,11 +234,11 @@ final class RecordingStore: ObservableObject {
 
         let document = """
         ---
-        title: "\(title)"
+        title: \(RecordingFile.quoted(title))
         date: \(stamp)
         duration: \(duration.isEmpty ? "<1 min" : duration)
         participants: \(speaker), \(lexicon.participant)
-        project: \(RecordingFile.quoted(project.name))\(audioFile.map { "\naudio: \(RecordingFile.quoted($0.lastPathComponent))" } ?? "")
+        project: \(RecordingFile.quoted(project.name))\(event)\(audioFile.map { "\naudio: \(RecordingFile.quoted($0.lastPathComponent))" } ?? "")
         ---
 
         # \(title)
@@ -278,14 +297,17 @@ final class RecordingStore: ObservableObject {
     /// (Re)generates the summary of a saved recording.
     func summarize(_ id: String, transcript: String? = nil) {
         guard let file = file(id), !summarizing.contains(id) else { return }
-        let text = transcript ?? (try? String(contentsOf: file.url, encoding: .utf8)).map(Self.transcriptSection) ?? ""
+        let saved = (try? String(contentsOf: file.url, encoding: .utf8)) ?? ""
+        let text = transcript ?? Self.transcriptSection(saved)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         summarizing.insert(id)
         failures[id] = nil
         liveSummary[id] = ""
         let project = projects.project(file.projectID)
+        let front = RecordingFile.frontMatter(saved)
+        let meeting = front["event"].map { MeetingDetails(title: $0, attendees: RecordingFile.list(front["attendees"])) }
         let prompt = Summarizer.systemPrompt(speaker: preferences.speakerName, language: (project?.lexicon ?? Lexicon.load("en")).name,
-                                             occasion: project?.occasion ?? "")
+                                             occasion: project?.occasion ?? "", meeting: meeting)
         summarizers[id] = Summarizer.run(system: prompt, transcript: text, model: preferences.model, onText: { [weak self] partial in
             Task { @MainActor in if self?.summarizing.contains(id) == true { self?.liveSummary[id] = partial } }
         }, completion: { [weak self] result in
@@ -298,14 +320,18 @@ final class RecordingStore: ObservableObject {
         summarizers[id] = nil
         liveSummary[id] = nil
         guard let file = file(id), let text = try? String(contentsOf: file.url, encoding: .utf8) else { return }
-        defer { notesReady(self.file(id)?.url ?? file.url, startedAt: file.date) }
+        defer {
+            notesReady(self.file(id)?.url ?? file.url, startedAt: file.date)
+            onNotesReady(id)
+        }
         switch result {
         case .failure(let error):
             failures[id] = error.localizedDescription
             log.write("⚠︎ Summary failed: \(error.localizedDescription)")
             try? replacingSummary(in: text, with: "").write(to: file.url, atomically: true, encoding: .utf8)
         case .success(let summary):
-            let title = Self.title(of: summary) ?? file.title
+            // A calendar call keeps the event's title; other calls take the summary's.
+            let title = RecordingFile.frontMatter(text)["event"] == nil ? Self.title(of: summary) ?? file.title : file.title
             var updated = replacingSummary(in: text, with: Self.withoutTitle(summary))
             updated = updated.replacingOccurrences(of: "title: \"\(file.title.replacingOccurrences(of: "\"", with: "\\\""))\"",
                                                    with: "title: \"\(title.replacingOccurrences(of: "\"", with: "\\\""))\"")
@@ -390,8 +416,12 @@ final class RecordingStore: ObservableObject {
 
 /// One-shot `claude -p` run that turns a transcript into meeting notes.
 enum Summarizer {
-    static func systemPrompt(speaker: String, language: String, occasion: String) -> String {
+    static func systemPrompt(speaker: String, language: String, occasion: String, meeting: MeetingDetails? = nil) -> String {
         let name = speaker.isEmpty ? "the user" : speaker
+        let event = meeting.map { meeting in
+            let invited = meeting.attendees.isEmpty ? "" : " Invited: \(meeting.attendees.joined(separator: ", "))."
+            return "\n\nThe call was the calendar event “\(meeting.title)”.\(invited) The transcript doesn't say which of them is speaking: use a name only where the conversation makes it clear (for example, someone is addressed by name)."
+        } ?? ""
         return """
         You turn call transcripts into concise meeting notes in Markdown.
 
@@ -421,7 +451,7 @@ enum Summarizer {
         ## Open questions
         - Only if something was left unresolved.
 
-        Context the user gave about their current talk (it may not apply to this call): \(occasion.isEmpty ? "none" : occasion)
+        Context the user gave about their current talk (it may not apply to this call): \(occasion.isEmpty ? "none" : occasion)\(event)
         """
     }
 

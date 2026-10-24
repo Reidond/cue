@@ -21,7 +21,7 @@ struct HomeView: View {
                     FirstProject { model.creatingProject = true }
                 }
                 if !checks.allSatisfy(\.ok) {
-                    SetupCard(checks: checks, downloader: downloader)
+                    SetupCard(checks: checks, downloader: downloader, calendar: state.calendar)
                 }
                 if !projects.projects.isEmpty {
                     RecentNotes(files: Array(recordings.files.prefix(8)), projects: projects) { model.show($0) }
@@ -69,6 +69,7 @@ private struct FirstProject: View {
 private struct SetupCard: View {
     let checks: [SetupCheck]
     @ObservedObject var downloader: ModelDownloader
+    let calendar: MeetingCalendar
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -83,7 +84,7 @@ private struct SetupCard: View {
                 VStack(spacing: 0) {
                     ForEach(Array(checks.enumerated()), id: \.element.id) { index, check in
                         if index > 0 { Divider() }
-                        SetupRow(check: check, downloader: downloader).padding(.vertical, 8)
+                        SetupRow(check: check, downloader: downloader, calendar: calendar).padding(.vertical, 8)
                     }
                 }
                 .padding(.horizontal, 6)
@@ -95,6 +96,7 @@ private struct SetupCard: View {
 struct SetupRow: View {
     let check: SetupCheck
     @ObservedObject var downloader: ModelDownloader
+    let calendar: MeetingCalendar
 
     var body: some View {
         HStack(spacing: 10) {
@@ -136,6 +138,12 @@ struct SetupRow: View {
                 }
             case .claude:
                 Link("Get Claude Code", destination: URL(string: "https://claude.com/claude-code")!)
+            case .calendar:
+                if MeetingCalendar.systemAccess == .notDetermined {
+                    Button("Allow Access", action: calendar.requestAccess)
+                } else if let url = check.settingsURL {
+                    Button("Open Settings") { NSWorkspace.shared.open(url) }
+                }
             }
         }
     }

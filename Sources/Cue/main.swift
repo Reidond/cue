@@ -93,13 +93,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func showSettings() {
         if settingsWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 480, height: 520),
+                contentRect: NSRect(x: 0, y: 0, width: 480, height: 680),
                 styleMask: [.titled, .closable],
                 backing: .buffered, defer: false
             )
             window.title = "Settings"
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences))
+            window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, calendar: state.calendar))
             window.center()
             window.setFrameAutosaveName("settings")
             settingsWindow = window
@@ -327,7 +327,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// would: `new NAME` (New Project), `add PATH` (a file dropped on the open project's
     /// materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu),
     /// `page home|upcoming|NAME|NAME/answers|NAME/notes` (a dashboard page), `ask TEXT`
-    /// (the Ask field) and `timestamp HH:MM:SS` (a timestamp in the open note's transcript).
+    /// (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript),
+    /// `assign EVENT | PROJECT` (an Upcoming call's project picker) and
+    /// `notification record|dismiss` (the latest Record / Not Now prompt).
     private func startControl(from path: String) {
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -358,6 +360,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             state.ask(argument, force: true)
         case "timestamp":
             if let seconds = MarkdownView.seconds(argument) { state.player.play(from: seconds) }
+        case "assign":
+            let sides = argument.components(separatedBy: " | ")
+            if sides.count == 2, let event = state.calendar.events.first(where: { $0.title == sides[0] }) {
+                state.calendar.assign(event, to: state.projects.project(named: sides[1])?.id ?? sides[1])
+            }
+        case "notification":
+            state.meetings.answerLatestPrompt(record: argument == "record")
         case "page":
             showDashboard()
             switch argument {

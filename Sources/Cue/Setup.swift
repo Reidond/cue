@@ -79,7 +79,7 @@ final class ModelDownloader: NSObject, ObservableObject {
 
 /// What Cue needs from the Mac, checked on demand for the Settings window.
 struct SetupCheck: Identifiable {
-    enum Item: String { case whisper, model, claude, microphone, screenAudio }
+    enum Item: String { case whisper, model, claude, microphone, screenAudio, calendar }
 
     let item: Item
     let ok: Bool
@@ -92,6 +92,7 @@ struct SetupCheck: Identifiable {
         case .claude: "Claude Code"
         case .microphone: "Microphone access"
         case .screenAudio: "Call audio access"
+        case .calendar: "Calendar access"
         }
     }
 
@@ -107,6 +108,8 @@ struct SetupCheck: Identifiable {
         case (.microphone, false): "Allow in System Settings › Privacy & Security › Microphone"
         case (.screenAudio, true): "Hears the other people on the call"
         case (.screenAudio, false): "Allow in System Settings › Privacy & Security › Screen & System Audio Recording, then reopen Cue"
+        case (.calendar, true): "Offers to record calls from your calendar when they start"
+        case (.calendar, false): "Lets Cue offer to record calls from your calendar when they start"
         }
     }
 
@@ -117,6 +120,7 @@ struct SetupCheck: Identifiable {
             SetupCheck(item: .claude, ok: ClaudeService.findBinary() != nil),
             SetupCheck(item: .microphone, ok: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized),
             SetupCheck(item: .screenAudio, ok: CGPreflightScreenCaptureAccess()),
+            SetupCheck(item: .calendar, ok: MeetingCalendar.hasAccess),
         ]
     }
 
@@ -124,6 +128,7 @@ struct SetupCheck: Identifiable {
         switch item {
         case .microphone: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
         case .screenAudio: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        case .calendar: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")
         default: nil
         }
     }
