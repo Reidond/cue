@@ -47,7 +47,7 @@ private struct ControlBar: View {
             Toggle("Auto", isOn: $preferences.autoAnswer)
                 .toggleStyle(.switch)
                 .controlSize(.mini)
-                .help("Answer questions automatically (⌃⌥A)")
+                .help("Answer questions as they're asked; off, they're listed for Prepare Answer (⌃⌥A)")
             IconButton(symbol: "text.bubble", active: preferences.showTranscript, help: "Show transcript") {
                 preferences.showTranscript.toggle()
             }
@@ -187,112 +187,235 @@ private struct IconButton: View {
 
 // MARK: - Questions
 
-/// Every question so far, newest on top. One answer shows in full; the others are compact rows
-/// (the question and what to say, or that it's still coming), so a new question never replaces
-/// what's being read. Click a row, or use ⌃⌥← →, to show it in full.
+/// Everything asked so far, newest on top. One exchange shows in full; the others are compact rows
+/// (the questions and what to say, or that it's still coming), so a new question never replaces
+/// what's being read. Click a row, or use ⌃⌥← →, to show it in full. While an older one is open or
+/// the list is scrolled down, new questions stay out of the list, so nothing in it moves, and wait
+/// under a button at the top that shows them.
 private struct QuestionList: View {
     @ObservedObject var state: AppState
     let size: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var position = ScrollPosition(idType: UUID.self)
 
     var body: some View {
         Group {
-            if state.answers.isEmpty {
+            if state.exchanges.isEmpty {
                 EmptyState(state: state)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 2) {
-                        ForEach(state.answers.reversed()) { answer in
-                            if answer.id == state.expandedID {
-                                AnswerContent(answer: answer, size: size, lexicon: state.lexicon) {
-                                    state.ask(answer.question, force: true)
+                        ForEach(state.exchanges.reversed().filter { !state.unseen.contains($0.id) }) { exchange in
+                            Group {
+                                if exchange.id == state.expandedID {
+                                    ExchangeCard(exchange: exchange, size: size, lexicon: state.lexicon,
+                                                 prepare: { state.prepare(exchange.id) },
+                                                 answerAnyway: { state.ask($0, force: true) })
+                                } else {
+                                    ExchangeRow(exchange: exchange, size: size,
+                                                expand: { state.expand(exchange.id) }, prepare: { state.prepare(exchange.id) })
                                 }
-                                .padding(16)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 16))
-                            } else {
-                                QuestionRow(answer: answer, size: size) { state.expand(answer.id) }
                             }
+                            .id(exchange.id)
                         }
                     }
-                    .padding(8)
+                    .scrollTargetLayout()
                 }
+                .contentMargins(8, for: .scrollContent)
+                .scrollPosition($position, anchor: .top)
                 .scrollIndicators(.never)
                 .scrollEdgeEffectStyle(.soft, for: .vertical)
+                .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 24 } action: { _, scrolled in
+                    state.listScrolled = scrolled
+                }
+                .onChange(of: state.exchanges.count) {
+                    if !state.holding && !state.listScrolled { position.scrollTo(edge: .top) }
+                }
+                .onChange(of: state.expandedID) { _, id in
+                    guard let id else { return }
+                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.2)) {
+                        if id == state.exchanges.last?.id { position.scrollTo(edge: .top) } else { position.scrollTo(id: id, anchor: .top) }
+                    }
+                }
+                .overlay(alignment: .top) {
+                    if !state.unseen.isEmpty {
+                        NewQuestionsButton(count: state.unseen.count) {
+                            state.showNewest()
+                            position.scrollTo(edge: .top)
+                        }
+                        .padding(.top, 10)
+                        .transition(.opacity)
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: state.expandedID)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: state.unseen.isEmpty)
         .glassEffect(.regular, in: .rect(cornerRadius: 24))
     }
 }
 
-/// A question in compact form: what was asked, then what to say, that the answer is coming, or
-/// that it isn't a question for the speaker (dimmed).
-private struct QuestionRow: View {
-    let answer: Answer
-    let size: CGFloat
-    let expand: () -> Void
+/// Over the list while it's held in place: the questions that came in meanwhile.
+private struct NewQuestionsButton: View {
+    let count: Int
+    let action: () -> Void
 
     var body: some View {
-        Button(action: expand) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(answer.question)
-                    .font(.system(size: max(size - 3, 11)))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                status
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(.rect)
+        Button(action: action) {
+            Label(count == 1 ? "1 New Question" : "\(count) New Questions", systemImage: "arrow.up")
         }
-        .buttonStyle(.plain)
-        .opacity(answer.isNotAQuestion ? 0.5 : 1)
-        .help("Show this answer in full")
+        .buttonStyle(AccentCapsuleStyle())
+        .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+        .help("Show the newest question")
+    }
+}
+
+/// A capsule in the accent colour for the overlay's main actions. The overlay is seldom the key
+/// window, where the system's prominent buttons grey out as if disabled.
+private struct AccentCapsuleStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.accentColor.opacity(configuration.isPressed ? 0.75 : 1), in: .capsule)
+            .contentShape(.capsule)
+    }
+}
+
+/// A question and its marker: its number when several were asked in one go, else who's asking.
+private struct QuestionLine: View {
+    let question: String
+    let number: Int?
+    let size: CGFloat
+    let lines: Int
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: number.map { "\($0).circle.fill" } ?? "person.wave.2.fill")
+                .foregroundStyle(.secondary)
+                .frame(width: size, alignment: .center)
+            Text(question)
+                .fontWeight(.semibold)
+                .foregroundStyle(.primary)
+                .lineLimit(lines)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.system(size: size))
+    }
+}
+
+/// An exchange in compact form: each question, then what to say, that the answer is coming, or that
+/// it isn't a question for the speaker (dimmed). Questions noticed with Auto off get Prepare Answer.
+private struct ExchangeRow: View {
+    let exchange: Exchange
+    let size: CGFloat
+    let expand: () -> Void
+    let prepare: () -> Void
+
+    private var questionSize: CGFloat { max(size - 2, 12) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: expand) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(exchange.answers.enumerated()), id: \.element.id) { index, answer in
+                        VStack(alignment: .leading, spacing: 2) {
+                            QuestionLine(question: answer.question, number: exchange.answers.count > 1 ? index + 1 : nil,
+                                         size: questionSize, lines: 2)
+                            status(answer).padding(.leading, questionSize + 8)
+                        }
+                        .opacity(answer.isNotAQuestion ? 0.5 : 1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help("Show in full")
+            if exchange.waiting {
+                Button("Prepare Answer", action: prepare)
+                    .buttonStyle(AccentCapsuleStyle())
+                    .padding(.leading, questionSize + 8)
+                    .help("Ask Claude what to say")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
-    @ViewBuilder private var status: some View {
-        if let error = answer.error {
+    @ViewBuilder private func status(_ answer: Answer) -> some View {
+        let small = Font.system(size: max(size - 3, 11))
+        if !answer.requested {
+            EmptyView()
+        } else if let error = answer.error {
             Label(error, systemImage: "exclamationmark.triangle.fill")
-                .font(.system(size: max(size - 3, 11)))
+                .font(small)
                 .foregroundStyle(.orange)
                 .lineLimit(1)
         } else if answer.isNotAQuestion {
             Text("Not a question for you")
-                .font(.system(size: max(size - 3, 11)))
+                .font(small)
                 .foregroundStyle(.tertiary)
         } else if let line = answer.firstLine {
             Text(line)
-                .font(.system(size: size - 1, weight: .medium))
+                .font(.system(size: questionSize))
+                .foregroundStyle(.secondary)
                 .lineLimit(2)
         } else {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
                 Text(answer.opener ?? "Thinking…").lineLimit(1)
             }
-            .font(.system(size: max(size - 3, 11)))
+            .font(small)
             .foregroundStyle(.secondary)
         }
     }
 }
 
+/// An exchange in full: each question with its answer, numbered when several were asked in one go.
+private struct ExchangeCard: View {
+    let exchange: Exchange
+    let size: CGFloat
+    let lexicon: Lexicon
+    let prepare: () -> Void
+    let answerAnyway: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ForEach(Array(exchange.answers.enumerated()), id: \.element.id) { index, answer in
+                if index > 0 { Divider() }
+                AnswerContent(answer: answer, number: exchange.answers.count > 1 ? index + 1 : nil,
+                              size: size, lexicon: lexicon) { answerAnyway(answer.question) }
+            }
+            if exchange.waiting {
+                Button("Prepare Answer", action: prepare)
+                    .buttonStyle(AccentCapsuleStyle())
+                    .help("Ask Claude what to say")
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 16))
+    }
+}
+
 private struct AnswerContent: View {
     let answer: Answer
+    let number: Int?
     let size: CGFloat
     let lexicon: Lexicon
     let answerAnyway: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DetailRow(symbol: "person.wave.2", size: size) {
-                Text(answer.question).lineLimit(4)
-            }
-            .font(.system(size: size - 2))
-            .foregroundStyle(.secondary)
+            QuestionLine(question: answer.question, number: number, size: size, lines: 6)
 
-            if answer.isNotAQuestion {
+            if !answer.requested {
+                EmptyView()
+            } else if answer.isNotAQuestion {
                 Text("Doesn't sound like a question for you.")
                     .font(.system(size: size))
                     .foregroundStyle(.secondary)
@@ -463,7 +586,9 @@ private struct EmptyState: View {
                 Label("Listening", systemImage: "waveform")
                     .symbolEffect(.variableColor.iterative, options: .repeating, isActive: state.status.kind == .ready && !reduceMotion)
             } description: {
-                Text("When someone asks a question, what to say appears here.\n⌃⌥⏎ answers the last thing said.")
+                Text(state.preferences.autoAnswer
+                     ? "When someone asks a question, what to say appears here.\n⌃⌥⏎ answers the last thing said."
+                     : "When someone asks a question, it appears here for Prepare Answer.\n⌃⌥⏎ answers the last thing said.")
             }
         }
     }

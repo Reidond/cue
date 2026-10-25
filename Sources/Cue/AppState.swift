@@ -27,20 +27,34 @@ struct Utterance: Identifiable {
     }
 }
 
+/// What was asked in one go: one question or several, each answered on its own and shown together.
+struct Exchange: Identifiable {
+    let id = UUID()
+    var answers: [Answer]
+
+    /// Noticed with Auto off: the questions wait for Prepare Answer.
+    var waiting: Bool { answers.contains { !$0.requested } }
+    var isNotAQuestion: Bool { answers.allSatisfy(\.isNotAQuestion) }
+}
+
 struct Answer: Identifiable {
-    let id: UUID
+    /// Also the id of its request to Claude.
+    let id = UUID()
     let question: String
-    let askedAt = Date()
+    var askedAt = Date()
     /// Shown the instant the question lands, before Claude says anything.
     let opener: String?
     let prepared: PreparedAnswer?
     let preparedScore: Double
+    /// Sent to Claude (a question noticed with Auto off isn't, until Prepare Answer).
+    var requested = true
     var text = ""
     var firstTokenAt: Date?
     var done = false
     var error: String?
 
-    var isNotAQuestion: Bool { done && text.trimmingCharacters(in: .whitespacesAndNewlines) == "—" }
+    /// Claude's "—": nothing to answer (even when it explains why after the dash).
+    var isNotAQuestion: Bool { done && text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("—") }
 
     /// Claude's first line, once it is complete.
     var firstLine: String? {
@@ -84,12 +98,20 @@ final class AppState: ObservableObject {
 
     @Published var utterances: [Utterance] = []
     @Published var partial: [Channel: String] = [:]
-    @Published var answers: [Answer] = []
-    /// The answer shown in full in the overlay's list (also its index, `selected`). A question Cue
+    /// Everything asked so far, oldest first.
+    @Published private(set) var exchanges: [Exchange] = []
+    /// The exchange shown in full in the overlay's list (also its index, `selected`). One Cue
     /// noticed by itself takes it only once Claude starts a real answer, so an organisational remark
-    /// ("—") never pushes the answer being read out of view.
+    /// ("—") never pushes the answer being read out of view, and not while the user reads another.
     @Published private(set) var expandedID: UUID?
-    @Published var selected = 0
+    @Published private(set) var selected = 0
+    /// The user opened an older exchange to read it: new ones wait under a "new questions" button.
+    @Published private(set) var holding = false
+    /// The overlay's list is scrolled away from its newest end, which holds the view in place too.
+    var listScrolled = false { didSet { if !listScrolled && !holding { unseen = [] } } }
+    /// Exchanges that came in while the view was held: kept out of the list until the "new questions"
+    /// button (or the newest end of the list) shows them.
+    @Published private(set) var unseen: Set<UUID> = []
     @Published var micLevel: Float = 0
     @Published var callLevel: Float = 0
     @Published var mic = ServiceStatus()
@@ -175,9 +197,10 @@ final class AppState: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
-        detector.onQuestion = { [weak self] question in
-            guard let self, self.preferences.autoAnswer else { return }
-            self.ask(question)
+        // With Auto off, the questions are listed for Prepare Answer instead of answered.
+        detector.onQuestions = { [weak self] questions in
+            guard let self else { return }
+            self.ask(questions, request: self.preferences.autoAnswer)
         }
         wire(micSegmenter, channel: .me)
         wire(systemSegmenter, channel: .others)
@@ -280,6 +303,7 @@ final class AppState: ObservableObject {
     private func applyLanguage() {
         let lexicon = self.lexicon
         detector.cues = lexicon.questionCues
+        detector.requestCues = lexicon.requestCues ?? []
         let whisperService = whisperService
         let language = activeProject?.language ?? Project.defaultLanguage, prompt = activeProject?.whisperPrompt ?? ""
         let hallucinations = lexicon.hallucinations
@@ -602,24 +626,66 @@ final class AppState: ObservableObject {
 
     // MARK: - Answers
 
-    /// Manual trigger: whatever the participants are saying right now, else their last line.
+    /// Manual trigger: whatever the participants are saying right now, else their last line. Its
+    /// questions are answered each on its own, or all of it when it holds none.
     func answerNow() {
-        var question = detector.takeBuffer() ?? ""
-        if let live = partial[.others], !live.isEmpty { question += (question.isEmpty ? "" : " ") + live }
-        if question.isEmpty {
-            question = utterances.last(where: { $0.channel == .others })?.text ?? utterances.last?.text ?? ""
+        var speech = detector.takeBuffer() ?? ""
+        if let live = partial[.others], !live.isEmpty { speech += (speech.isEmpty ? "" : " ") + live }
+        if speech.isEmpty {
+            speech = utterances.last(where: { $0.channel == .others })?.text ?? utterances.last?.text ?? ""
         }
-        guard !question.isEmpty else { return }
-        ask(question, force: true)
+        guard !speech.isEmpty else { return }
+        let questions = detector.questions(in: speech)
+        ask(questions.isEmpty ? [speech] : questions, force: true)
     }
 
     func ask(_ question: String, force: Bool = false) {
-        guard let claudeService else { return }
-        let lexicon = self.lexicon
-        let match = knowledge?.match(question)
-        let opener = match.flatMap { Self.firstSentence($0.answer.a, dropping: lexicon.thanksPrefix) }
-            ?? (lexicon.defaultOpener.isEmpty ? nil : lexicon.defaultOpener)
+        ask([question], force: force)
+    }
 
+    /// Questions asked in one go, answered each on its own and listed together. `force` when the user
+    /// asked for it: shown at once. Without `request` they are only listed, for Prepare Answer.
+    func ask(_ questions: [String], force: Bool = false, request: Bool = true) {
+        guard claudeService != nil || !request else { return }
+        let lexicon = self.lexicon
+        let exchange = Exchange(answers: questions.map { question in
+            let match = knowledge?.match(question)
+            let opener = match.flatMap { Self.firstSentence($0.answer.a, dropping: lexicon.thanksPrefix) }
+                ?? (lexicon.defaultOpener.isEmpty ? nil : lexicon.defaultOpener)
+            return Answer(question: question, opener: opener, prepared: match?.answer, preparedScore: match?.score ?? 0, requested: false)
+        })
+        exchanges.append(exchange)
+        if request {
+            send(exchange.id, force: force)
+        } else {
+            for question in questions { log.write("❔ **Question (Auto is off):** \(question)") }
+        }
+        // Asked for by the user: show it now. Noticed by Cue: it waits as a row until it's a real answer.
+        if force { expand(exchange.id) } else if holding || listScrolled { unseen.insert(exchange.id) }
+    }
+
+    /// Prepare Answer on questions noticed with Auto off.
+    func prepare(_ id: UUID) {
+        send(id, force: true)
+        expand(id)
+    }
+
+    /// Sends an exchange's questions that are still waiting to Claude, each as its own request.
+    private func send(_ id: UUID, force: Bool) {
+        guard let claudeService, let index = exchanges.firstIndex(where: { $0.id == id }) else { return }
+        let questions = exchanges[index].answers.map(\.question)
+        for (part, answer) in exchanges[index].answers.enumerated() where !answer.requested {
+            let others = questions.enumerated().filter { $0.offset != part }.map { "«\($0.element)»" }
+            claudeService.ask(message(for: answer.question, askedWith: others, force: force), id: answer.id)
+            exchanges[index].answers[part].requested = true
+            exchanges[index].answers[part].askedAt = Date()
+            let of = questions.count > 1 ? " _(\(part + 1) of \(questions.count))_" : ""
+            let match = answer.prepared.map { _ in " _(prepared match \(Int(answer.preparedScore * 100))%)_" } ?? ""
+            log.write("❓ **Question:** \(answer.question)\(of)\(match)")
+        }
+    }
+
+    private func message(for question: String, askedWith others: [String], force: Bool) -> String {
         let context = utterances
             .filter { Date().timeIntervalSince($0.time) < 180 && !question.contains($0.text) }
             .suffix(12)
@@ -627,20 +693,45 @@ final class AppState: ObservableObject {
             .joined(separator: "\n")
         var message = context.isEmpty ? "" : "Recent transcript (context):\n\(context.suffix(2500))\n\n"
         message += "Question: [\(promptLabel(.others))] \(question)"
-        if force { message += "\n\n(The speaker asked for an answer themselves — even if this is not a question, suggest what to say.)" }
-
-        let id = claudeService.ask(message)
-        log.write("❓ **Question:** \(question)\(match.map { " _(prepared match \(Int($0.score * 100))%)_" } ?? "")")
-        answers.append(Answer(id: id, question: question, opener: opener, prepared: match?.answer, preparedScore: match?.score ?? 0))
-        // Asked for by the user: show it now. Noticed by Cue: it waits as a row until it's a real answer.
-        if force { expand(id) }
+        if !others.isEmpty {
+            message += "\n\n(Asked in one go with \(others.joined(separator: ", ")), which are answered separately: answer only this question.)"
+        }
+        message += force
+            ? "\n\n(The speaker asked for an answer themselves — even if this is not a question, suggest what to say.)"
+            : "\n\n(Noticed automatically. If it is not a question or remark addressed to the speaker, reply with — alone.)"
+        return message
     }
 
-    /// Shows an answer in full in the overlay's list.
+    /// The user opens an exchange (a click, ⌃⌥← →). An older one holds the view: new questions
+    /// wait under the "new questions" button until the user goes back to the newest.
     func expand(_ id: UUID) {
-        guard let index = answers.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = exchanges.firstIndex(where: { $0.id == id }) else { return }
         selected = index
         expandedID = id
+        holding = index < exchanges.count - 1
+        unseen.remove(id)
+        if !holding { unseen = [] }
+    }
+
+    /// The "new questions" button: the newest, and new questions come into view again.
+    func showNewest() {
+        if let newest = exchanges.last { expand(newest.id) }
+    }
+
+    /// Cue brings an exchange into view by itself, unless the user holds the view on another one.
+    private func reveal(_ index: Int) {
+        let id = exchanges[index].id
+        guard id != expandedID else { return }
+        if holding || listScrolled { unseen.insert(id); return }
+        selected = index
+        expandedID = id
+    }
+
+    private func position(of answer: UUID) -> (exchange: Int, part: Int)? {
+        for (index, exchange) in exchanges.enumerated() {
+            if let part = exchange.answers.firstIndex(where: { $0.id == answer }) { return (index, part) }
+        }
+        return nil
     }
 
     private static func firstSentence(_ text: String, dropping prefix: String) -> String? {
@@ -650,30 +741,35 @@ final class AppState: ObservableObject {
     }
 
     private func appendDelta(_ id: UUID, _ text: String) {
-        guard let index = answers.firstIndex(where: { $0.id == id }) else { return }
-        if answers[index].firstTokenAt == nil { answers[index].firstTokenAt = Date() }
-        answers[index].text += text
+        guard let (index, part) = position(of: id) else { return }
+        if exchanges[index].answers[part].firstTokenAt == nil { exchanges[index].answers[part].firstTokenAt = Date() }
+        exchanges[index].answers[part].text += text
         // The first words of a real answer (not "—") bring it into view, unless a newer one is there.
-        let real = answers[index].text.contains { !"—- \n".contains($0) }
-        let shown = answers.firstIndex { $0.id == expandedID }
-        if real, expandedID != id, shown.map({ $0 < index }) ?? true { expand(id) }
+        let said = exchanges[index].answers[part].text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let real = !said.hasPrefix("—") && said.contains { !"—- \n".contains($0) }
+        let shown = exchanges.firstIndex { $0.id == expandedID }
+        if real, shown.map({ $0 < index }) ?? true { reveal(index) }
     }
 
     private func finish(_ id: UUID, error: String?) {
-        guard let index = answers.firstIndex(where: { $0.id == id }) else { return }
-        answers[index].done = true
-        answers[index].error = error
-        let answer = answers[index]
+        guard let (index, part) = position(of: id) else { return }
+        exchanges[index].answers[part].done = true
+        exchanges[index].answers[part].error = error
+        let answer = exchanges[index].answers[part]
         let firstWord = answer.firstTokenAt.map { String(format: "first word %.1f s, ", $0.timeIntervalSince(answer.askedAt)) } ?? ""
         let total = String(format: "%.1f", Date().timeIntervalSince(answer.askedAt))
         log.write("💬 **Answer** (\(firstWord)done \(total) s):\n\n\(error.map { "⚠︎ \($0)" } ?? answer.text)\n")
         // Organisational remarks come back as "—": they stay in the list as a dimmed row, and the
         // answer in view stays. A first question that fails still shows why.
-        if expandedID == nil && !answer.isNotAQuestion { expand(id) }
+        if exchanges[index].isNotAQuestion {
+            unseen.remove(exchanges[index].id)
+        } else if expandedID == nil && !answer.isNotAQuestion {
+            reveal(index)
+        }
     }
 
     func step(_ delta: Int) {
-        guard !answers.isEmpty else { return }
-        expand(answers[min(max(selected + delta, 0), answers.count - 1)].id)
+        guard !exchanges.isEmpty else { return }
+        expand(exchanges[min(max(selected + delta, 0), exchanges.count - 1)].id)
     }
 }

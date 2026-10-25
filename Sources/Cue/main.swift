@@ -339,8 +339,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// `assign EVENT | PROJECT` (an Upcoming call's project picker),
     /// `notification record|dismiss` (the latest Record / Not Now prompt), `rename NAME | NEW`
     /// (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL`
-    /// (a name suggestion on the open note) and `download speakers` (Home's Download for the
-    /// speaker models).
+    /// (a name suggestion on the open note), `download speakers` (Home's Download for the
+    /// speaker models), `show TEXT` (the overlay's row of the question with TEXT in it), `newest`
+    /// (the overlay's New Questions button) and `prepare` (Prepare Answer on the newest questions
+    /// waiting for it).
     private func startControl(from path: String) {
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -391,6 +393,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let note = dashboard.note { state.recordings.dismissSuggestion(for: argument, in: note) }
         case "download":
             if argument == "speakers" { state.speakerModels.start() }
+        case "show":
+            if let exchange = state.exchanges.last(where: { $0.answers.contains { $0.question.localizedCaseInsensitiveContains(argument) } }) {
+                state.expand(exchange.id)
+            }
+        case "newest":
+            state.showNewest()
+        case "prepare":
+            if let exchange = state.exchanges.last(where: \.waiting) { state.prepare(exchange.id) }
         case "page":
             showDashboard()
             switch argument {

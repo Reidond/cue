@@ -2,8 +2,12 @@
   "name": "English",
   "questionCues": [
     "how", "why", "what", "which", "who", "whom", "whose", "when", "where", "whether", "is it", "are you",
-    "do you", "did you", "does it", "can you", "could you", "would you", "explain", "describe", "elaborate",
-    "clarify", "comment on", "tell us", "walk us through", "question", "wondering", "curious"
+    "do you", "did you", "does it", "can you", "could you", "would you"
+  ],
+  "requestCues": [
+    "explain", "describe", "elaborate", "clarify", "comment on", "tell us", "tell me", "walk us through",
+    "can you", "could you", "would you", "i'm curious", "i am curious", "i wonder", "i was wondering",
+    "i'd like to know", "i would like to know"
   ],
   "stopWords": [
     "what", "which", "that", "this", "these", "those", "with", "from", "your", "have", "does", "could",

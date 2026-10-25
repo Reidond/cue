@@ -53,9 +53,9 @@ final class ClaudeService {
         queue.sync { shutdown() }
     }
 
+    /// `id` names the request in the handlers' calls.
     @discardableResult
-    func ask(_ text: String) -> UUID {
-        let id = UUID()
+    func ask(_ text: String, id: UUID = UUID()) -> UUID {
         queue.async { [self] in
             if process == nil { launch() }
             send(text, id: id)

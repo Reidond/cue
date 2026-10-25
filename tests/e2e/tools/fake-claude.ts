@@ -6,7 +6,8 @@
 //   answer session (`--input-format stream-json`): answer-system, ask
 //   one-shot summary (`-p` with the transcript on stdin): summary-system, summary-input
 //
-// FAKE_CLAUDE_ANSWER (text) and FAKE_CLAUDE_SUMMARY (a file) set the replies;
+// FAKE_CLAUDE_ANSWER (text) and FAKE_CLAUDE_SUMMARY (a file) set the replies; FAKE_CLAUDE_ANSWERS (JSON
+// `{"pattern": "answer"}`) answers a question matching a pattern (a regex, ignoring case) its own way;
 // FAKE_CLAUDE_SUMMARY_DELAY (seconds) makes the summary take that long, like the real one.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -82,11 +83,14 @@ if (valueAfter('--input-format') === 'stream-json') {
     if (systemFile !== undefined) record('answer-system', readOrUndefined(systemFile) ?? '');
     emit({ type: 'system', subtype: 'init' });
     const answer = env['FAKE_CLAUDE_ANSWER'] ?? 'Fake answer from the end-to-end tests.\n- A supporting point\nSource: tests';
+    const answers = Object.entries(JSON.parse(env['FAKE_CLAUDE_ANSWERS'] ?? '{}') as Record<string, string>);
     for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
         const content = contentOf(line);
         if (content === undefined) continue;
         record('ask', content);
-        reply(content.startsWith('Connection check') ? '—' : answer);
+        const question = /^Question: (.*)$/m.exec(content)?.[1] ?? '';
+        const own = answers.find(([pattern]) => new RegExp(pattern, 'i').test(question))?.[1];
+        reply(content.startsWith('Connection check') ? '—' : own ?? answer);
     }
 } else {
     record('summary-system', readOrUndefined(valueAfter('--system-prompt-file')) ?? valueAfter('--system-prompt') ?? '');
