@@ -497,7 +497,7 @@ struct RecordToolbarButton: View {
     @ObservedObject var state: AppState
 
     var body: some View {
-        Button(action: state.toggleRecording) {
+        Button { state.toggleRecording(.dashboard) } label: {
             if let started = state.recorder.startedAt, !state.recorder.stopping {
                 Label {
                     ElapsedTime(since: started)

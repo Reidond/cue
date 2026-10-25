@@ -122,7 +122,9 @@ under a **New Question** button at the top until you click it.
 
 Press ⌃⌥R, the record button in Cue's top bar, or **Start Recording** in the menu
 bar. While recording, the button turns into a red timer and the menu bar icon
-turns red. When you stop, Cue saves the transcript right away and opens the
+turns red; to stop, choose **Stop Recording** from the timer's menu or press ⌃⌥R
+again. The session log notes what started and stopped each recording. When you
+stop, Cue saves the transcript right away and opens the
 note in the dashboard, where a list shows the steps it goes through next:
 
 1. **Saving audio** — the call's audio goes next to the note.
@@ -321,7 +323,7 @@ pass, `CUE_SPEAKER_MODELS=dir` keeps the speaker models in `dir`,
 (`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
 `ask TEXT`, `timestamp 00:00:12`, `assign EVENT | PROJECT`,
 `notification record|dismiss`, `rename NAME | NEW`, `apply LABEL`,
-`download speakers`, `show TEXT`, `newest`, `prepare`; see `AGENTS.md`) and keeps notifications in the
+`download speakers`, `show TEXT`, `newest`, `prepare`, `record`; see `AGENTS.md`) and keeps notifications in the
 session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` reads the
 calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs using the
 microphone from a text file, both again on every check; `CUE_MEETING_TICK` and

@@ -419,7 +419,7 @@ final class AppState: ObservableObject {
             do {
                 // CUE_REHEARSE_RECORD=1 also records the rehearsal and writes its notes.
                 let record = ProcessInfo.processInfo.environment["CUE_REHEARSE_RECORD"] == "1"
-                if record { startRecording() }
+                if record { startRecording(.rehearsal) }
                 var length = try Rehearsal.play(fileAt: path) { [systemSegmenter, audioRecorder] samples, time in
                     systemSegmenter.push(samples)
                     // ScreenCaptureKit delivers nothing while the Mac plays nothing; the recorder gets the same here.
@@ -434,7 +434,7 @@ final class AppState: ObservableObject {
                 }
                 if record {
                     try? await Task.sleep(for: .seconds(length + 1))
-                    stopRecording()
+                    stopRecording(.rehearsal)
                 }
             } catch {
                 call = ServiceStatus(ok: false, detail: "Rehearsal file: \(error.localizedDescription)")
@@ -568,32 +568,42 @@ final class AppState: ObservableObject {
 
     // MARK: - Recording
 
-    func toggleRecording() {
-        if recorder.isRecording { stopRecording() } else if !recorder.stopping { startRecording() }
+    /// What started or stopped a recording. The session log names it, so notes that end early say why.
+    enum RecordingTrigger: String {
+        case hotKey = "⌃⌥R", overlay, dashboard, menuBar = "menu bar", upcoming = "Upcoming"
+        case notification = "Record in the notification", callNoticed = "call noticed", callEnded = "call ended"
+        case rehearsal
     }
 
-    func startRecording() {
-        startRecording(into: activeProject)
+    func toggleRecording(_ trigger: RecordingTrigger) {
+        if recorder.isRecording { stopRecording(trigger) } else if !recorder.stopping { startRecording(trigger) }
+    }
+
+    func startRecording(_ trigger: RecordingTrigger) {
+        startRecording(into: activeProject, by: trigger)
     }
 
     /// Records into a given project, e.g. a calendar event's, named after the event when there is one.
-    func startRecording(into project: Project?, meeting: MeetingDetails? = nil) {
+    func startRecording(into project: Project?, meeting: MeetingDetails? = nil, by trigger: RecordingTrigger) {
         recordingProject = project
         recordingMeeting = meeting
         audioRecorder.start(at: recorder.start())
+        log.write("⏺ Recording started (\(trigger.rawValue))")
         updateCapture()
     }
 
     /// Waits for the last phrase to be transcribed, then saves the notes and audio and summarizes.
-    func stopRecording() {
-        stopRecording(automatically: false)
+    func stopRecording(_ trigger: RecordingTrigger) {
+        stopRecording(automatically: false, by: trigger)
     }
 
     /// `automatically` when Cue ends the recording itself because the call ended: the note isn't
     /// opened and an empty recording isn't an alert. `saved` gets the note's id (nil if nothing was heard).
-    func stopRecording(automatically: Bool, saved: @escaping (String?) -> Void = { _ in }) {
-        guard recorder.isRecording else { return }
-        audioRecorder.stop(at: recorder.beginStop())
+    func stopRecording(automatically: Bool, by trigger: RecordingTrigger, saved: @escaping (String?) -> Void = { _ in }) {
+        guard recorder.isRecording, let started = recorder.startedAt else { return }
+        let ended = recorder.beginStop()
+        audioRecorder.stop(at: ended)
+        log.write("⏹ Recording stopped after \(RecordingStore.clock(ended.timeIntervalSince(started).rounded(.down))) (\(trigger.rawValue))")
         let meeting = recordingMeeting
         recordingMeeting = nil
         Task {

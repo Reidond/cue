@@ -98,27 +98,33 @@ private struct ProjectMenu: View {
     }
 }
 
-/// Record button; while recording it turns into a red timer that stops on click.
+/// Record button; while recording it turns into a red timer whose menu stops it, so a stray click
+/// on the bar (its handle for moving the overlay) can't end a call's notes halfway.
 private struct RecordControl: View {
     @ObservedObject var state: AppState
 
     var body: some View {
         if let started = state.recorder.startedAt {
-            Button(action: state.stopRecording) {
+            Menu {
+                Button("Stop Recording", systemImage: "stop.circle") { state.stopRecording(.overlay) }
+            } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: state.recorder.stopping ? "hourglass" : "stop.circle.fill")
+                    Image(systemName: state.recorder.stopping ? "hourglass" : "record.circle.fill")
                         .foregroundStyle(.red)
                     ElapsedTime(since: started).font(.callout)
                 }
                 .frame(height: 28)
                 .contentShape(.rect)
             }
-            .buttonStyle(.borderless)
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
+            .fixedSize()
             .disabled(state.recorder.stopping)
-            .help("Stop recording and write the notes (⌃⌥R)")
-            .accessibilityLabel("Stop recording")
+            .help("Recording — open to stop it and write the notes (⌃⌥R)")
+            .accessibilityLabel("Recording")
         } else {
-            IconButton(symbol: "record.circle", help: "Record this call (⌃⌥R)", action: state.toggleRecording)
+            IconButton(symbol: "record.circle", help: "Record this call (⌃⌥R)") { state.toggleRecording(.overlay) }
         }
     }
 }

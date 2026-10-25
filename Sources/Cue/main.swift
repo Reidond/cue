@@ -201,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func setUpHotKeys() {
         HotKeys.register(keyCode: kVK_Return) { [weak self] in self?.state.answerNow() }
-        HotKeys.register(keyCode: kVK_ANSI_R) { [weak self] in self?.state.toggleRecording() }
+        HotKeys.register(keyCode: kVK_ANSI_R) { [weak self] in self?.state.toggleRecording(.hotKey) }
         HotKeys.register(keyCode: kVK_ANSI_H) { [weak self] in self?.toggleOverlay() }
         HotKeys.register(keyCode: kVK_ANSI_A) { [weak self] in self?.preferences.autoAnswer.toggle() }
         HotKeys.register(keyCode: kVK_LeftArrow) { [weak self] in self?.state.step(-1) }
@@ -243,7 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func menuAnswer() { state.answerNow() }
     @objc private func menuSettings() { showSettings() }
     @objc private func menuRestart() { state.restartClaude() }
-    @objc private func menuRecord() { state.toggleRecording() }
+    @objc private func menuRecord() { state.toggleRecording(.menuBar) }
     @objc private func menuDashboard() { showDashboard() }
     @objc private func menuNewProject() {
         showDashboard()
@@ -341,8 +341,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL`
     /// (a name suggestion on the open note), `download speakers` (Home's Download for the
     /// speaker models), `show TEXT` (the overlay's row of the question with TEXT in it), `newest`
-    /// (the overlay's New Questions button) and `prepare` (Prepare Answer on the newest questions
-    /// waiting for it).
+    /// (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions
+    /// waiting for it) and `record` (the overlay's record button, or Stop Recording in its timer's
+    /// menu).
     private func startControl(from path: String) {
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -371,6 +372,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let project = state.projects.project(named: argument) { state.startCue(project) }
         case "stop":
             state.stopCue()
+        case "record":
+            state.toggleRecording(.overlay)
         case "ask":
             state.ask(argument, force: true)
         case "timestamp":
