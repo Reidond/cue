@@ -44,8 +44,10 @@ e2eCase("When the second pass can't run (here whisper-cli is missing), the note 
     assertContains(notes, /^title: "E2E rehearsal notes"/);
 
     // The note's page keeps its steps, with what went wrong.
-    await cue.dashboardPage('Interviews/notes', /whisper-cli not found/);
+    // The reason's first line, with the sandbox's long path, is the one Vision may garble ("vhisper-cli not found at /var|…").
+    await cue.dashboardPage('Interviews/notes', /not found at/);
     const page = cue.page;
+    assertContains(page, /whisper-cli/);
     assertContains(page, /Saving audio$/);
     assertContains(page, /Improving transcript$/);
     assertContains(page, /transcript is kept/);

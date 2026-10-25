@@ -10,7 +10,8 @@ e2eCase("The dashboard shows Home, a project's page, its prepared answers and it
     await cue.launch({ CUE_SNAPSHOT: png });
 
     await cue.dashboardPage('home', /Create Your First Project/);
-    assertContains(text, /^Home$/);
+    // The toolbar's title; Vision on GitHub's runners reads a stray "l" after it.
+    assertContains(text, /^Homel?$/);
     assertContains(text, /Upcoming$/);
     assertContains(text, /^Projects$/);
     assertContains(text, /New Project/);

@@ -33,7 +33,8 @@ e2eCase('The project picked for a recurring meeting on Upcoming is remembered fo
     ]);
     await cue.launch({ CUE_SNAPSHOT: cue.path('cue.png') });
     await cue.dashboardPage('upcoming', /Kickoff/);
-    assertContains(text, /Weekly sync/);
+    // Vision on GitHub's runners sometimes runs the title together ("Weeklysync").
+    assertContains(text, /Weekly ?sync/);
     assertEq(countLines(text, /Research/), 2, 'the next Weekly sync should still go to Research');
     assertEq(countLines(text, /Meetings/), 1, 'a new call goes to Meetings');
 });
