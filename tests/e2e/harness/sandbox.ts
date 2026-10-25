@@ -182,8 +182,9 @@ export class Cue {
 
     /**
      * Starts the app in the background with live audio off (pass CUE_NO_LIVE_AUDIO: '0' to override),
-     * the calendar read from `events` and the microphone users from `micAppsFile`, and waits for its
-     * session log. Its output goes to cue.out.
+     * out of the user's way (CUE_BACKGROUND: never in front, never taking focus), the calendar read
+     * from `events` and the microphone users from `micAppsFile`, and waits for its session log. Its
+     * output goes to cue.out.
      */
     async launch(env: LaunchEnv = {}): Promise<void> {
         const previous = this.#newestSessionLog();
@@ -191,7 +192,7 @@ export class Cue {
         const out = openSync(this.path('cue.out'), 'a');
         const app = spawn(CUE_BIN, [], {
             env: {
-                ...this.env, CUE_NO_LIVE_AUDIO: '1', CUE_CONTROL: this.path('control'),
+                ...this.env, CUE_NO_LIVE_AUDIO: '1', CUE_BACKGROUND: '1', CUE_CONTROL: this.path('control'),
                 CUE_CALENDAR_EVENTS: this.events, CUE_MIC_APPS: this.micAppsFile, ...env,
             },
             stdio: ['ignore', out, out],
@@ -220,6 +221,11 @@ export class Cue {
             await exited;
         }
         this.#app = undefined;
+    }
+
+    /** The launched app's process ID. */
+    get pid(): number {
+        return this.#app?.pid ?? fail('Cue is not running');
     }
 
     /** Whether the launched app is still running. */

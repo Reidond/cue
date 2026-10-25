@@ -585,7 +585,7 @@ final class AppState: ObservableObject {
                 let alert = NSAlert()
                 alert.messageText = "Nothing was recorded"
                 alert.informativeText = "Cue didn't hear any speech while recording, so no notes were saved."
-                alert.runModal()
+                alert.show(logging: log)
                 return
             }
             // Without a project (none created yet), recordings go to "Meetings".

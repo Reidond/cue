@@ -262,7 +262,12 @@ node tests/e2e/run.ts --real-claude   # use the real Claude Code instead of the 
 cd tests/e2e && npm ci && npm run typecheck   # type-check the cases and the harness
 ```
 
-`npm test` in `tests/e2e` is `node run.ts`.
+`npm test` in `tests/e2e` is `node run.ts`. A run stays out of your way, so you
+can keep working while it goes: each case's Cue has `CUE_BACKGROUND=1`, which
+keeps it from ever coming to the front or taking focus, hides its Dock and menu
+bar icons, turns off its hot keys, puts its windows behind every other window
+(just above the desktop picture, in every Space, where snapshots still capture
+them) and writes alerts to the session log instead of showing them.
 
 The same hooks work by hand:
 

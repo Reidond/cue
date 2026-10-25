@@ -131,7 +131,7 @@ struct DashboardView: View {
         do {
             model.open(try projects.create(named: name))
         } catch {
-            NSAlert(error: error).runModal()
+            NSAlert(error: error).show(logging: state.log)
         }
     }
 
@@ -143,7 +143,7 @@ struct DashboardView: View {
             state.projectsChanged(renamed: project, to: renamed)
             if model.selection == .project(project.id) { model.selection = .project(renamed.id) }
         } catch {
-            NSAlert(error: error).runModal()
+            NSAlert(error: error).show(logging: state.log)
         }
     }
 
@@ -155,7 +155,7 @@ struct DashboardView: View {
             if model.selection == .project(project.id) { model.selection = .home }
             state.projectsChanged()
         } catch {
-            NSAlert(error: error).runModal()
+            NSAlert(error: error).show(logging: state.log)
         }
     }
 }

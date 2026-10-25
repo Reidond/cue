@@ -1,5 +1,6 @@
 import {
-    assertContains, assertEq, assertNotContains, countLines, dialogue, e2eCase, fixture, matches, needWhisper,
+    assertContains, assertEq, assertNotContains, countLines, dialogue, e2eCase, fixture, linesOf, matches, needWhisper,
+    readText,
 } from '../harness/index.ts';
 
 e2eCase("When speakers can't be told apart (here the speaker models can't be fetched: a file is where their folder "
@@ -39,7 +40,9 @@ e2eCase("When speakers can't be told apart (here the speaker models can't be fet
     const page = cue.page;
     assertContains(page, /Improving transcript$/);
     assertContains(page, /Finding speakers$/);
-    assertContains(page, /already exists\. The transcript is kept as it was\.$/, 'the reason should read as one sentence');
+    // The reason wraps wherever the page's width puts it (the error names the sandbox's folder): read it as one paragraph.
+    const reason = cue.save('reason.txt', linesOf(readText(page) ?? '').join(' '));
+    assertContains(reason, /already exists\. The transcript is kept as it was\./, 'the reason should read as one sentence');
     assertContains(page, /Writing summary$/);
     assertContains(page, /^Summary$/);
 });
