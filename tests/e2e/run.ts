@@ -111,7 +111,7 @@ const capabilitiesFile = join(work, 'cache', 'capabilities.json');
 const { probeMachine } = await import('./harness/capabilities.ts');
 const capabilities = await probeMachine(needs, capabilitiesFile);
 process.env['E2E_CAPABILITIES'] = capabilitiesFile;
-const names = { speech: 'Speech recognition', snapshots: 'Window snapshots' } as const;
+const names = { speech: 'Speech recognition', windows: 'Window snapshots', overlay: 'Overlay snapshots' } as const;
 for (const [name, found] of Object.entries(capabilities) as [keyof typeof names, { ok: boolean; detail: string }][]) {
     console.log(`${names[name]}: ${found.ok ? 'yes' : 'no'} — ${found.detail}`);
 }
