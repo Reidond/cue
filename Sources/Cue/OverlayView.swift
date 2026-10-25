@@ -16,7 +16,7 @@ struct OverlayView: View {
         GlassEffectContainer(spacing: 4) {
             VStack(spacing: 10) {
                 ControlBar(state: state, preferences: preferences)
-                AnswerCard(state: state, size: size)
+                QuestionList(state: state, size: size)
                     .frame(maxHeight: .infinity)
                 if preferences.showTranscript {
                     TranscriptCard(state: state, size: size)
@@ -43,9 +43,6 @@ private struct ControlBar: View {
             ProjectMenu(state: state)
             StatusLabel(state: state)
             Spacer(minLength: 4)
-            if state.answers.count > 1 {
-                HistoryControl(state: state)
-            }
             RecordControl(state: state)
             Toggle("Auto", isOn: $preferences.autoAnswer)
                 .toggleStyle(.switch)
@@ -78,6 +75,7 @@ private struct ProjectMenu: View {
             }
             if !state.projects.projects.isEmpty { Divider() }
             Button("Open Dashboard…", action: state.openDashboard)
+            Button("Stop Cue", action: state.stopCue)
         } label: {
             HStack(spacing: 3) {
                 Text(name).fontWeight(.semibold)
@@ -168,22 +166,6 @@ private struct StatusLabel: View {
     }
 }
 
-private struct HistoryControl: View {
-    @ObservedObject var state: AppState
-
-    var body: some View {
-        HStack(spacing: 2) {
-            IconButton(symbol: "chevron.left", help: "Previous answer (⌃⌥←)") { state.step(-1) }
-                .disabled(state.selected == 0)
-            Text("\(state.selected + 1)/\(state.answers.count)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-            IconButton(symbol: "chevron.right", help: "Next answer (⌃⌥→)") { state.step(1) }
-                .disabled(state.selected == state.answers.count - 1)
-        }
-    }
-}
-
 /// A borderless symbol button with a 28 pt hit area.
 private struct IconButton: View {
     let symbol: String
@@ -203,33 +185,96 @@ private struct IconButton: View {
     }
 }
 
-// MARK: - Answer
+// MARK: - Questions
 
-private struct AnswerCard: View {
+/// Every question so far, newest on top. One answer shows in full; the others are compact rows
+/// (the question and what to say, or that it's still coming), so a new question never replaces
+/// what's being read. Click a row, or use ⌃⌥← →, to show it in full.
+private struct QuestionList: View {
     @ObservedObject var state: AppState
     let size: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
-            if let answer = state.current {
+            if state.answers.isEmpty {
+                EmptyState(state: state)
+            } else {
                 ScrollView {
-                    AnswerContent(answer: answer, size: size, lexicon: state.lexicon)
-                        .id(answer.id)
-                        .transition(reduceMotion ? AnyTransition.opacity : AnyTransition(.blurReplace))
-                        .padding(18)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(state.answers.reversed()) { answer in
+                            if answer.id == state.expandedID {
+                                AnswerContent(answer: answer, size: size, lexicon: state.lexicon) {
+                                    state.ask(answer.question, force: true)
+                                }
+                                .padding(16)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 16))
+                            } else {
+                                QuestionRow(answer: answer, size: size) { state.expand(answer.id) }
+                            }
+                        }
+                    }
+                    .padding(8)
                 }
                 .scrollIndicators(.never)
                 .scrollEdgeEffectStyle(.soft, for: .vertical)
-            } else {
-                EmptyState(state: state)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Only a newly arriving answer animates in; browsing history with the keyboard swaps instantly.
-        .animation(.smooth(duration: 0.25), value: state.answers.count)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: state.expandedID)
         .glassEffect(.regular, in: .rect(cornerRadius: 24))
+    }
+}
+
+/// A question in compact form: what was asked, then what to say, that the answer is coming, or
+/// that it isn't a question for the speaker (dimmed).
+private struct QuestionRow: View {
+    let answer: Answer
+    let size: CGFloat
+    let expand: () -> Void
+
+    var body: some View {
+        Button(action: expand) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(answer.question)
+                    .font(.system(size: max(size - 3, 11)))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                status
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .opacity(answer.isNotAQuestion ? 0.5 : 1)
+        .help("Show this answer in full")
+    }
+
+    @ViewBuilder private var status: some View {
+        if let error = answer.error {
+            Label(error, systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: max(size - 3, 11)))
+                .foregroundStyle(.orange)
+                .lineLimit(1)
+        } else if answer.isNotAQuestion {
+            Text("Not a question for you")
+                .font(.system(size: max(size - 3, 11)))
+                .foregroundStyle(.tertiary)
+        } else if let line = answer.firstLine {
+            Text(line)
+                .font(.system(size: size - 1, weight: .medium))
+                .lineLimit(2)
+        } else {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text(answer.opener ?? "Thinking…").lineLimit(1)
+            }
+            .font(.system(size: max(size - 3, 11)))
+            .foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -237,6 +282,7 @@ private struct AnswerContent: View {
     let answer: Answer
     let size: CGFloat
     let lexicon: Lexicon
+    let answerAnyway: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -247,9 +293,11 @@ private struct AnswerContent: View {
             .foregroundStyle(.secondary)
 
             if answer.isNotAQuestion {
-                Text("Doesn't sound like a question for you. Press ⌃⌥⏎ to answer anyway.")
+                Text("Doesn't sound like a question for you.")
                     .font(.system(size: size))
                     .foregroundStyle(.secondary)
+                Button("Answer Anyway", action: answerAnyway)
+                    .buttonStyle(.glass)
             } else {
                 SayNow(answer: answer, size: size)
                 AnswerLines(lines: answer.rest, size: size, lexicon: lexicon)

@@ -58,7 +58,11 @@ struct DashboardView: View {
                         ProjectSidebarRow(project: project, active: project.id == state.activeProject?.id)
                             .tag(SidebarItem.project(project.id))
                             .contextMenu {
-                                Button("Start Cue") { state.startCue(project) }
+                                if state.cueRunning && project.id == state.activeProject?.id {
+                                    Button("Stop Cue", action: state.stopCue)
+                                } else {
+                                    Button("Start Cue") { state.startCue(project) }
+                                }
                                 Divider()
                                 Button("Rename…") { newName = project.name; renaming = project }
                                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([project.folder]) }

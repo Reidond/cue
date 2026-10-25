@@ -19,9 +19,9 @@ struct ProjectView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ProjectHeader(project: project, active: isActive, notes: recordings.files(in: project).count) {
-                state.startCue(project)
-            }
+            ProjectHeader(project: project, active: isActive, running: isActive && state.cueRunning,
+                          notes: recordings.files(in: project).count,
+                          start: { state.startCue(project) }, stop: state.stopCue)
             switch model.tab {
             case .overview:
                 ProjectOverview(projects: projects, project: project, knowledge: knowledge, reading: reading)
@@ -81,8 +81,11 @@ final class MaterialsPreview: ObservableObject {
 private struct ProjectHeader: View {
     let project: Project
     let active: Bool
+    /// Cue runs for this project: the button stops it.
+    let running: Bool
     let notes: Int
     let start: () -> Void
+    let stop: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -95,13 +98,23 @@ private struct ProjectHeader: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button(action: start) {
-                Label("Start Cue", systemImage: "play.fill")
-                    .padding(.horizontal, 6)
+            if running {
+                Button(action: stop) {
+                    Label("Stop Cue", systemImage: "stop.fill")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.extraLarge)
+                .help("Hide Cue and stop listening (⌘↩)")
+            } else {
+                Button(action: start) {
+                    Label("Start Cue", systemImage: "play.fill")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.extraLarge)
+                .help("Show Cue and answer from this project (⌘↩)")
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.extraLarge)
-            .help("Show Cue and answer from this project (⌘↩)")
         }
         .padding(.horizontal, 28)
         .padding(.top, 20)
