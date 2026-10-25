@@ -85,6 +85,10 @@ final class AppState: ObservableObject {
     @Published var utterances: [Utterance] = []
     @Published var partial: [Channel: String] = [:]
     @Published var answers: [Answer] = []
+    /// The answer shown in full in the overlay's list (also its index, `selected`). A question Cue
+    /// noticed by itself takes it only once Claude starts a real answer, so an organisational remark
+    /// ("—") never pushes the answer being read out of view.
+    @Published private(set) var expandedID: UUID?
     @Published var selected = 0
     @Published var micLevel: Float = 0
     @Published var callLevel: Float = 0
@@ -94,11 +98,16 @@ final class AppState: ObservableObject {
     @Published var claude = ServiceStatus()
     @Published private(set) var knowledge: KnowledgeBase?
     @Published private(set) var readingMaterials = false
+    /// Between Start Cue and Stop Cue: the overlay is up and Cue listens for questions.
+    @Published private(set) var cueRunning = false
+    /// The microphone and call audio are open: while Cue runs, or while a call is recorded.
+    private var capturing = false
 
     var openSettings: () -> Void = {}
     var openDashboard: () -> Void = {}
     var openRecordings: (_ selecting: String?) -> Void = { _ in }
     var showOverlay: () -> Void = {}
+    var hideOverlay: () -> Void = {}
 
     private var whisperService = WhisperService()
     private var claudeService: ClaudeService?
@@ -146,8 +155,6 @@ final class AppState: ObservableObject {
         if let activeProject { log.write("📁 Project: \(activeProject.name)") }
     }
 
-    var current: Answer? { answers.indices.contains(selected) ? answers[selected] : nil }
-
     /// The active project's language data.
     var lexicon: Lexicon { activeProject?.lexicon ?? Lexicon.load(Project.defaultLanguage) }
 
@@ -190,7 +197,9 @@ final class AppState: ObservableObject {
         applyLanguage()
         rebuildKnowledge()
         startWhisper()
-        startAudio()
+        // Listening starts with Start Cue (or a recording), not at launch.
+        mic = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
+        call = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
         observeSettings()
         meetings.start()
 
@@ -342,6 +351,8 @@ final class AppState: ObservableObject {
         Task {
             do {
                 try await micCapture.start()
+                // Stop Cue may have come while the microphone was starting.
+                guard capturing else { return micCapture.stop() }
                 mic = ServiceStatus(ok: true, detail: "Microphone")
             } catch {
                 mic = ServiceStatus(ok: false, detail: error.localizedDescription)
@@ -350,10 +361,29 @@ final class AppState: ObservableObject {
         Task {
             do {
                 try await systemCapture.start()
+                guard capturing else { return systemCapture.stop() }
                 call = ServiceStatus(ok: true, detail: "Call audio")
             } catch {
                 call = ServiceStatus(ok: false, detail: "No access to call audio — allow Cue in System Settings › Privacy & Security › Screen & System Audio Recording, then reopen it")
             }
+        }
+    }
+
+    /// Opens the microphone and call audio while Cue runs or a call is recorded, and closes them after.
+    private func updateCapture() {
+        let needed = cueRunning || recorder.startedAt != nil
+        guard needed != capturing else { return }
+        capturing = needed
+        if needed {
+            startAudio()
+            log.write("🎤 Listening")
+        } else {
+            micCapture.stop()
+            systemCapture.stop()
+            partial = [:]
+            mic = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
+            call = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
+            log.write("🎤 Listening stopped")
         }
     }
 
@@ -468,10 +498,29 @@ final class AppState: ObservableObject {
         rebuildKnowledge()
     }
 
-    /// The project page's Start Cue: shows the overlay, answering from this project.
+    /// The project page's Start Cue: shows the overlay and listens, answering from this project.
     func startCue(_ project: Project) {
         activate(project)
+        startListening()
+    }
+
+    /// Shows the overlay and listens, with the current project (a rehearsal, ⌃⌥H).
+    func startListening() {
         showOverlay()
+        guard !cueRunning else { return }
+        cueRunning = true
+        log.write("▶︎ Cue started\(activeProject.map { ": \($0.name)" } ?? "")")
+        updateCapture()
+    }
+
+    /// Stop Cue: hides the overlay and stops listening. A call being recorded keeps recording.
+    func stopCue() {
+        guard cueRunning else { return }
+        cueRunning = false
+        hideOverlay()
+        _ = detector.takeBuffer()
+        log.write("⏹ Cue stopped")
+        updateCapture()
     }
 
     /// After a rename or delete on the dashboard.
@@ -508,6 +557,7 @@ final class AppState: ObservableObject {
         recordingProject = project
         recordingMeeting = meeting
         audioRecorder.start(at: recorder.start())
+        updateCapture()
     }
 
     /// Waits for the last phrase to be transcribed, then saves the notes and audio and summarizes.
@@ -525,7 +575,9 @@ final class AppState: ObservableObject {
         Task {
             try? await Task.sleep(for: .seconds(2.5))
             let audio = await audioRecorder.finish()
-            guard let transcript = recorder.finish() else { return }
+            let finished = recorder.finish()
+            updateCapture()  // closes the audio again unless Cue is running
+            guard let transcript = finished else { return }
             guard !transcript.lines.isEmpty else {
                 audio.map { try? FileManager.default.removeItem(at: $0.folder) }
                 saved(nil)
@@ -580,7 +632,15 @@ final class AppState: ObservableObject {
         let id = claudeService.ask(message)
         log.write("❓ **Question:** \(question)\(match.map { " _(prepared match \(Int($0.score * 100))%)_" } ?? "")")
         answers.append(Answer(id: id, question: question, opener: opener, prepared: match?.answer, preparedScore: match?.score ?? 0))
-        selected = answers.count - 1
+        // Asked for by the user: show it now. Noticed by Cue: it waits as a row until it's a real answer.
+        if force { expand(id) }
+    }
+
+    /// Shows an answer in full in the overlay's list.
+    func expand(_ id: UUID) {
+        guard let index = answers.firstIndex(where: { $0.id == id }) else { return }
+        selected = index
+        expandedID = id
     }
 
     private static func firstSentence(_ text: String, dropping prefix: String) -> String? {
@@ -593,6 +653,10 @@ final class AppState: ObservableObject {
         guard let index = answers.firstIndex(where: { $0.id == id }) else { return }
         if answers[index].firstTokenAt == nil { answers[index].firstTokenAt = Date() }
         answers[index].text += text
+        // The first words of a real answer (not "—") bring it into view, unless a newer one is there.
+        let real = answers[index].text.contains { !"—- \n".contains($0) }
+        let shown = answers.firstIndex { $0.id == expandedID }
+        if real, expandedID != id, shown.map({ $0 < index }) ?? true { expand(id) }
     }
 
     private func finish(_ id: UUID, error: String?) {
@@ -603,15 +667,13 @@ final class AppState: ObservableObject {
         let firstWord = answer.firstTokenAt.map { String(format: "first word %.1f s, ", $0.timeIntervalSince(answer.askedAt)) } ?? ""
         let total = String(format: "%.1f", Date().timeIntervalSince(answer.askedAt))
         log.write("💬 **Answer** (\(firstWord)done \(total) s):\n\n\(error.map { "⚠︎ \($0)" } ?? answer.text)\n")
-        // Organisational remarks come back as "—"; drop them so the previous real answer stays on screen.
-        if answer.isNotAQuestion && answers.count > 1 && index == selected && index == answers.count - 1 {
-            answers.remove(at: index)
-            selected = answers.count - 1
-        }
+        // Organisational remarks come back as "—": they stay in the list as a dimmed row, and the
+        // answer in view stays. A first question that fails still shows why.
+        if expandedID == nil && !answer.isNotAQuestion { expand(id) }
     }
 
     func step(_ delta: Int) {
         guard !answers.isEmpty else { return }
-        selected = min(max(selected + delta, 0), answers.count - 1)
+        expand(answers[min(max(selected + delta, 0), answers.count - 1)].id)
     }
 }

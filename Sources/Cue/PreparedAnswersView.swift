@@ -19,6 +19,10 @@ struct PreparedAnswersView: View {
         List(filtered, id: \.self) { item in
             PreparedAnswerRow(item: item)
         }
+        // On the page's own background, with the rows' text on the header's 28 pt margin
+        // (the list insets it 18).
+        .scrollContentBackground(.hidden)
+        .padding(.leading, 10)
         .searchable(text: $search, prompt: "Search questions and answers")
         .overlay {
             if answers.isEmpty {

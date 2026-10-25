@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     private var dashboardWindow: NSWindow?
     private var recordingObserver: Any?
+    private var cueObserver: Any?
     private var statusItem: NSStatusItem!
     private var signalSources: [DispatchSourceSignal] = []
     private var controlLinesDone = 0
@@ -67,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         state.openDashboard = { [weak self] in self?.showDashboard() }
         state.openRecordings = { [weak self] id in self?.showDashboard(note: id) }
         state.showOverlay = { [weak self] in self?.panel.orderFrontRegardless() }
+        state.hideOverlay = { [weak self] in self?.panel.orderOut(nil) }
         setUpMainMenu()
         setUpStatusItem()
         setUpHotKeys()
@@ -74,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // The dashboard opens first; Start Cue shows the overlay. A rehearsal is a run-through
         // of the talk, so it shows the overlay straight away.
         showDashboard()
-        if environment["CUE_REHEARSE_PARTICIPANT"] != nil { panel.orderFrontRegardless() }
+        if environment["CUE_REHEARSE_PARTICIPANT"] != nil { state.startListening() }
         if environment["CUE_SHOW_SETTINGS"] == "1" { showSettings() }
         if let path = environment["CUE_SNAPSHOT"] { startSnapshots(to: path) }
         if let path = environment["CUE_CONTROL"] { startControl(from: path) }
@@ -90,8 +92,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
+    /// ⌃⌥H: hides or shows the overlay while Cue runs (it keeps listening); starts Cue when it doesn't.
     private func toggleOverlay() {
-        if panel.isVisible { panel.orderOut(nil) } else { panel.orderFrontRegardless() }
+        if !state.cueRunning { state.startListening() } else if panel.isVisible { panel.orderOut(nil) } else { panel.orderFrontRegardless() }
     }
 
     func showSettings() {
@@ -124,6 +127,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 backing: .buffered, defer: false
             )
             window.title = "Cue"
+            // The toolbar floats over the page's own background rather than a band of its own
+            // (the pages' scroll views keep their edge effect under it).
+            window.titlebarAppearsTransparent = true
             window.isReleasedWhenClosed = false
             window.delegate = self
             window.contentView = NSHostingView(rootView: DashboardView(state: state, projects: state.projects, model: dashboard))
@@ -140,9 +146,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if notification.object as? NSWindow === dashboardWindow { state.player.load(nil, note: nil) }
     }
 
-    /// Start Cue (⌘↩) for the project open in the dashboard, else the current one.
+    /// ⌘↩: Stop Cue while it runs for the project open in the dashboard (or with none open);
+    /// otherwise Start Cue for that project, else the current one.
     private func startCue() {
-        if let project = state.projects.project(dashboard.selectedProject) ?? state.activeProject {
+        let open = state.projects.project(dashboard.selectedProject)
+        if state.cueRunning, open == nil || open?.id == state.activeProject?.id {
+            state.stopCue()
+        } else if let project = open ?? state.activeProject {
             state.startCue(project)
         } else {
             showDashboard()
@@ -229,7 +239,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let file = submenu("File")
         file.addItem(withTitle: "New Project…", action: #selector(menuNewProject), keyEquivalent: "n").target = self
-        file.addItem(withTitle: "Start Cue", action: #selector(menuStartCue), keyEquivalent: "\r").target = self
+        let startCue = file.addItem(withTitle: "Start Cue", action: #selector(menuStartCue), keyEquivalent: "\r")
+        startCue.target = self
+        cueObserver = state.$cueRunning.sink { running in startCue.title = running ? "Stop Cue" : "Start Cue" }
         file.addItem(.separator())
         file.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
 
@@ -316,6 +328,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let project = state.projects.project(named: argument) { state.activate(project) }
         case "start":
             if let project = state.projects.project(named: argument) { state.startCue(project) }
+        case "stop":
+            state.stopCue()
         case "ask":
             state.ask(argument, force: true)
         case "timestamp":
