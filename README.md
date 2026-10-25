@@ -240,6 +240,13 @@ When the call app has let go of the microphone for a minute, Cue stops,
 writes the notes and tells you in a notification; click it to open them. You
 can also record a call in progress from its row in Upcoming.
 
+## Releases
+
+Every change merged into `main` is built and published on the
+[Releases](https://github.com/Reidond/cue/releases) page with a changelog. The
+builds are signed ad hoc, not notarized: the first time, right-click Cue.app ›
+**Open**.
+
 ## Testing
 
 Cue is tested end to end only — no unit tests (see `AGENTS.md`). The cases in

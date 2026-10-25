@@ -121,3 +121,16 @@ updating the cases.
 - Match the surrounding code: comment density, naming, SwiftUI and HIG idioms
   (standard controls, semantic colours, system Liquid Glass).
 - One feature per branch and PR, with its e2e case in the same PR.
+
+## CI and releases
+
+- `.github/workflows/ci.yml` runs on pull requests only: it builds the app
+  (new warnings in `Sources/Cue` fail it) and runs the whole end-to-end suite
+  on a macOS runner with the speech model. Keep it green; a case that can't
+  run there must `skip` with its reason, never fake what's missing.
+- `.github/workflows/release.yml` runs on every push to `main`: it builds
+  `Cue.app`, zips it and publishes a GitHub release `v<version>.<patch>`
+  (`<version>` is `CFBundleShortVersionString` in `Resources/Info.plist`,
+  bump it for a new minor or major) with `scripts/changelog.sh` as its notes:
+  every change on `main` since the previous release, one line each. Write
+  commit subjects and pull request titles that read well in that list.
