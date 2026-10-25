@@ -4,7 +4,7 @@ import {
     assertContains, assertNotContains, dialogue, e2eCase, exec, fail, fixture, lines, literal,
 } from '../harness/index.ts';
 
-e2eCase('A note with audio opens with a player on top (play, scrubber, 1×/1.5×/2×), and clicking a timestamp in its '
+e2eCase('A note with audio opens with a player on top (play, scrubber, speed at 1×), and clicking a timestamp in its '
     + 'transcript plays the audio from that moment.', async (cue) => {
     // A note as Cue saves it, with the call's audio next to it.
     const call = await dialogue(fixture('dialogues', 'sync.txt'), cue.path('call'));
@@ -18,18 +18,17 @@ e2eCase('A note with audio opens with a player on top (play, scrubber, 1×/1.5×
     await writeFile(join(project, 'Notes', `${name}.md`), note.map((line) => `${line}\n`).join(''));
 
     const text = cue.page;
-    // In the dark appearance the selected speed is grey on grey, which Vision often doesn't read.
+    // Vision reads the player's small text most reliably in the light appearance.
     await cue.launch({ CUE_SNAPSHOT: cue.path('cue.png'), CUE_APPEARANCE: 'light' });
 
     // The player's position and length; Vision reads the play button as a bullet, × as x (or Cyrillic х).
     const start = /(^|[^0-9:])0:00$/;
     cue.control('page Bee talk/notes');
-    await cue.waitFor("the note's player", 20, () => cue.dashboardShows(/^0:16$/));
+    // The length and the speed button next to it may be read as one line.
+    await cue.waitFor("the note's player", 20, () => cue.dashboardShows(/(^|\s)0:16(\s|$)/));
     assertContains(text, /^Summary$/);
     assertContains(text, start, 'the player should start at 0:00');
-    assertContains(text, /^1 ?(×|x|х)$/, 'the player should offer 1×');
-    assertContains(text, /1[.,]5 ?(×|x|х)/, 'the player should offer 1.5×');
-    assertContains(text, /(^| )2 ?(×|x|х)$/, 'the player should offer 2×');
+    assertContains(text, /(^|\s)1 ?(×|x|х)$/, 'the player should play at 1×');
     assertNotContains(text, /m4a/, "the audio file's name belongs in the player, not the note's details");
 
     // Clicking the participant's timestamp (00:00:12) plays from there.

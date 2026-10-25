@@ -124,6 +124,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 backing: .buffered, defer: false
             )
             window.title = "Cue"
+            // The toolbar floats over the page's own background rather than a band of its own
+            // (the pages' scroll views keep their edge effect under it).
+            window.titlebarAppearsTransparent = true
             window.isReleasedWhenClosed = false
             window.delegate = self
             window.contentView = NSHostingView(rootView: DashboardView(state: state, projects: state.projects, model: dashboard))
