@@ -1,0 +1,7 @@
+# Three questions far enough apart for a case to open an older one before the next arrives.
+call | Daniel | How many hives did you study?
+pause | 12
+call | Daniel | Which rooftops did you use?
+pause | 15
+call | Daniel | When did the bees swarm?
+pause | 3

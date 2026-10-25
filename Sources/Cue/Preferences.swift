@@ -70,7 +70,10 @@ final class Preferences: ObservableObject {
 /// kept in Resources/lexicons so the code stays language-neutral.
 struct Lexicon: Decodable {
     var name: String
+    /// Interrogatives: with them a short "…?" is a question, not a tag ("Right?").
     var questionCues: [String]
+    /// Requests that are questions without a question mark ("explain …"), at a sentence's start.
+    var requestCues: [String]?
     var stopWords: Set<String>
     var hallucinations: [String]
     var questionLabels: [String]

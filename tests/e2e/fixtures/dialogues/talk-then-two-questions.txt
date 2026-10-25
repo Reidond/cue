@@ -1,0 +1,8 @@
+# The speaker's talk comes through the call (no question in it, then a rhetorical one they answer
+# themselves), then a participant asks two questions in one go.
+call | Daniel | Today I will show how we monitored the hives. What we found is that the colonies grew faster on green roofs, and the honey was darker.
+pause | 3
+call | Daniel | Who benefits from this? Beekeepers do, and city planners, and the owners of the buildings, because the green roofs stay cooler in summer, the bees pollinate the parks nearby, and the honey can be sold in the neighbourhood all year round.
+pause | 4
+call | Daniel | Thank you for the talk. I have two questions. How many hives did you study? And which rooftops did you use?
+pause | 3

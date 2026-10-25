@@ -37,9 +37,13 @@ call audio ──┘   (ScreenCaptureKit)                            └─ Clau
   the call are told apart by voice afterwards, on your Mac, with
   [FluidAudio](https://github.com/FluidInference/FluidAudio)'s offline
   speaker diarization.
-- **Question detection** fires after a participant line with a question cue
-  (`?` or words like "why", "explain") once they pause, or as soon as you start
-  talking. Cues per language live in `Resources/lexicons/`.
+- **Question detection** fires once the participants pause, or as soon as you
+  start talking, after they asked something: a sentence ending in `?` that is
+  more than a tag ("Right?"), or one opening with a request ("Could you
+  explain…"). Talk without a question, and a question the speaker answers at
+  length themselves, gets no answer. Several questions asked in one go are
+  answered each on its own and shown together. Cues per language live in
+  `Resources/lexicons/`.
 - **Answers** come from one long-lived Claude Code session (`claude -p` with
   stream-json), using your Claude Code login — no API key. The session is warmed
   up at launch, and your materials stay in Claude's prompt cache.
@@ -103,12 +107,16 @@ and your notes move from `~/Documents/Cue Recordings` into its `Notes/`.
 | ⌃⌥⏎ | Answer now (what's being said, or the last line) |
 | ⌃⌥R | Start or stop recording the call |
 | ⌃⌥H | Show or hide Cue |
-| ⌃⌥A | Toggle automatic answers |
+| ⌃⌥A | Toggle automatic answers (off, questions are listed for **Prepare Answer**) |
 | ⌃⌥← / ⌃⌥→ | Previous / next answer |
 | ⌃⌥↑ / ⌃⌥↓ | Text size |
 
 Click any transcript line to get an answer for it, or type a question into the
 field at the bottom. Drag the top bar to move Cue.
+
+Each question stays in Cue's list, newest on top. While you have an older one
+open, or have scrolled down, the list stays where it is: new questions wait
+under a **New Question** button at the top until you click it.
 
 ## Recording calls
 
@@ -313,7 +321,7 @@ pass, `CUE_SPEAKER_MODELS=dir` keeps the speaker models in `dir`,
 (`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
 `ask TEXT`, `timestamp 00:00:12`, `assign EVENT | PROJECT`,
 `notification record|dismiss`, `rename NAME | NEW`, `apply LABEL`,
-`download speakers`; see `AGENTS.md`) and keeps notifications in the
+`download speakers`, `show TEXT`, `newest`, `prepare`; see `AGENTS.md`) and keeps notifications in the
 session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` reads the
 calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs using the
 microphone from a text file, both again on every check; `CUE_MEETING_TICK` and
