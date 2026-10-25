@@ -50,10 +50,22 @@ jobs:
             curl -fL --retry 3 -o "$model" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
           fi
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: latest
+          cache: npm
+          cache-dependency-path: tests/e2e/package-lock.json
+
+      - name: Type-check the end-to-end tests
+        working-directory: tests/e2e
+        run: |
+          npm ci
+          npm run typecheck
+
       - name: End-to-end tests
         env:
           E2E_WORK: ${{ runner.temp }}/e2e
-        run: tests/e2e/run.sh --no-build
+        run: node tests/e2e/run.ts --no-build
 
       - name: Keep the e2e logs
         if: failure()
