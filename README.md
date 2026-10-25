@@ -252,13 +252,17 @@ builds are signed ad hoc, not notarized: the first time, right-click Cue.app ›
 Cue is tested end to end only — no unit tests (see `AGENTS.md`). The cases in
 `tests/e2e/cases/` run the built app in a sandbox (`CUE_HOME`), feed it speech
 made with macOS voices, and check the notes, audio, session log and rendered
-windows:
+windows. They are TypeScript, run by Node 26 or later as they are (Node strips
+the types; there is nothing to build or install to run them):
 
 ```bash
-tests/e2e/run.sh                 # build, then run every case
-tests/e2e/run.sh --no-build 1    # only cases whose name starts with 1
-tests/e2e/run.sh --real-claude   # use the real Claude Code instead of the stand-in
+node tests/e2e/run.ts                 # build, then run every case
+node tests/e2e/run.ts --no-build 1    # only cases whose name starts with 1
+node tests/e2e/run.ts --real-claude   # use the real Claude Code instead of the stand-in
+cd tests/e2e && npm ci && npm run typecheck   # type-check the cases and the harness
 ```
+
+`npm test` in `tests/e2e` is `node run.ts`.
 
 The same hooks work by hand:
 

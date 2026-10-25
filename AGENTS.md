@@ -19,61 +19,114 @@ This rule is strict and has no exceptions.
   `whisper-server` and real child processes, and checks what a user would see:
   the notes on disk, the audio files, the session log, the rendered windows.
 - Stand-ins are allowed only at the outer boundary, never for Cue's own code:
-  - the paid external service: `tests/e2e/tools/fake-claude.swift` replaces
+  - the paid external service: `tests/e2e/tools/fake-claude.ts` replaces
     the `claude` CLI (through `CUE_CLAUDE_BIN`) so cases are fast and
     deterministic. Cases that judge Claude's actual writing run against the
-    real CLI with `tests/e2e/run.sh --real-claude`;
+    real CLI with `node tests/e2e/run.ts --real-claude`;
   - system sources that need the user's permission or a live person (the
     microphone, call audio, the calendar database, which apps use the
     microphone, the answer to a notification): an environment hook feeds the
     input at the exact point where Cue reads it from the system (as
     `CUE_REHEARSE_*` does for audio), and everything after that point runs
     for real.
-- A feature is done when its case passes: `tests/e2e/run.sh` (all cases) or
-  `tests/e2e/run.sh 20-` (cases whose name starts with `20-`). Report the
-  PASS / FAIL / SKIP summary, with the failing output, in the PR description.
+- A feature is done when its case passes: `node tests/e2e/run.ts` (all
+  cases) or `node tests/e2e/run.ts 20-` (cases whose name starts with `20-`).
+  Report the PASS / FAIL / SKIP summary, with the failing output, in the PR
+  description.
 - A case that needs something the machine lacks (the speech model, a voice,
-  a permission) calls `skip "reason"`; it never fakes the missing piece.
+  a permission, the network) calls `skip('reason')` or a `need…` helper; it
+  never fakes the missing piece.
+
+### Running the cases
+
+The suite is TypeScript run by Node 26 or later, which strips the types
+itself: no build step, no transpiler, no runtime packages.
+
+```bash
+node tests/e2e/run.ts                  # build the app, then run every case
+node tests/e2e/run.ts --no-build 4 5   # the existing build; cases whose name starts with 4 or 5
+node tests/e2e/run.ts --real-claude 45 # the real claude CLI instead of the stand-in
+node tests/e2e/run.ts --keep           # keep every sandbox (a failed case always keeps its own)
+cd tests/e2e && npm ci && npm run typecheck   # tsc --noEmit; run it before you commit
+```
+
+The runner compiles the Swift tools in `tests/e2e/tools/` that need Apple's
+frameworks (`ocr`, `dialogue`, `audio-sync`) when their source changes, runs
+the cases one at a time (each a `node:test` test in its own process), and
+prints one line per case with the failing output. Everything a run makes —
+sandboxes, each case's log, the tools, the dialogue and speaker-model caches
+— is in `E2E_WORK` (by default one folder per checkout under `$TMPDIR`).
 
 ### Writing a case
 
-Each case is a Bash script, `tests/e2e/cases/NN-name.sh`, numbered by
-feature area (`0x` CLI and launch, `1x` prompter and recording, `2x`
+Each case is a TypeScript file, `tests/e2e/cases/NN-name.test.ts`, numbered
+by feature area (`0x` CLI and launch, `1x` prompter and recording, `2x`
 projects and dashboard, `3x` call audio, `4x` second-pass transcript, `5x`
-speakers, `6x` calendar). It sources `tests/e2e/lib.sh`, which gives it:
+speakers, `6x` calendar). It declares one test, whose title says the
+behaviour it checks:
 
-- a sandbox: `CUE_HOME` (a fresh folder holding `Application Support/Cue`
-  and `Documents`), its own defaults domain and whisper-server port, all
+```ts
+import { assertContains, dialogue, e2eCase, fixture, needWhisper } from '../harness/index.ts';
+
+e2eCase('A two-sided rehearsal is recorded into notes with both sides.', async (cue) => {
+    needWhisper();
+    const call = await dialogue(fixture('dialogues', 'sync.txt'), cue.path('call'));
+    await cue.launch({ CUE_REHEARSE_RECORD: '1', CUE_REHEARSE_PARTICIPANT: call.wav('call'), CUE_REHEARSE_ME: call.wav('me') });
+    await cue.waitLog(/Notes ready/, 180);
+    assertContains(cue.readyNotes(), /^## Transcript/);
+});
+```
+
+`e2eCase` hands the case `cue`, a sandboxed Cue, and stops it and cleans up
+after it whatever happens; a failed case keeps its sandbox. Helpers that only
+read files (the assertions, `cue.sessionLog()`, `lines`, …) are synchronous;
+anything that runs a process or waits returns a promise — await it. From
+`tests/e2e/harness/index.ts`:
+
+- the sandbox, `cue`: `cue.home` (`CUE_HOME`, a fresh folder holding
+  `Application Support/Cue` — `cue.support` — and `Documents` —
+  `cue.documents`), its own defaults domain and whisper-server port, all
   wiped after the case, so checkouts can run cases at the same time; the
   speech model is linked in, never copied, and so are the speaker models
   once they are downloaded (until then Cue downloads them on first use into
-  the checkout's e2e cache, `CUE_SPEAKER_MODELS`); the calendar and the apps using
-  the microphone are read from the case's `$EVENTS` and `$MIC_APPS` files,
-  never from the Mac;
-- `cue_defaults KEY TYPE VALUE`, `cue_launch [VAR=value …]`, `cue_stop`,
-  `cue_cli ARGS…` (command-line modes), `cue_control COMMAND…` (what a click
-  would do, through `CUE_CONTROL`), `dashboard_page PAGE REGEX` (show a
-  dashboard page and read its snapshot);
-- `minutes_from_now N`, `tomorrow_at HH:MM` (event times for `$EVENTS`), `mic_apps BUNDLE_ID…`
-  (who is on the microphone now; none when the call app lets go);
-- `wait_for "what" SECONDS command…`, `wait_log PATTERN SECONDS`,
-  `log_count PATTERN`, `session_log`, `find_notes`, `summary_of NOTES` (a
-  note's summary, without the transcript);
-- `whisper_cli_spy [SECONDS]` (a `whisper-cli` for `CUE_WHISPER_CLI` that
-  notes how Cue ran it — arguments, priority — optionally takes longer, and
-  runs the real one);
-- `speech OUT.wav VOICE "text"` and `dialogue SCRIPT OUTDIR` (multi-voice
-  calls built with `say`, one WAV per side plus `timeline.tsv`), `ocr PNG`,
-  `audio_length FILE`, `audio_sync AUDIO TIMELINE [SIDE…]` (each line of a
-  dialogue where its timeline puts it, silence elsewhere), `turn_speakers
-  NOTES TIMELINE` (each line of a dialogue with its voice and the label of
-  the transcript turn it starts);
-- `assert_file`, `assert_contains`, `assert_not_contains`, `assert_eq`,
-  `assert_between`, `fail`, `skip`, and `need_whisper`, `need_whisper_cli`,
-  `need_real_claude`, `need_voice`.
+  the checkout's e2e cache, `CUE_SPEAKER_MODELS`); the calendar and the apps
+  using the microphone are read from the case's own files, never from the
+  Mac. `cue.path(…)` is a path in the case's folder, `cue.save(name, text)`
+  writes a file there, `cue.project(name, settings)` makes a project by hand;
+- driving Cue: `cue.defaults(key, value)` (typed by the value: string, bool,
+  number or array), `cue.launch({ VAR: 'value' })`, `cue.stop()`,
+  `cue.alive()`, `cue.cli(…args)` (command-line modes), `cue.control(command)`
+  (what a click would do, through `CUE_CONTROL`), `cue.calendar([events])`
+  (with times from `minutesFromNow(n)` and `tomorrowAt('HH:MM')`),
+  `cue.micApps(…bundleIds)` (who is on the microphone now; none when the call
+  app lets go), `cue.whisperCliSpy(seconds)` (a `whisper-cli` for
+  `CUE_WHISPER_CLI` that notes how Cue ran it — arguments, priority —
+  optionally takes longer, and runs the real one);
+- waiting and reading what Cue did: `cue.waitFor(what, seconds, check)`,
+  `cue.waitLog(regex, seconds)`, `cue.sessionLog()`, `cue.logCount(regex)`,
+  `cue.readyNotes()`, `cue.findNotes()`, `cue.claudeRequests(kind)` (what Cue
+  sent the fake claude), `cue.dashboardPage(page, regex)` and
+  `cue.dashboardShows(regex)` (show a dashboard page and read its snapshot
+  into `cue.page`), `cue.snapshotText(png)`; `summaryOf(notes)` (a note's
+  summary, without the transcript), `lines`, `countLines` and `matches` (as
+  `grep`, `grep -c` and `grep -o` would), `findFiles`, `listDir`;
+- audio and screens: `speech(out, voice, text)` and `dialogue(script, out)`
+  (multi-voice calls built with `say`: `wav(side)` per side plus `timeline`),
+  `ocr(png)`, `afinfo(file)`, `audioLength(file)`, `audioSync(audio,
+  timeline, …sides)` (each line of a dialogue where its timeline puts it,
+  silence elsewhere), `turnSpeakers(notes, timeline)` and `labelsOf` (each
+  line of a dialogue with its voice and the label of the transcript turn it
+  starts);
+- results: `assertFile`, `assertContains`, `assertNotContains` (regexes
+  matched line by line, ignoring case, as `grep -i -E` would), `assertEq`,
+  `assertBetween`, `fail(message, …dumps)`, `skip(reason)`, and
+  `needWhisper`, `needWhisperCli`, `needRealClaude`, `needVoice`,
+  `needReachable`.
 
 Look at the existing cases before writing a new one, and keep each case
-focused on one user-visible behaviour.
+focused on one user-visible behaviour. Write only TypeScript that Node can
+strip: `.ts` in imports, `type` on imports of types, no `enum`, `namespace`
+or constructor parameter properties (`tsconfig.json` checks this).
 
 ### Test hooks in the app
 
@@ -114,7 +167,7 @@ sleep 5; ls "$home"/*.png                         # cue.png (overlay), cue-dashb
 grep 📸 "$home/Application Support/Cue/sessions/"*.md; kill $pid  # then CUE_APPEARANCE=light
 ```
 
-A case keeps its sandbox, PNGs included, with `tests/e2e/run.sh --keep PREFIX`. Never commit
+A case keeps its sandbox, PNGs included, with `node tests/e2e/run.ts --keep PREFIX`. Never commit
 snapshots or put them anywhere in the repository.
 
 The session log (`Application Support/Cue/sessions/*.md`) is the app's
@@ -142,9 +195,10 @@ updating the cases.
 ## CI and releases
 
 - `.github/workflows/ci.yml` runs on pull requests only: it builds the app
-  (new warnings in `Sources/Cue` fail it) and runs the whole end-to-end suite
-  on a macOS runner with the speech model. Keep it green; a case that can't
-  run there must `skip` with its reason, never fake what's missing.
+  (new warnings in `Sources/Cue` fail it), type-checks the end-to-end suite
+  and runs all of it on a macOS runner with the speech model and the latest
+  Node. Keep it green; a case that can't run there must `skip` with its
+  reason, never fake what's missing.
 - `.github/workflows/release.yml` runs on every push to `main`: it builds
   `Cue.app`, zips it and publishes a GitHub release `v<version>.<patch>`
   (`<version>` is `CFBundleShortVersionString` in `Resources/Info.plist`,
