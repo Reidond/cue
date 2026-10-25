@@ -72,7 +72,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: e2e-logs
-          path: ${{ runner.temp }}/e2e
+          # Logs, session logs and snapshots only: each sandbox links the 1.6 GB speech model.
+          path: |
+            ${{ runner.temp }}/e2e/*.log
+            ${{ runner.temp }}/e2e/*/cue.out
+            ${{ runner.temp }}/e2e/*/*.txt
+            ${{ runner.temp }}/e2e/*/*.png
+            ${{ runner.temp }}/e2e/*/home/Application Support/Cue/sessions/*.md
           if-no-files-found: ignore
 
       - name: Keep the app
