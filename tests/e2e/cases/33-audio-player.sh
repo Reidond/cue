@@ -14,7 +14,8 @@ awk -v line="audio: \"$name.m4a\"" '{ print } /^participants: / { print line }' 
 
 dashboard=$CASE_DIR/cue-dashboard.png
 text=$CASE_DIR/page.txt
-cue_launch CUE_SNAPSHOT="$CASE_DIR/cue.png"
+# In the dark appearance the selected speed is grey on grey, which Vision often doesn't read.
+cue_launch CUE_SNAPSHOT="$CASE_DIR/cue.png" CUE_APPEARANCE=light
 _page_shows() { [[ -s $dashboard ]] && ocr "$dashboard" > "$text" && grep -q -i -E -- "$1" "$text"; }
 
 # The player's position and length; Vision reads the play button as a bullet, × as x (or Cyrillic х).
