@@ -15,6 +15,7 @@ e2eCase('Cue launches in the sandbox, reads its materials and shows the overlay 
     });
     const text = cue.save('overlay.txt', overlay);
     assertContains(text, /When someone asks a question/, 'the overlay should show its ready state');
-    assertContains(text, /^No audio$/, 'with live audio off the status says so');
+    // The status follows its warning sign, which Vision may read as a letter ("A No audio").
+    assertContains(text, /(^|\s)No audio$/, 'with live audio off the status says so');
     if (!cue.alive()) fail('Cue quit on its own');
 });
