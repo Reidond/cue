@@ -15,6 +15,8 @@ export interface RunOptions {
     env?: NodeJS.ProcessEnv;
     /** Written to its stdin, which is then closed; without it, stdin is empty. */
     input?: string;
+    /** Seconds after which it is killed (its code is then 137). */
+    timeout?: number;
 }
 
 /** Runs a program to the end and collects what it printed. Never throws: check `code`. */
@@ -25,10 +27,12 @@ export function exec(command: string, args: readonly string[] = [], options: Run
             stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         });
         let stdout = '', stderr = '', output = '';
+        const timer = options.timeout === undefined ? undefined : setTimeout(() => child.kill('SIGKILL'), options.timeout * 1000);
         child.stdout?.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; output += chunk; });
         child.stderr?.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; output += chunk; });
         child.on('error', (error) => resolve({ code: 127, stdout, stderr: error.message, output: error.message }));
         child.on('close', (code, signal) => {
+            clearTimeout(timer);
             resolve({ code: code ?? 128 + (signal ? constants.signals[signal] : 0), stdout, stderr, output });
         });
         if (options.input !== undefined) child.stdin?.end(options.input);

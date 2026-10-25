@@ -9,7 +9,7 @@ export {
 } from './files.ts';
 export { labelsOf, summaryOf, turnSpeakers } from './notes.ts';
 export { exec, shellQuote, type Ran } from './process.ts';
-export { needReachable, needRealClaude, needVoice, needWhisper, needWhisperCli } from './requirements.ts';
+export { needReachable, needRealClaude, needSnapshots, needVoice, needWhisper, needWhisperCli } from './requirements.ts';
 export { fail, print, skip } from './results.ts';
 export { Cue, SPEAKER_FILES, type CalendarEvent, type ClaudeRequest } from './sandbox.ts';
 export { ocr } from './screen.ts';

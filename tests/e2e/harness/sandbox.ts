@@ -8,8 +8,8 @@ import { dirname, join } from 'node:path';
 import { CLAUDE, CUE_BIN, E2E_CACHE, E2E_WORK, FAKE_CLAUDE, KEEP, REAL_SUPPORT } from './config.ts';
 import { countLines, exists, findFiles, isDirectory, lines, linesOf, matches, nonEmpty, tail, withFlags, writeExecutable } from './files.ts';
 import { exec, shellQuote, type Ran } from './process.ts';
-import { needWhisperCli } from './requirements.ts';
-import { fail, print } from './results.ts';
+import { needSnapshots, needWhisperCli } from './requirements.ts';
+import { fail, print, Skip } from './results.ts';
 import { ocr, readImage } from './screen.ts';
 import { sleep, within } from './time.ts';
 
@@ -281,12 +281,16 @@ export class Cue {
 
     /**
      * Polls `check` every half second until it holds; fails the case on timeout, or as soon as a
-     * launched Cue exits. A check that throws hasn't held yet.
+     * launched Cue exits. A check that throws hasn't held yet, unless it skips the case.
      */
     async waitFor(what: string, seconds: number, check: () => boolean | Promise<boolean>): Promise<void> {
         const deadline = Date.now() + seconds * 1000;
         for (;;) {
-            if (await Promise.resolve().then(check).catch(() => false)) return;
+            const held = await Promise.resolve().then(check).catch((error: unknown) => {
+                if (error instanceof Skip) throw error;
+                return false;
+            });
+            if (held) return;
             if (this.#app && !this.alive()) {
                 fail(`Cue exited while waiting for ${what}`, '--- cue.out', tail(this.path('cue.out'), 40));
             }
@@ -367,6 +371,7 @@ export class Cue {
      * then in `page`.
      */
     async dashboardShows(pattern: RegExp, since = 0): Promise<boolean> {
+        needSnapshots();
         const png = this.path('cue-dashboard.png');
         if (!nonEmpty(png) || statSync(png).mtimeMs <= since) return false;
         const read = await readImage(png);
@@ -380,6 +385,7 @@ export class Cue {
      * since then reads `pattern` (one drawn before can show the page as it was a moment ago).
      */
     async dashboardPage(page: string, pattern: RegExp): Promise<void> {
+        needSnapshots();
         const asked = Date.now();
         this.control(`page ${page}`);
         await this.waitFor(`the ${page} page to show /${pattern.source}/`, 20, () => this.dashboardShows(pattern, asked));
@@ -387,6 +393,7 @@ export class Cue {
 
     /** Waits for CUE_SNAPSHOT to write `png`, lets the window settle a frame, and reads its text. */
     async snapshotText(png: string): Promise<string> {
+        needSnapshots();
         await this.waitFor(`snapshot ${png}`, 20, () => nonEmpty(png));
         await sleep(2.5);
         return ocr(png);

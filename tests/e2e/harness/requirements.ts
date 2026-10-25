@@ -1,6 +1,6 @@
 // What a case may need that a machine can lack. Each one skips the case, with the reason, when it's
 // missing: nothing here fakes it.
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CLAUDE, REAL_SUPPORT } from './config.ts';
 import { exists, literal } from './files.ts';
@@ -18,10 +18,37 @@ function executable(path: string): boolean {
     }
 }
 
-/** The speech model and whisper-server, for live recognition. */
+/** What the runner found this machine can do (see capabilities.ts), read once per case. */
+export interface Capability {
+    ok: boolean;
+    /** How it went: the timing, the capture method, or why it can't. */
+    detail: string;
+}
+
+export type Capabilities = Partial<Record<'speech' | 'snapshots', Capability>>;
+
+let found: Capabilities | undefined;
+
+/** A capability the runner probed; undefined when it didn't (no case it runs needs it). */
+function probed(name: keyof Capabilities): Capability | undefined {
+    const file = process.env['E2E_CAPABILITIES'];
+    if (!file) return undefined;
+    found ??= JSON.parse(readFileSync(file, 'utf8')) as Capabilities;
+    return found[name];
+}
+
+/** The speech model, whisper-server, and speech recognition fast enough for the cases' timeouts. */
 export function needWhisper(): void {
     if (!exists(join(REAL_SUPPORT, 'models', 'ggml-large-v3-turbo.bin'))) skip('speech model not downloaded');
     if (!brewBins.some((bin) => executable(join(bin, 'whisper-server')))) skip('whisper-server not installed');
+    const speech = probed('speech');
+    if (speech && !speech.ok) skip(speech.detail);
+}
+
+/** Snapshots of Cue's windows (CUE_SNAPSHOT) that Vision can read on this machine. */
+export function needSnapshots(): void {
+    const snapshots = probed('snapshots');
+    if (snapshots && !snapshots.ok) skip(snapshots.detail);
 }
 
 /** The second pass's whisper-cli; returns its path. */

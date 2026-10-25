@@ -36,6 +36,15 @@ This rule is strict and has no exceptions.
 - A case that needs something the machine lacks (the speech model, a voice,
   a permission, the network) calls `skip('reason')` or a `need…` helper; it
   never fakes the missing piece.
+- Some Macs can't do what certain cases need: GitHub's runners have no GPU for
+  speech recognition and draw blank window snapshots. Before the cases,
+  `run.ts` probes the machine once (`harness/capabilities.ts`): whisper-cli
+  must hear a spoken test phrase within 20 s, and Cue's dashboard and overlay
+  snapshots must read as text. It prints what it found (`Speech recognition:
+  yes — 1.4 s for 1.9 s of speech`), and a case that depends on what's missing
+  skips with that reason: `needWhisper()` does it for speech, and the snapshot
+  helpers (`snapshotText`, `dashboardPage`, `dashboardShows`) for snapshots, or
+  call `needSnapshots()` yourself before reading a window another way.
 
 ### Running the cases
 
@@ -120,8 +129,8 @@ anything that runs a process or waits returns a promise — await it. From
 - results: `assertFile`, `assertContains`, `assertNotContains` (regexes
   matched line by line, ignoring case, as `grep -i -E` would), `assertEq`,
   `assertBetween`, `fail(message, …dumps)`, `skip(reason)`, and
-  `needWhisper`, `needWhisperCli`, `needRealClaude`, `needVoice`,
-  `needReachable`.
+  `needWhisper`, `needWhisperCli`, `needSnapshots`, `needRealClaude`,
+  `needVoice`, `needReachable`.
 
 Look at the existing cases before writing a new one, and keep each case
 focused on one user-visible behaviour. Write only TypeScript that Node can
@@ -196,9 +205,12 @@ updating the cases.
 
 - `.github/workflows/ci.yml` runs on pull requests only: it builds the app
   (new warnings in `Sources/Cue` fail it), type-checks the end-to-end suite
-  and runs all of it on a macOS runner with the speech model and the latest
-  Node. Keep it green; a case that can't run there must `skip` with its
-  reason, never fake what's missing.
+  and runs it on GitHub's hosted macOS runner with the speech model and the
+  latest Node. That runner can't recognize speech in time or read window
+  snapshots, so those cases skip there with the probe's reason: CI covers the
+  build, the command-line modes and the cases that need neither. **Run the
+  whole suite on a Mac before merging** and put its summary in the PR. Keep CI
+  green; never fake what's missing.
 - `.github/workflows/release.yml` runs on every push to `main`: it builds
   `Cue.app`, zips it and publishes a GitHub release `v<version>.<patch>`
   (`<version>` is `CFBundleShortVersionString` in `Resources/Info.plist`,
