@@ -22,7 +22,9 @@ This rule is strict and has no exceptions.
   - the paid external service: `tests/e2e/tools/fake-claude.ts` replaces
     the `claude` CLI (through `CUE_CLAUDE_BIN`) so cases are fast and
     deterministic (`FAKE_CLAUDE_ANSWER` sets its answer, `FAKE_CLAUDE_ANSWERS`
-    one per question matching a pattern). Cases that judge Claude's actual writing run against the
+    one per question matching a pattern; as the question judge it finds the
+    sentences ending in "?", or replies as `FAKE_CLAUDE_JUDGEMENTS` says, and
+    `FAKE_CLAUDE_JUDGE_FAILS=1` makes it fail). Cases that judge Claude's actual writing run against the
     real CLI with `node tests/e2e/run.ts --real-claude`;
   - system sources that need the user's permission or a live person (the
     microphone, call audio, the calendar database, which apps use the
@@ -197,7 +199,9 @@ or `⚠︎ Couldn't improve the transcript: …`, `👥 Finding speakers…`,
 `💡 Suggested name: LABEL → NAME`, `✏️ Renamed “OLD” to “NEW” in …`,
 `👥 Speaker models downloaded: … MB`,
 `📝 Notes ready: …`, `📅 Recording “Title” into Project`, `🔔 Record “Title”?`
-for every notification, `⚠︎ Nothing was recorded: …` for every alert, and so
+for every notification, `⚠︎ Nothing was recorded: …` for every alert,
+`🧐 Question judge ready: Claude Haiku` or
+`⚠︎ Question judge unavailable (…) — going by question marks`, and so
 on), and never rename existing lines without
 updating the cases.
 

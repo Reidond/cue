@@ -66,14 +66,10 @@ final class Preferences: ObservableObject {
     }
 }
 
-/// Per-language data (question cues, stop words, Whisper artefacts, spoken openers)
+/// Per-language data (stop words, Whisper artefacts, spoken openers, labels)
 /// kept in Resources/lexicons so the code stays language-neutral.
 struct Lexicon: Decodable {
     var name: String
-    /// Interrogatives: with them a short "…?" is a question, not a tag ("Right?").
-    var questionCues: [String]
-    /// Requests that are questions without a question mark ("explain …"), at a sentence's start.
-    var requestCues: [String]?
     var stopWords: Set<String>
     var hallucinations: [String]
     var questionLabels: [String]
@@ -111,11 +107,11 @@ struct Lexicon: Decodable {
         lock.lock()
         defer { lock.unlock() }
         if let cached = cache[code] { return cached }
-        let english = decode("en") ?? Lexicon(name: "English", questionCues: [], stopWords: [], hallucinations: [],
+        let english = decode("en") ?? Lexicon(name: "English", stopWords: [], hallucinations: [],
                                               questionLabels: ["q"], answerLabels: ["a"], thanksPrefix: "",
                                               defaultOpener: "", numbersLabel: "Numbers", sourceLabel: "Source")
         // Unknown languages still get the universal "?" cue and English labels.
-        var lexicon = decode(code) ?? Lexicon(name: SpokenLanguage.named(code).name, questionCues: [], stopWords: [],
+        var lexicon = decode(code) ?? Lexicon(name: SpokenLanguage.named(code).name, stopWords: [],
                                               hallucinations: english.hallucinations, questionLabels: english.questionLabels,
                                               answerLabels: english.answerLabels, thanksPrefix: "", defaultOpener: "",
                                               numbersLabel: english.numbersLabel, sourceLabel: english.sourceLabel)

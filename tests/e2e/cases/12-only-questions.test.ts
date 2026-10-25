@@ -1,6 +1,6 @@
 import { assertContains, assertEq, assertNotContains, CLAUDE, dialogue, e2eCase, fixture, needWhisper } from '../harness/index.ts';
 
-e2eCase('Talk without a question gets no answer, and two questions asked in one go are answered each, shown together.', async (cue) => {
+e2eCase("Only the questions the judge finds are answered: the talk gets nothing, and two asked in one go are answered each, shown together.", async (cue) => {
     needWhisper();
 
     await cue.defaults('materials', [fixture('materials', 'talk.md')]);
@@ -10,6 +10,11 @@ e2eCase('Talk without a question gets no answer, and two questions asked in one 
     await cue.launch({
         CUE_REHEARSE_PARTICIPANT: call.wav('call'),
         CUE_SNAPSHOT: cue.path('cue.png'),
+        // The judge hears everything said so far each time; the first pattern that matches is its verdict.
+        FAKE_CLAUDE_JUDGEMENTS: JSON.stringify({
+            'two questions': 'Q: How many hives did you study?\nQ: And which rooftops did you use?',
+            'benefits': '—',
+        }),
         FAKE_CLAUDE_ANSWERS: JSON.stringify({
             hives: 'We studied 48 hives on six rooftops.\n- Counted every spring\nSource: talk.md',
             rooftops: 'We used flat green roofs downtown.\n- Point about the roofs\nSource: talk.md',
@@ -29,6 +34,11 @@ e2eCase('Talk without a question gets no answer, and two questions asked in one 
         assertContains(requests, /^Question: \[Participant\] And which rooftops did you use\?$/);
         assertContains(requests, /Asked in one go with «And which rooftops did you use\?»/);
         assertNotContains(requests, /^Question: .*(colonies|benefits)/);
+        const judged = cue.save('judged.txt', cue.claudeRequests('judge').join('\n----\n'));
+        assertContains(judged, /^\[Participant\] Who benefits from this\?/, 'the judge should hear the rhetorical question');
+        assertContains(judged, /^\[Participant\] Thank you for the talk/, 'and the questions');
+        const prompt = cue.save('judge-system.txt', cue.claudeRequests('judge-system').join(''));
+        assertContains(prompt, /rhetorical questions/, "the judge's prompt should say what isn't a question");
     }
 
     const overlay = cue.save('overlay.txt', await cue.snapshotText(cue.path('cue.png')));

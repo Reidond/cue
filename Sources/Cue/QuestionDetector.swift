@@ -2,91 +2,118 @@ import Foundation
 
 /// Decides when the participants have finished asking something, and what they asked.
 ///
-/// Participant utterances collect into a buffer. Once the buffer holds a question (see
-/// `questions(in:)`), it fires when the participants have been quiet for `quietGap` since they
-/// stopped talking, or immediately when the presenter starts talking (they are answering). New
-/// participant speech postpones it. Talk without a question never fires.
+/// Participant utterances collect into a buffer, and each time one is added the judge (Claude
+/// Haiku, see `QuestionJudge`) reads the buffer and says which questions in it are for the
+/// speaker. Once it has found some, the detector fires when the participants have been quiet for
+/// `quietGap` since they stopped talking, or as soon as the presenter starts talking (they are
+/// answering). New participant speech postpones it and is judged again with the rest. Talk the
+/// judge finds no question in never fires. Without a judge, sentences ending in "?" count.
 final class QuestionDetector {
     /// The questions asked in one go, in order.
     var onQuestions: (([String]) -> Void)?
+    /// Reads what was just said (an utterance per line, "[Label] text") and calls back with its
+    /// questions for the speaker (none: []), or nil when it couldn't tell.
+    var judge: ((_ speech: String, _ verdict: @escaping ([String]?) -> Void) -> Void)?
+
+    struct Line {
+        let label: String
+        let text: String
+        let started: Date
+    }
 
     private let quietGap: TimeInterval = 1.8
-    /// Statements this long after a question mean the speaker answered it themselves (a talk's
-    /// rhetorical "Who is this for? …").
-    private let rhetoricalAfter = 30
-    private var buffer: [String] = []
+    /// What was said since the last question, judged as a whole each time it grows.
+    private(set) var buffer: [Line] = []
+    /// Counts the buffer's changes, so a verdict on an older buffer is dropped.
+    private var version = 0
+    /// The judge's verdict on the buffer as it is; nil while it's still judging.
+    private var questions: [String]?
+    /// When the participants last stopped talking, while they're quiet.
+    private var quietSince: Date?
+    /// The presenter started answering before the verdict came.
+    private var fireWhenJudged = false
     private var lastAdded = Date.distantPast
-    private var armed = false
     private var timer: Timer?
 
-    /// Interrogative words of the spoken language, from its lexicon; they make a short "…?" a question.
-    var cues: [String] = [] { didSet { cueWords = cues.map(Self.words) } }
-    /// Requests that are questions without a question mark ("explain …"), from its lexicon.
-    var requestCues: [String] = [] { didSet { requestWords = requestCues.map(Self.words) } }
-    private var cueWords: [[String]] = []
-    private var requestWords: [[String]] = []
-
-    /// The questions in a stretch of speech: sentences ending in "?" that are more than a tag
-    /// ("Right?") and sentences that open with a request ("Could you explain …"), leaving out
-    /// those the speaker went on to answer at length themselves.
-    func questions(in text: String) -> [String] {
-        let sentences = Self.sentences(text)
-        let asking = sentences.map(isQuestion)
-        var questions: [String] = []
-        for (index, sentence) in sentences.enumerated() where asking[index] {
-            let rest = sentences[(index + 1)...].prefix { !isQuestion($0) }
-            if rest.reduce(0, { $0 + Self.words($1).count }) <= rhetoricalAfter { questions.append(sentence) }
-        }
-        return questions
-    }
-
-    private func isQuestion(_ sentence: String) -> Bool {
-        let words = Self.words(sentence)
-        if sentence.contains("?") { return words.count >= 3 || cueWords.contains { words.contains(sequence: $0) } }
-        return requestWords.contains { cue in (0...1).contains { words.dropFirst($0).starts(with: cue) } }
-    }
-
-    /// A finished participant utterance.
-    func add(_ text: String, speechEnded: Date) {
+    /// A finished utterance (`label` is who said it, as the transcript shows them).
+    func add(_ text: String, from label: String, speechStarted: Date, speechEnded: Date) {
         // Utterances separated by a long silence belong to different exchanges.
-        if Date().timeIntervalSince(lastAdded) > 45 { buffer.removeAll(); armed = false }
-        buffer.append(text)
+        if Date().timeIntervalSince(lastAdded) > 45 { buffer.removeAll() }
+        buffer.append(Line(label: label, text: text, started: speechStarted))
         // Only the end of a long talk can hold its question.
         if buffer.count > 8 { buffer.removeFirst(buffer.count - 8) }
         lastAdded = Date()
-        armed = !questions(in: buffer.joined(separator: " ")).isEmpty
+        version += 1
+        questions = nil
+        let asked = version
+        let speech = buffer.map { "[\($0.label)] \($0.text)" }.joined(separator: "\n")
+        let marked = Self.marked(in: buffer.map(\.text).joined(separator: " "))
+        if let judge {
+            judge(speech) { [weak self] found in
+                guard let self, asked == self.version else { return }
+                self.judged(found ?? marked)
+            }
+        } else {
+            judged(marked)
+        }
         participantsStopped(speechEnded: speechEnded)
     }
 
     /// Participants went quiet (also after a noise blip that produced no text).
     func participantsStopped(speechEnded: Date) {
-        guard armed else { return }
-        timer?.invalidate()
-        let delay = max(0.05, quietGap - Date().timeIntervalSince(speechEnded))
-        timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in self?.fire() }
+        quietSince = speechEnded
+        schedule()
     }
 
     /// Participants started talking again: the question may go on.
     func participantsSpeaking() {
         timer?.invalidate()
+        quietSince = nil
     }
 
     /// The presenter started talking, so the question is over.
     func presenterSpeaking() {
-        if armed { fire() }
+        if questions == nil, !buffer.isEmpty { fireWhenJudged = true } else { fire() }
     }
 
-    /// Everything collected so far, used by the manual "answer now" hot key.
-    func takeBuffer() -> String? {
+    /// Everything collected so far and its questions (the judge's, if it has spoken), used by the
+    /// manual "answer now" hot key.
+    func take() -> (speech: String, questions: [String])? {
+        defer { clear() }
+        guard !buffer.isEmpty else { return nil }
+        let speech = buffer.map(\.text).joined(separator: " ")
+        return (speech, questions ?? Self.marked(in: speech))
+    }
+
+    private func judged(_ found: [String]) {
+        questions = found
+        if fireWhenJudged { fire() } else { schedule() }
+    }
+
+    private func schedule() {
         timer?.invalidate()
-        defer { buffer.removeAll(); armed = false }
-        return buffer.isEmpty ? nil : buffer.joined(separator: " ")
+        guard let questions, !questions.isEmpty, let quietSince else { return }
+        let delay = max(0.05, quietGap - Date().timeIntervalSince(quietSince))
+        timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in self?.fire() }
     }
 
     private func fire() {
-        guard let speech = takeBuffer() else { return }
-        let questions = questions(in: speech)
-        if !questions.isEmpty { onQuestions?(questions) }
+        guard let found = questions, !found.isEmpty else { return }
+        clear()
+        onQuestions?(found)
+    }
+
+    private func clear() {
+        timer?.invalidate()
+        buffer.removeAll()
+        questions = nil
+        fireWhenJudged = false
+        version += 1
+    }
+
+    /// Without the judge: sentences ending in "?" that are more than a tag ("Right?").
+    static func marked(in text: String) -> [String] {
+        sentences(text).filter { $0.contains("?") && words($0).count >= 2 }
     }
 
     /// Sentences, each with its own end mark (and closing quote); a full stop inside a number doesn't end one.
@@ -113,15 +140,7 @@ final class QuestionDetector {
         return sentences
     }
 
-    /// Lowercased words, as the cues are matched.
-    static func words(_ text: String) -> [String] {
+    private static func words(_ text: String) -> [String] {
         text.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }
-    }
-}
-
-private extension Array where Element == String {
-    func contains(sequence: [String]) -> Bool {
-        guard !sequence.isEmpty, sequence.count <= count else { return false }
-        return (0...(count - sequence.count)).contains { self[$0..<($0 + sequence.count)].elementsEqual(sequence) }
     }
 }
