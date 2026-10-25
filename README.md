@@ -189,7 +189,7 @@ suggestions: {"Participant 2": "Olena Mulesa"}
 The call's audio — your microphone and the call mixed, about 15 MB per hour —
 is saved next to the note under the same name (`.m4a`, AAC) and renamed or
 moved to the Trash with it. An open note has a player on top (play/pause, a
-scrubber, 1× / 1.5× / 2×), and clicking a timestamp in the transcript plays
+scrubber, a speed menu: 1× / 1.5× / 2×), and clicking a timestamp in the transcript plays
 from that moment. Turn off **Keep audio** in Settings to keep text only. While
 a note is being processed, each side is also kept on its own in
 `~/Library/Application Support/Cue/recordings/`, and deleted once the notes are

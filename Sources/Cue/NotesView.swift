@@ -32,6 +32,10 @@ struct ProjectNotesView: View {
                         }
                 }
             }
+            // On the page's own background, with the rows' text on the header's 28 pt margin
+            // (the list insets it 18).
+            .scrollContentBackground(.hidden)
+            .padding(.leading, 10)
             .searchable(text: $search, prompt: "Search notes")
             .frame(minWidth: 220, idealWidth: 270, maxWidth: 380)
             .overlay {
@@ -127,7 +131,8 @@ private struct RecordingDetail: View {
             }
             // A comfortable reading measure, centred in wide windows.
             .frame(maxWidth: 720, alignment: .leading)
-            .padding(.horizontal, 32)
+            // The project header's margin.
+            .padding(.horizontal, 28)
             .padding(.vertical, 28)
             .frame(maxWidth: .infinity)
         }
@@ -136,7 +141,7 @@ private struct RecordingDetail: View {
             if file.audio != nil {
                 PlayerBar(player: player)
                     .frame(maxWidth: 720)
-                    .padding(.horizontal, 32)
+                    .padding(.horizontal, 28)
                     .padding(.top, 14)
             }
         }
@@ -281,7 +286,7 @@ private struct PlayerBar: View {
     @ObservedObject var player: NotePlayer
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Button(player.isPlaying ? "Pause" : "Play", systemImage: player.isPlaying ? "pause.fill" : "play.fill",
                    action: player.togglePlay)
                 .labelStyle(.iconOnly)
@@ -292,28 +297,89 @@ private struct PlayerBar: View {
             Text(RecordingStore.clock(player.time))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
-            Slider(value: Binding(get: { player.time }, set: { player.seek(to: $0) }),
-                   in: 0...max(player.duration, 1)) { player.scrubbing = $0 }
-                .controlSize(.small)
-                .accessibilityLabel("Position")
+            Scrubber(time: player.time, duration: player.duration) { player.scrubbing = $0 } seek: { player.seek(to: $0) }
             Text(RecordingStore.clock(player.duration))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
-            Picker("Speed", selection: $player.rate) {
-                ForEach(NotePlayer.rates, id: \.self) { rate in
-                    Text(rate.formatted(.number.precision(.fractionLength(0...1))) + "×").tag(rate)
+            Menu {
+                Picker("Speed", selection: $player.rate) {
+                    ForEach(NotePlayer.rates, id: \.self) { Text(Self.label($0)).tag($0) }
                 }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                Text(Self.label(player.rate)).monospacedDigit()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            .menuStyle(.button)
+            .buttonStyle(.borderless)
+            .menuIndicator(.hidden)
             .fixedSize()
+            .padding(.leading, 6)
             .help("Playback speed")
+            .accessibilityLabel("Playback speed")
+            .accessibilityValue(Self.label(player.rate))
         }
         .font(.callout)
-        .padding(.leading, 14)
-        .padding(.trailing, 8)
+        .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .glassEffect(.regular, in: .capsule)
+    }
+
+    /// 1×, 1.5× (1,5× where that's the decimal separator), 2×.
+    private static func label(_ rate: Float) -> String {
+        rate.formatted(.number.precision(.fractionLength(0...1))) + "×"
+    }
+}
+
+/// A slim track, the played part filled, and a small knob: click or drag anywhere on it to seek.
+private struct Scrubber: View {
+    let time: TimeInterval
+    let duration: TimeInterval
+    let scrubbing: (Bool) -> Void
+    let seek: (TimeInterval) -> Void
+    @State private var dragging = false
+
+    private let knob: CGFloat = 10
+    private var length: TimeInterval { max(duration, 1) }
+    private var fraction: CGFloat { CGFloat(min(max(time / length, 0), 1)) }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let travel = max(geometry.size.width - knob, 1)
+            ZStack(alignment: .leading) {
+                Capsule().fill(.quaternary)
+                    .frame(height: 4)
+                Capsule().fill(.tint)
+                    .frame(width: knob / 2 + travel * fraction, height: 4)
+                Circle().fill(.white)
+                    .shadow(color: .black.opacity(0.3), radius: 1, y: 0.5)
+                    .frame(width: knob, height: knob)
+                    .offset(x: travel * fraction)
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(.rect)
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    if !dragging {
+                        dragging = true
+                        scrubbing(true)
+                    }
+                    seek(seconds(at: value.location.x, travel: travel))
+                }
+                .onEnded { value in
+                    seek(seconds(at: value.location.x, travel: travel))
+                    dragging = false
+                    scrubbing(false)
+                })
+        }
+        .frame(height: 20)
+        .accessibilityRepresentation {
+            Slider(value: Binding(get: { time }, set: seek), in: 0...length) { Text("Position") }
+        }
+    }
+
+    private func seconds(at x: CGFloat, travel: CGFloat) -> TimeInterval {
+        TimeInterval(min(max((x - knob / 2) / travel, 0), 1)) * length
     }
 }
 
