@@ -62,11 +62,14 @@ cd tests/e2e && npm ci && npm run typecheck   # tsc --noEmit; run it before you 
 ```
 
 The runner compiles the Swift tools in `tests/e2e/tools/` that need Apple's
-frameworks (`ocr`, `dialogue`, `audio-sync`) when their source changes, runs
-the cases one at a time (each a `node:test` test in its own process), and
-prints one line per case with the failing output. Everything a run makes —
+frameworks (`ocr`, `dialogue`, `audio-sync`, `windows`) when their source
+changes, runs the cases one at a time (each a `node:test` test in its own
+process), and prints one line per case with the failing output. Everything a run makes —
 sandboxes, each case's log, the tools, the dialogue and speaker-model caches
 — is in `E2E_WORK` (by default one folder per checkout under `$TMPDIR`).
+A run stays out of the way of whoever is using the Mac: every Cue it launches
+has `CUE_BACKGROUND=1`, so it never comes to the front or takes focus, and its
+windows stay behind all others, where snapshots still capture them.
 
 ### Writing a case
 
@@ -106,8 +109,8 @@ anything that runs a process or waits returns a promise — await it. From
   writes a file there, `cue.project(name, settings)` makes a project by hand;
 - driving Cue: `cue.defaults(key, value)` (typed by the value: string, bool,
   number or array), `cue.launch({ VAR: 'value' })`, `cue.stop()`,
-  `cue.alive()`, `cue.cli(…args)` (command-line modes), `cue.control(command)`
-  (what a click would do, through `CUE_CONTROL`), `cue.calendar([events])`
+  `cue.alive()`, `cue.pid`, `cue.cli(…args)` (command-line modes),
+  `cue.control(command)` (what a click would do, through `CUE_CONTROL`), `cue.calendar([events])`
   (with times from `minutesFromNow(n)` and `tomorrowAt('HH:MM')`),
   `cue.micApps(…bundleIds)` (who is on the microphone now; none when the call
   app lets go), `cue.whisperCliSpy(seconds)` (a `whisper-cli` for
@@ -123,8 +126,10 @@ anything that runs a process or waits returns a promise — await it. From
   `grep`, `grep -c` and `grep -o` would), `findFiles`, `listDir`;
 - audio and screens: `speech(out, voice, text)` and `dialogue(script, out)`
   (multi-voice calls built with `say`: `wav(side)` per side plus `timeline`),
-  `ocr(png)`, `afinfo(file)`, `audioLength(file)`, `audioSync(audio,
-  timeline, …sides)` (each line of a dialogue where its timeline puts it,
+  `silence(out, seconds)` (a call where nobody speaks), `ocr(png)`,
+  `appWindows(cue.pid)` (whether Cue is the active app, has a Dock icon, and
+  its windows on screen with their levels), `afinfo(file)`,
+  `audioLength(file)`, `audioSync(audio, timeline, …sides)` (each line of a dialogue where its timeline puts it,
   silence elsewhere), `turnSpeakers(notes, timeline)` and `labelsOf` (each
   line of a dialogue with its voice and the label of the transcript turn it
   starts);
@@ -165,6 +170,7 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_MEETING_TICK=s` / `CUE_MIC_RELEASE=s` | Check for calls every `s` seconds instead of 5; stop a call's recording once the call app has been off the microphone for `s` seconds instead of 60. |
 | `CUE_ALLOW_CAPTURE=1` | Let screenshots see the overlay. |
 | `CUE_SHOW_SETTINGS=1` | Open Settings at launch. |
+| `CUE_BACKGROUND=1` | Stay out of the way of whoever is using the Mac (`cue.launch` sets it for every case): Cue never activates itself or takes keyboard focus, and has no Dock icon, menu bar icon or hot keys; its windows sit behind every other window — just above the desktop picture, under the desktop's icons, in every Space — where `CUE_SNAPSHOT` still captures each one alone (drawn as an inactive app's window). An alert goes only to the session log (`⚠︎ …`) instead of waiting for a click. |
 
 To look at a design you changed, run the app in a sandbox with snapshots on, show the page,
 and read the PNGs as images — then the same in the other appearance:
@@ -190,7 +196,8 @@ or `⚠︎ Couldn't improve the transcript: …`, `👥 Finding speakers…`,
 `💡 Suggested name: LABEL → NAME`, `✏️ Renamed “OLD” to “NEW” in …`,
 `👥 Speaker models downloaded: … MB`,
 `📝 Notes ready: …`, `📅 Recording “Title” into Project`, `🔔 Record “Title”?`
-for every notification, and so on), and never rename existing lines without
+for every notification, `⚠︎ Nothing was recorded: …` for every alert, and so
+on), and never rename existing lines without
 updating the cases.
 
 ## Rules for changes

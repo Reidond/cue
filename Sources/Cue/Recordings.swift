@@ -300,7 +300,7 @@ final class RecordingStore: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         } catch {
-            NSAlert(error: error).runModal()
+            NSAlert(error: error).show(logging: log)
             return nil
         }
 
@@ -350,7 +350,7 @@ final class RecordingStore: ObservableObject {
         do {
             try document.write(to: url, atomically: true, encoding: .utf8)
         } catch {
-            NSAlert(error: error).runModal()
+            NSAlert(error: error).show(logging: log)
             return nil
         }
         log.write("🎙 Transcript saved: \(url.path)")
@@ -647,7 +647,7 @@ final class RecordingStore: ObservableObject {
             try write(updated, to: file, title: Self.replacingName(old, with: new, in: file.title))
             log.write("✏️ Renamed “\(old)” to “\(new)” in \(file.title)")
         } catch {
-            NSAlert(error: error).runModal()
+            NSAlert(error: error).show(logging: log)
         }
         reload()
     }

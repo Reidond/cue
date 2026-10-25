@@ -1,6 +1,6 @@
 // Spoken audio for Cue to hear, made with macOS voices, and measurements of the audio it saved.
 import { createHash } from 'node:crypto';
-import { cp, mkdir, readFile, rm } from 'node:fs/promises';
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { E2E_BIN, E2E_CACHE } from './config.ts';
 import { exists, linesOf } from './files.ts';
@@ -16,6 +16,26 @@ export async function speech(out: string, voice: string, text: string): Promise<
     if (said.code !== 0) fail(`say -v ${voice} failed`, said.output);
     const converted = await exec('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', aiff, out]);
     if (converted.code === 0) await rm(aiff, { force: true });
+}
+
+/** Writes `out` (a 16 kHz mono WAV) with `seconds` of digital silence: a call where nobody speaks. */
+export async function silence(out: string, seconds: number): Promise<string> {
+    const data = Math.round(seconds * 16_000) * 2;
+    const header = Buffer.alloc(44);
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + data, 4);
+    header.write('WAVEfmt ', 8);
+    header.writeUInt32LE(16, 16);  // PCM: format 1, 1 channel, 16 kHz, 32 000 bytes a second, 2 a frame, 16 bits
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(1, 22);
+    header.writeUInt32LE(16_000, 24);
+    header.writeUInt32LE(32_000, 28);
+    header.writeUInt16LE(2, 32);
+    header.writeUInt16LE(16, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(data, 40);
+    await writeFile(out, Buffer.concat([header, Buffer.alloc(data)]));
+    return out;
 }
 
 /** A call made by `dialogue`: one WAV per side, plus when each line is said. */

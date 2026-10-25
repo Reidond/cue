@@ -10,6 +10,16 @@ final class OverlayPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+extension NSAlert {
+    /// Shows the alert and writes it to the session log (`⚠︎ …`); under CUE_BACKGROUND only there,
+    /// as a modal alert would come to the front and hold up a test run until someone answers it.
+    func show(logging log: SessionLog) {
+        log.write("⚠︎ \(messageText)" + (informativeText.isEmpty ? "" : ": \(informativeText)"))
+        guard ProcessInfo.processInfo.environment["CUE_BACKGROUND"] != "1" else { return }
+        runModal()
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let preferences = Preferences()
@@ -23,6 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private var signalSources: [DispatchSourceSignal] = []
     private var controlLinesDone = 0
+    /// Testing aid: CUE_BACKGROUND=1 keeps a test run out of the way of whoever is using the Mac.
+    /// Cue never comes to the front or takes focus, and has no Dock icon, menu bar icon or hot keys;
+    /// its windows stay behind every other one (see `keepBehind`).
+    private let background = ProcessInfo.processInfo.environment["CUE_BACKGROUND"] == "1"
+    /// Under CUE_BACKGROUND: App Nap would slow the timers of an app whose windows are all covered.
+    private var activity: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         signal(SIGPIPE, SIG_IGN)  // writing to a Claude process that just died must not kill the app
@@ -63,6 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panel.setFrameOrigin(NSPoint(x: visible.maxX - 540, y: visible.maxY - 660))
         }
         panel.setFrameAutosaveName("overlay")
+        if background {
+            keepBehind(panel)
+            activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "CUE_BACKGROUND")
+        }
 
         state.openSettings = { [weak self] in self?.showSettings() }
         state.openDashboard = { [weak self] in self?.showDashboard() }
@@ -70,8 +90,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         state.showOverlay = { [weak self] in self?.panel.orderFrontRegardless() }
         state.hideOverlay = { [weak self] in self?.panel.orderOut(nil) }
         setUpMainMenu()
-        setUpStatusItem()
-        setUpHotKeys()
+        if !background {
+            setUpStatusItem()
+            setUpHotKeys()
+        }
         state.start()
         // The dashboard opens first; Start Cue shows the overlay. A rehearsal is a run-through
         // of the talk, so it shows the overlay straight away.
@@ -109,10 +131,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, calendar: state.calendar))
             window.center()
             window.setFrameAutosaveName("settings")
+            if background { keepBehind(window) }
             settingsWindow = window
         }
-        NSApp.activate()
-        settingsWindow?.makeKeyAndOrderFront(nil)
+        present(settingsWindow)
     }
 
     /// The dashboard, optionally opened on a note (e.g. the one just recorded).
@@ -135,10 +157,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.contentView = NSHostingView(rootView: DashboardView(state: state, projects: state.projects, model: dashboard))
             window.center()
             window.setFrameAutosaveName("dashboard")
+            if background { keepBehind(window) }
             dashboardWindow = window
         }
-        NSApp.activate()
-        dashboardWindow?.makeKeyAndOrderFront(nil)
+        present(dashboardWindow)
+    }
+
+    /// Brings Cue to the front with the window; under CUE_BACKGROUND only orders the window in.
+    private func present(_ window: NSWindow?) {
+        if background {
+            window?.orderFrontRegardless()
+        } else {
+            NSApp.activate()
+            window?.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    /// Under CUE_BACKGROUND: the window sits just above the desktop picture, under the desktop's
+    /// icons and every app's windows, in every Space — out of sight, yet on screen for snapshots.
+    private func keepBehind(_ window: NSWindow) {
+        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) + 1)
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
     }
 
     /// A note's audio stops with the dashboard.
@@ -414,6 +453,6 @@ MainActor.assumeIsolated {
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
-    app.setActivationPolicy(.regular)
+    app.setActivationPolicy(ProcessInfo.processInfo.environment["CUE_BACKGROUND"] == "1" ? .accessory : .regular)
     app.run()
 }

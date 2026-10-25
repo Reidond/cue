@@ -1,6 +1,6 @@
 // Everything a case uses (see AGENTS.md › Testing): import it from '../harness/index.ts'.
 export { assertBetween, assertContains, assertEq, assertFile, assertNotContains } from './assert.ts';
-export { afinfo, audioLength, audioSync, dialogue, speech, type Dialogue } from './audio.ts';
+export { afinfo, audioLength, audioSync, dialogue, silence, speech, type Dialogue } from './audio.ts';
 export { e2eCase } from './case.ts';
 export { CLAUDE, FIXTURES, fixture } from './config.ts';
 export {
@@ -14,5 +14,5 @@ export {
 } from './requirements.ts';
 export { fail, print, skip } from './results.ts';
 export { Cue, SPEAKER_FILES, type CalendarEvent, type ClaudeRequest } from './sandbox.ts';
-export { ocr } from './screen.ts';
+export { appWindows, ocr, type AppWindows } from './screen.ts';
 export { minutesFromNow, sleep, tomorrowAt } from './time.ts';

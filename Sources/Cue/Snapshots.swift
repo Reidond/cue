@@ -114,9 +114,10 @@ final class Snapshots {
         if method != .window, let display {
             let others: [SCWindow]
             if method == .desktop {
-                // Every other window, the desktop's icons, the Dock and the menu bar left out: the desktop picture stays.
-                let icons = Int(CGWindowLevelForKey(.desktopIconWindow))
-                others = content.windows.filter { $0.windowID != window.windowID && $0.windowLayer >= icons }
+                // Every other window above the desktop picture left out — the apps', the desktop's icons, the Dock,
+                // the menu bar, and any Cue's, which CUE_BACKGROUND keeps just above the picture: the picture stays.
+                let desktop = Int(CGWindowLevelForKey(.desktopWindow))
+                others = content.windows.filter { $0.windowID != window.windowID && $0.windowLayer > desktop }
             } else {
                 let above = (CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow], window.windowID) as? [[String: Any]] ?? [])
                     .compactMap { $0[kCGWindowNumber as String] as? CGWindowID }
