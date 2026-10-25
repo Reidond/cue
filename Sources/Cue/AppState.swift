@@ -540,7 +540,9 @@ final class AppState: ObservableObject {
             let project = recordingProject.flatMap { projects.project($0.id) } ?? activeProject
                 ?? projects.project(named: "Meetings") ?? (try? projects.create(named: "Meetings"))
             guard let project else { return }
-            let id = recordings.save(transcript, into: project, meeting: meeting, audio: audio)
+            // The language live recognition used: the bound project's, which a meeting's project may not share.
+            let spoken = activeProject?.language ?? Project.defaultLanguage
+            let id = recordings.save(transcript, into: project, meeting: meeting, audio: audio, spokenIn: spoken)
             if let id, !automatically { openRecordings(id) }
             saved(id)
         }

@@ -280,8 +280,9 @@ final class RecordingStore: ObservableObject {
     /// Writes the transcript into the project's notes right away so nothing is lost, puts the call's
     /// audio next to it (with Keep audio on), then improves the transcript and summarizes it (see
     /// `process`). A call recorded for a calendar event is named after the event and lists its attendees.
+    /// `language` is what the call was recognized in live, when it isn't the project's language.
     func save(_ transcript: CallTranscript, into project: Project, meeting: MeetingDetails? = nil,
-              audio: AudioRecorder.Recording? = nil) -> String? {
+              audio: AudioRecorder.Recording? = nil, spokenIn language: String? = nil) -> String? {
         let lexicon = project.lexicon
         let speaker = preferences.speakerName.isEmpty ? "You" : preferences.speakerName
         let names: (Channel, Int?) -> String = { channel, voice in
@@ -365,16 +366,17 @@ final class RecordingStore: ObservableObject {
         }
         progress[id] = steps
         reload()
-        Task { await process(id, transcript: transcript, in: project, names: names) }
+        Task { await process(id, transcript: transcript, in: project, language: language ?? project.language, names: names) }
         return id
     }
 
     /// The steps after the live transcript is saved, one after another: each works on what the
     /// one before left, and a step that fails leaves the note as it was for the next.
-    private func process(_ id: String, transcript live: CallTranscript, in project: Project,
+    private func process(_ id: String, transcript live: CallTranscript, in project: Project, language: String,
                          names: @escaping (Channel, Int?) -> String) async {
         var transcript = live
-        if has(.improvingTranscript, id), let improved = await improve(id, transcript: live, in: project, names: names) {
+        if has(.improvingTranscript, id),
+           let improved = await improve(id, transcript: live, in: project, language: language, names: names) {
             transcript = improved
         }
         if has(.findingSpeakers, id), let labelled = await findSpeakers(id, transcript: transcript, names: names) {
@@ -389,7 +391,7 @@ final class RecordingStore: ObservableObject {
 
     /// Whisper's second pass over each side's whole recording replaces the live transcript; on failure
     /// the live one stays. Returns the improved transcript.
-    private func improve(_ id: String, transcript live: CallTranscript, in project: Project,
+    private func improve(_ id: String, transcript live: CallTranscript, in project: Project, language: String,
                          names: @escaping (Channel, Int?) -> String) async -> CallTranscript? {
         await waitForSecondPass()
         defer { secondPassFinished() }
@@ -401,13 +403,16 @@ final class RecordingStore: ObservableObject {
         defer { secondPasses[id] = nil }
         let started = Date()
         let job = SecondPass.Job(folder: file.workingAudio, startedAt: live.startedAt, endedAt: live.endedAt,
-                                 language: project.language, prompt: project.whisperPrompt, lexicon: project.lexicon)
+                                 language: language, prompt: project.whisperPrompt, lexicon: project.lexicon)
         do {
             let result = try await SecondPass.run(job, child: child) { [weak self] done in
                 Task { @MainActor in
                     guard self?.progress[id]?.first(where: { $0.step == .improvingTranscript })?.isFinished == false else { return }
                     self?.set(.improvingTranscript, of: id, to: .running(done.formatted(.percent.precision(.fractionLength(0)))))
                 }
+            }
+            if let side = Self.sideLost(live: live, improved: result.transcript) {
+                throw ServiceError("it heard much less than live recognition on \(side)")
             }
             try writeTranscript(result.transcript, names: names, of: id)
             let took = String(format: "%.1f", Date().timeIntervalSince(started))
@@ -419,6 +424,21 @@ final class RecordingStore: ObservableObject {
             set(.improvingTranscript, of: id, to: .failed("\(error.localizedDescription). The live transcript is kept."))
             return nil
         }
+    }
+
+    /// The side on which the second pass lost more than a quarter of the words live recognition heard
+    /// (a wrong language, a cut-off run, nothing but hallucinations), if any: the live transcript is the
+    /// better one then. A good pass stays within a few percent of the live word count.
+    private static func sideLost(live: CallTranscript, improved: CallTranscript) -> String? {
+        func words(_ transcript: CallTranscript, _ channel: Channel) -> Int {
+            transcript.lines.filter { $0.channel == channel }
+                .reduce(0) { $0 + $1.text.split(whereSeparator: \.isWhitespace).count }
+        }
+        for channel in [Channel.me, .others] {
+            let before = words(live, channel), after = words(improved, channel)
+            if before >= 8 && after * 4 < before * 3 { return channel == .me ? "your side" : "the call side" }
+        }
+        return nil
     }
 
     /// Tells the voices on the call side apart in `call.wav` and gives each call-side line its voice.

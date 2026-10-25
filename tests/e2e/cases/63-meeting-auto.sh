@@ -2,6 +2,7 @@
 # With "Record automatically" a meeting is recorded without a prompt, into Meetings (created for it).
 source "$(dirname "$0")/../lib.sh"
 need_whisper
+whisper_cli_spy
 
 # The talk Cue is bound to, in English; meetings go elsewhere.
 mkdir -p "$CUE_HOME/Documents/Cue/Talk"
@@ -16,7 +17,7 @@ cue_defaults meetingAction string record
 cue_defaults autoAnswer bool false
 mic_apps us.zoom.xos
 dialogue "$FIXTURES/dialogues/meeting.txt" "$CASE_DIR/call"
-cue_launch CUE_MEETING_TICK=0.5 CUE_MIC_RELEASE=3 \
+cue_launch CUE_MEETING_TICK=0.5 CUE_MIC_RELEASE=3 CUE_WHISPER_CLI="$CASE_DIR/whisper-cli" \
     CUE_REHEARSE_PARTICIPANT="$CASE_DIR/call/call.wav" CUE_REHEARSE_ME="$CASE_DIR/call/me.wav"
 
 wait_log "📅 Recording “Product demo” into Meetings" 10
@@ -33,4 +34,8 @@ assert_contains "$notes" '^title: "Product demo"$'
 assert_contains "$notes" '^project: "Meetings"$'
 assert_contains "$notes" '^attendees: \["Mia Chen"\]$'
 assert_contains "$notes" "onboarding screens"
+# Meetings has the system language, but the call was recognized live in Talk's English: the second
+# pass listens in English too, and its transcript is the one kept.
+assert_eq "$(grep -A1 -x -- -l "$CASE_DIR/whisper-args.txt" | tail -n 1)" en "the second pass should use the live language"
+assert_contains "$(session_log)" "✅ Transcript improved"
 assert_eq "$(ls "$CUE_HOME/Documents/Cue/Talk/Notes" 2> /dev/null | wc -l | tr -d ' ')" 0 "the active project gets nothing"
