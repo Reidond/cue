@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { CLAUDE, CUE_BIN, E2E_CACHE, E2E_WORK, FAKE_CLAUDE, KEEP, REAL_SUPPORT } from './config.ts';
 import { countLines, exists, findFiles, isDirectory, lines, linesOf, matches, nonEmpty, tail, withFlags, writeExecutable } from './files.ts';
 import { exec, shellQuote, type Ran } from './process.ts';
-import { needSnapshots, needWhisperCli } from './requirements.ts';
+import { needOverlaySnapshots, needWhisperCli, needWindowSnapshots } from './requirements.ts';
 import { fail, print, Skip } from './results.ts';
 import { ocr, readImage } from './screen.ts';
 import { sleep, within } from './time.ts';
@@ -371,7 +371,7 @@ export class Cue {
      * then in `page`.
      */
     async dashboardShows(pattern: RegExp, since = 0): Promise<boolean> {
-        needSnapshots();
+        needWindowSnapshots();
         const png = this.path('cue-dashboard.png');
         if (!nonEmpty(png) || statSync(png).mtimeMs <= since) return false;
         const read = await readImage(png);
@@ -385,15 +385,19 @@ export class Cue {
      * since then reads `pattern` (one drawn before can show the page as it was a moment ago).
      */
     async dashboardPage(page: string, pattern: RegExp): Promise<void> {
-        needSnapshots();
+        needWindowSnapshots();
         const asked = Date.now();
         this.control(`page ${page}`);
         await this.waitFor(`the ${page} page to show /${pattern.source}/`, 20, () => this.dashboardShows(pattern, asked));
     }
 
-    /** Waits for CUE_SNAPSHOT to write `png`, lets the window settle a frame, and reads its text. */
+    /**
+     * Waits for CUE_SNAPSHOT to write `png`, lets the window settle a frame, and reads its text:
+     * `…-dashboard.png` and `…-settings.png` are windows, the CUE_SNAPSHOT file itself the overlay.
+     */
     async snapshotText(png: string): Promise<string> {
-        needSnapshots();
+        if (/-(dashboard|settings)\.png$/.test(png)) needWindowSnapshots();
+        else needOverlaySnapshots();
         await this.waitFor(`snapshot ${png}`, 20, () => nonEmpty(png));
         await sleep(2.5);
         return ocr(png);

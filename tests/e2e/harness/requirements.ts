@@ -25,7 +25,7 @@ export interface Capability {
     detail: string;
 }
 
-export type Capabilities = Partial<Record<'speech' | 'snapshots', Capability>>;
+export type Capabilities = Partial<Record<'speech' | 'windows' | 'overlay', Capability>>;
 
 let found: Capabilities | undefined;
 
@@ -45,10 +45,16 @@ export function needWhisper(): void {
     if (speech && !speech.ok) skip(speech.detail);
 }
 
-/** Snapshots of Cue's windows (CUE_SNAPSHOT) that Vision can read on this machine. */
-export function needSnapshots(): void {
-    const snapshots = probed('snapshots');
-    if (snapshots && !snapshots.ok) skip(snapshots.detail);
+/** Snapshots of Cue's windows (CUE_SNAPSHOT: the dashboard, Settings) that Vision can read here. */
+export function needWindowSnapshots(): void {
+    const windows = probed('windows');
+    if (windows && !windows.ok) skip(windows.detail);
+}
+
+/** A snapshot of the overlay that Vision can read here (it is drawn differently: it is all glass). */
+export function needOverlaySnapshots(): void {
+    const overlay = probed('overlay');
+    if (overlay && !overlay.ok) skip(overlay.detail);
 }
 
 /** The second pass's whisper-cli; returns its path. */

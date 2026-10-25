@@ -1,7 +1,7 @@
 import { copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-    assertContains, assertEq, assertNotContains, countLines, e2eCase, fixture, isDirectory, ocr,
+    assertContains, assertEq, assertNotContains, countLines, e2eCase, fixture, isDirectory, needOverlaySnapshots, ocr,
 } from '../harness/index.ts';
 
 e2eCase("The dashboard shows Home, a project's page, its prepared answers and its notes.", async (cue) => {
@@ -46,5 +46,6 @@ e2eCase("The dashboard shows Home, a project's page, its prepared answers and it
     // The overlay names the project it answers from.
     cue.control('start Bee talk');
     await cue.waitLog(/Materials for Bee talk/, 30);
+    needOverlaySnapshots();
     await cue.waitFor('the overlay to name the project', 10, async () => (await ocr(png)).includes('Bee talk'));
 });
