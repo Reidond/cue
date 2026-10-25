@@ -240,18 +240,29 @@ When the call app has let go of the microphone for a minute, Cue stops,
 writes the notes and tells you in a notification; click it to open them. You
 can also record a call in progress from its row in Upcoming.
 
+## Releases
+
+Every change merged into `main` is built and published on the
+[Releases](https://github.com/Reidond/cue/releases) page with a changelog. The
+builds are signed ad hoc, not notarized: the first time, right-click Cue.app ›
+**Open**.
+
 ## Testing
 
 Cue is tested end to end only — no unit tests (see `AGENTS.md`). The cases in
 `tests/e2e/cases/` run the built app in a sandbox (`CUE_HOME`), feed it speech
 made with macOS voices, and check the notes, audio, session log and rendered
-windows:
+windows. They are TypeScript, run by Node 26 or later as they are (Node strips
+the types; there is nothing to build or install to run them):
 
 ```bash
-tests/e2e/run.sh                 # build, then run every case
-tests/e2e/run.sh --no-build 1    # only cases whose name starts with 1
-tests/e2e/run.sh --real-claude   # use the real Claude Code instead of the stand-in
+node tests/e2e/run.ts                 # build, then run every case
+node tests/e2e/run.ts --no-build 1    # only cases whose name starts with 1
+node tests/e2e/run.ts --real-claude   # use the real Claude Code instead of the stand-in
+cd tests/e2e && npm ci && npm run typecheck   # type-check the cases and the harness
 ```
+
+`npm test` in `tests/e2e` is `node run.ts`.
 
 The same hooks work by hand:
 
@@ -270,10 +281,25 @@ CUE_NO_LIVE_AUDIO=1 CUE_REHEARSE_RECORD=1 CUE_REHEARSE_PARTICIPANT=call.wav CUE_
 build/Cue.app/Contents/MacOS/Cue --render notes.md notes.png
 ```
 
-`CUE_SNAPSHOT=/tmp/cue.png` renders the windows to PNGs every 2 s — the overlay
+`CUE_SNAPSHOT=/tmp/cue.png` writes the windows to PNGs every 2 s — the overlay
 to `cue.png`, the dashboard to `cue-dashboard.png`, Settings to
-`cue-settings.png` (layout and text only, in the light appearance — the glass is
-composited by the window server, so the overlay is rendered from its view).
+`cue-settings.png`. With Screen Recording access they are the windows' real
+pixels, captured with ScreenCaptureKit — Liquid Glass, materials, selection and
+all, in the system appearance (`CUE_APPEARANCE=light` or `dark` picks one) — each
+window over the desktop picture alone, so nothing else covers it or shows
+through. `CUE_SNAPSHOT_METHOD=window` captures the window alone (the overlay's
+glass then has nothing behind it), `display` with whatever is on screen behind
+it, and `offscreen` forces the fallback used without the permission (on CI) and
+for a window that isn't on screen: the app draws it itself, layout and text only,
+in the light appearance. The session log says which (`📸 Snapshots: …`). To look
+at the design, launch with `CUE_HOME` and `CUE_SNAPSHOT`, show a page with
+`CUE_CONTROL`, and open the PNGs; then the same with the other appearance:
+
+```bash
+CUE_HOME=$(mktemp -d) CUE_NO_LIVE_AUDIO=1 CUE_APPEARANCE=dark CUE_SNAPSHOT=/tmp/cue.png \
+  build/Cue.app/Contents/MacOS/Cue    # /tmp/cue-dashboard.png; /tmp/cue.png is captured once Start Cue shows it
+```
+
 `CUE_HOME=dir` keeps all files and settings in `dir`, `CUE_CLAUDE_BIN` swaps in
 another `claude` and `CUE_WHISPER_CLI` another `whisper-cli` for the second
 pass, `CUE_SPEAKER_MODELS=dir` keeps the speaker models in `dir`,
@@ -287,5 +313,6 @@ session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` read
 calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs using the
 microphone from a text file, both again on every check; `CUE_MEETING_TICK` and
 `CUE_MIC_RELEASE` shorten the 5 s check and the 60 s wait after a call app lets
-go of the microphone. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay.
+go of the microphone. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay
+(snapshots always can).
 `swift scripts/make_icon.swift` regenerates the app icon.

@@ -1,0 +1,93 @@
+# Builds the app and runs the end-to-end suite on every pull request (and only there).
+name: CI
+
+on:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: SwiftPM cache
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Build
+        run: |
+          set -o pipefail
+          ./scripts/build.sh 2>&1 | tee build.log
+          # New code must build warning-free (dependencies' warnings are theirs).
+          if grep -E "Sources/Cue/.*: warning:" build.log; then echo "::error::Cue has build warnings"; exit 1; fi
+
+      - name: Install whisper.cpp
+        run: brew install whisper-cpp
+
+      - name: Speech model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Application Support/Cue/models/ggml-large-v3-turbo.bin
+          key: whisper-ggml-large-v3-turbo-1
+
+      - name: Download the speech model
+        run: |
+          model="$HOME/Library/Application Support/Cue/models/ggml-large-v3-turbo.bin"
+          if [[ ! -s $model ]]; then
+            mkdir -p "$(dirname "$model")"
+            curl -fL --retry 3 -o "$model" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: latest
+          cache: npm
+          cache-dependency-path: tests/e2e/package-lock.json
+
+      - name: Type-check the end-to-end tests
+        working-directory: tests/e2e
+        run: |
+          npm ci
+          npm run typecheck
+
+      - name: End-to-end tests
+        env:
+          E2E_WORK: ${{ runner.temp }}/e2e
+        run: node tests/e2e/run.ts --no-build
+
+      - name: Keep the e2e logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          # Logs, session logs and snapshots only: each sandbox links the 1.6 GB speech model.
+          path: |
+            ${{ runner.temp }}/e2e/*.log
+            ${{ runner.temp }}/e2e/*/cue.out
+            ${{ runner.temp }}/e2e/*/*.txt
+            ${{ runner.temp }}/e2e/*/*.png
+            ${{ runner.temp }}/e2e/*/home/Application Support/Cue/sessions/*.md
+          if-no-files-found: ignore
+
+      - name: Keep the app
+        if: always()
+        run: if [[ -d build/Cue.app ]]; then ditto -c -k --keepParent build/Cue.app Cue.zip; fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Cue
+          path: Cue.zip
+          if-no-files-found: ignore

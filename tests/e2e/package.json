@@ -1,0 +1,17 @@
+{
+  "name": "cue-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Cue's end-to-end cases: they run the built app against real files, audio and processes.",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "test": "node run.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}
