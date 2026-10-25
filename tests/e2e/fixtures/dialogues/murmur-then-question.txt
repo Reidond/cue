@@ -1,0 +1,10 @@
+# The speaker murmurs over a participant's remark while the judge is still reading it; then the
+# participant asks a question and goes on to explain it after a short breath.
+call | Daniel | Let me think about that for a second.
+pause | 2
+me   | Samantha | Mm-hm.
+pause | 4
+call | Daniel | How many hives did you study?
+pause | 1.2
+call | Daniel | I am asking because we had a lot of trouble counting ours on the rooftops in the city last summer.
+pause | 4

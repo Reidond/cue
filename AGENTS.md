@@ -24,7 +24,7 @@ This rule is strict and has no exceptions.
     deterministic (`FAKE_CLAUDE_ANSWER` sets its answer, `FAKE_CLAUDE_ANSWERS`
     one per question matching a pattern; as the question judge it finds the
     sentences ending in "?", or replies as `FAKE_CLAUDE_JUDGEMENTS` says, and
-    `FAKE_CLAUDE_JUDGE_FAILS=1` makes it fail). Cases that judge Claude's actual writing run against the
+    `FAKE_CLAUDE_JUDGE_FAILS=1` makes it fail, `FAKE_CLAUDE_JUDGE_DELAY` slow). Cases that judge Claude's actual writing run against the
     real CLI with `node tests/e2e/run.ts --real-claude`;
   - system sources that need the user's permission or a live person (the
     microphone, call audio, the calendar database, which apps use the

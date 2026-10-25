@@ -1,0 +1,5 @@
+# The speaker takes a question from someone in the room, heard on the speaker's microphone.
+call | Daniel | Let us take one from the room now.
+pause | 1
+me   | Karen | How many hives did you study?
+pause | 4

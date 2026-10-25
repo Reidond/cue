@@ -12,7 +12,8 @@
 // FAKE_CLAUDE_SUMMARY_DELAY (seconds) makes the summary take that long, like the real one.
 // The judge finds the sentences of what was just said that end in "?", unless FAKE_CLAUDE_JUDGEMENTS
 // (JSON `{"pattern": "reply"}`, the first pattern matching what was just said wins) gives its reply;
-// FAKE_CLAUDE_JUDGE_FAILS=1 makes it fail every request, its warm-up too.
+// FAKE_CLAUDE_JUDGE_FAILS=1 makes it fail every request, its warm-up too, and FAKE_CLAUDE_JUDGE_DELAY
+// (seconds) makes each verdict take that long.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -107,8 +108,12 @@ if (valueAfter('--input-format') === 'stream-json') {
             record('judge', content);
             if (env['FAKE_CLAUDE_JUDGE_FAILS'] === '1') {
                 emit({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'The judge failed' });
+            } else if (content.startsWith('Connection check')) {
+                reply('—');
             } else {
-                reply(content.startsWith('Connection check') ? '—' : judgement(content));
+                const delay = Number(env['FAKE_CLAUDE_JUDGE_DELAY']);
+                if (delay > 0) await sleep(delay * 1000);
+                reply(judgement(content));
             }
             continue;
         }

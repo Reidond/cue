@@ -30,6 +30,8 @@ final class QuestionDetector {
     private var questions: [String]?
     /// When the participants last stopped talking, while they're quiet.
     private var quietSince: Date?
+    /// When the participants last started talking.
+    private var lastOnset = Date.distantPast
     /// The presenter started answering before the verdict came.
     private var fireWhenJudged = false
     private var lastAdded = Date.distantPast
@@ -61,14 +63,19 @@ final class QuestionDetector {
 
     /// Participants went quiet (also after a noise blip that produced no text).
     func participantsStopped(speechEnded: Date) {
+        // They may have started again while this was being transcribed.
+        guard lastOnset < speechEnded else { return }
         quietSince = speechEnded
         schedule()
     }
 
     /// Participants started talking again: the question may go on.
     func participantsSpeaking() {
+        lastOnset = Date()
         timer?.invalidate()
         quietSince = nil
+        // They go on, so the presenter's word over what they said before wasn't an answer.
+        fireWhenJudged = false
     }
 
     /// The presenter started talking, so the question is over.
@@ -87,7 +94,9 @@ final class QuestionDetector {
 
     private func judged(_ found: [String]) {
         questions = found
-        if fireWhenJudged { fire() } else { schedule() }
+        let answering = fireWhenJudged
+        fireWhenJudged = false
+        if answering, !found.isEmpty { fire() } else { schedule() }
     }
 
     private func schedule() {

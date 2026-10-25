@@ -503,7 +503,7 @@ final class AppState: ObservableObject {
         log.write("**[\(promptLabel(channel))]** \(text)", at: speechEnded)
         // Questions are only looked for while Cue runs, as only then the overlay shows them.
         if cueRunning, channel == .others || preferences.micQuestions {
-            detector.add(text, from: promptLabel(channel), speechStarted: speechStarted, speechEnded: speechEnded)
+            detector.add(text, from: judgeLabel(channel), speechStarted: speechStarted, speechEnded: speechEnded)
         }
     }
 
@@ -656,13 +656,19 @@ final class AppState: ObservableObject {
         ask(questions.isEmpty ? [speech] : questions, force: true)
     }
 
+    /// Who said a line, for the judge. Listening for questions from the room, the microphone hears
+    /// the people around the speaker too, so it can't be labelled as the speaker.
+    private func judgeLabel(_ channel: Channel) -> String {
+        channel == .me && preferences.micQuestions ? "Room" : promptLabel(channel)
+    }
+
     /// What the judge reads: the last two minutes for context, then what was just said.
     private func judgeMessage(_ speech: String) -> String {
         let said = Set(detector.buffer.map(\.started))
         let context = utterances
             .filter { Date().timeIntervalSince($0.time) < 120 && !said.contains($0.started) }
             .suffix(10)
-            .map { "[\(promptLabel($0.channel))] \($0.text)" }
+            .map { "[\(judgeLabel($0.channel))] \($0.text)" }
             .joined(separator: "\n")
         return (context.isEmpty ? "" : "Said earlier (context):\n\(context.suffix(2000))\n\n") + "Just said:\n\(speech)"
     }
