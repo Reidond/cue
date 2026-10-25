@@ -31,10 +31,10 @@ struct MarkdownView: View {
     }
 }
 
-/// Selectable text, except in snapshot test runs: offscreen rendering can't draw it.
+/// Selectable text, except when snapshots are drawn offscreen, which can't draw it.
 private struct Selectable: ViewModifier {
     func body(content: Content) -> some View {
-        if ProcessInfo.processInfo.environment["CUE_SNAPSHOT"] == nil {
+        if !Snapshots.drawn {
             content.textSelection(.enabled)
         } else {
             content

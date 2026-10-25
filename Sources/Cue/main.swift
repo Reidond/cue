@@ -33,6 +33,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             source.resume()
             signalSources.append(source)
         }
+        let environment = ProcessInfo.processInfo.environment
+        // Testing aid: CUE_APPEARANCE=light|dark instead of the system appearance.
+        if let look = environment["CUE_APPEARANCE"] {
+            NSApp.appearance = NSAppearance(named: look == "dark" ? .darkAqua : .aqua)
+        }
 
         panel = OverlayPanel(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 640),
@@ -46,8 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.hidesOnDeactivate = false
-        // Hidden from screen sharing and screenshots (CUE_ALLOW_CAPTURE=1 shows it, for testing).
-        panel.sharingType = ProcessInfo.processInfo.environment["CUE_ALLOW_CAPTURE"] == "1" ? .readOnly : .none
+        // Hidden from screen sharing and screenshots (CUE_ALLOW_CAPTURE=1 shows it, and so do snapshots, for testing).
+        panel.sharingType = environment["CUE_ALLOW_CAPTURE"] == "1" || environment["CUE_SNAPSHOT"] != nil ? .readOnly : .none
         panel.minSize = NSSize(width: 400, height: 360)
         let hosting = NSHostingView(rootView: OverlayView(state: state, preferences: preferences))
         hosting.sizingOptions = []
@@ -68,7 +73,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         state.start()
         // The dashboard opens first; Start Cue shows the overlay. A rehearsal is a run-through
         // of the talk, so it shows the overlay straight away.
-        let environment = ProcessInfo.processInfo.environment
         showDashboard()
         if environment["CUE_REHEARSE_PARTICIPANT"] != nil { panel.orderFrontRegardless() }
         if environment["CUE_SHOW_SETTINGS"] == "1" { showSettings() }
@@ -251,81 +255,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.mainMenu = main
     }
 
-    /// Testing aid: renders the overlay (and the dashboard and Settings, when open) to PNGs every 2 s.
-    /// Offscreen rendering shows layout and text but not the glass, which the window server composites.
+    /// Testing aid: CUE_SNAPSHOT=PNG writes the overlay to PNG every 2 s, and the dashboard and
+    /// Settings, when open, to …-dashboard.png / …-settings.png (see `Snapshots`).
     private func startSnapshots(to path: String) {
-        // Glass and scroll-edge effects cache as white: in the light appearance text stays dark and readable on them.
-        NSApp.appearance = NSAppearance(named: .aqua)
-        /// A window with its title bar, on an opaque background (the window server draws the real one).
-        func write(_ window: NSWindow?, to path: String) {
-            guard let root = window?.contentView?.superview,
-                  let canvas = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(root.bounds.width * 2), pixelsHigh: Int(root.bounds.height * 2),
-                                                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
-            else { return }
-            canvas.size = root.bounds.size
-            NSGraphicsContext.saveGraphicsState()
-            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: canvas)
-            func draw(_ view: NSView, background: Bool) {
-                var rect = view.convert(view.bounds, to: root)
-                if root.isFlipped { rect.origin.y = root.bounds.height - rect.maxY }
-                if background {
-                    view.effectiveAppearance.performAsCurrentDrawingAppearance {
-                        NSColor.windowBackgroundColor.setFill()
-                        rect.fill()
-                    }
-                }
-                guard !rect.isEmpty, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
-                view.cacheDisplay(in: view.bounds, to: rep)
-                rep.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
-            }
-            draw(root, background: true)
-            // Glass (the sidebar, toolbar items) caches empty: draw what's inside it on top, and
-            // the sidebar's rows one by one, which the list doesn't draw into the cache either.
-            func glass(in view: NSView) {
-                for subview in view.subviews where !subview.isHidden {
-                    if let effect = subview as? NSGlassEffectView, let content = effect.contentView {
-                        draw(content, background: true)
-                    }
-                    if let table = subview as? NSTableView {
-                        for row in 0..<table.numberOfRows {
-                            guard let rowView = table.rowView(atRow: row, makeIfNecessary: false) else { continue }
-                            // While Cue is the active app the selected row is a material that caches as a
-                            // solid bar, hiding its text: draw the row unselected.
-                            let selected = rowView.isSelected
-                            rowView.isSelected = false
-                            rowView.layoutSubtreeIfNeeded()
-                            draw(rowView, background: false)
-                            rowView.isSelected = selected
-                        }
-                    }
-                    glass(in: subview)
-                }
-            }
-            glass(in: root)
-            NSGraphicsContext.restoreGraphicsState()
-            try? canvas.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path), options: .atomic)
-        }
-        // The overlay is all glass, which caches as a blank window: render its view instead.
-        func writeOverlay(_ delegate: AppDelegate, to path: String) {
-            let size = delegate.panel.frame.size
-            let renderer = ImageRenderer(content: OverlayView(state: delegate.state, preferences: delegate.preferences)
-                .frame(width: size.width, height: size.height))
-            renderer.scale = 2
-            if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
-               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
-                try? png.write(to: URL(fileURLWithPath: path))
-            }
-        }
+        let snapshots = Snapshots(log: state.log)
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                if let self { writeOverlay(self, to: path) }
-                if self?.settingsWindow?.isVisible == true {
-                    write(self?.settingsWindow, to: path.replacingOccurrences(of: ".png", with: "-settings.png"))
+                guard let self else { return }
+                // The overlay is all glass, which caches as a blank window: drawn by the app, it is its view rendered.
+                let state = self.state, preferences = self.preferences, size = self.panel.frame.size
+                var targets = [Snapshots.Target(name: "Overlay", window: self.panel, path: path) {
+                    let renderer = ImageRenderer(content: OverlayView(state: state, preferences: preferences).frame(width: size.width, height: size.height))
+                    renderer.scale = 2
+                    return renderer.cgImage
+                }]
+                for (name, window, suffix) in [("Settings", self.settingsWindow, "-settings.png"), ("Dashboard", self.dashboardWindow, "-dashboard.png")] {
+                    guard let window, window.isVisible else { continue }
+                    targets.append(Snapshots.Target(name: name, window: window, path: path.replacingOccurrences(of: ".png", with: suffix)) {
+                        Snapshots.draw(window)
+                    })
                 }
-                if self?.dashboardWindow?.isVisible == true {
-                    write(self?.dashboardWindow, to: path.replacingOccurrences(of: ".png", with: "-dashboard.png"))
-                }
+                snapshots.take(targets)
             }
         }
     }

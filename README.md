@@ -277,10 +277,25 @@ CUE_NO_LIVE_AUDIO=1 CUE_REHEARSE_RECORD=1 CUE_REHEARSE_PARTICIPANT=call.wav CUE_
 build/Cue.app/Contents/MacOS/Cue --render notes.md notes.png
 ```
 
-`CUE_SNAPSHOT=/tmp/cue.png` renders the windows to PNGs every 2 s — the overlay
+`CUE_SNAPSHOT=/tmp/cue.png` writes the windows to PNGs every 2 s — the overlay
 to `cue.png`, the dashboard to `cue-dashboard.png`, Settings to
-`cue-settings.png` (layout and text only, in the light appearance — the glass is
-composited by the window server, so the overlay is rendered from its view).
+`cue-settings.png`. With Screen Recording access they are the windows' real
+pixels, captured with ScreenCaptureKit — Liquid Glass, materials, selection and
+all, in the system appearance (`CUE_APPEARANCE=light` or `dark` picks one) — each
+window over the desktop picture alone, so nothing else covers it or shows
+through. `CUE_SNAPSHOT_METHOD=window` captures the window alone (the overlay's
+glass then has nothing behind it), `display` with whatever is on screen behind
+it, and `offscreen` forces the fallback used without the permission (on CI) and
+for a window that isn't on screen: the app draws it itself, layout and text only,
+in the light appearance. The session log says which (`📸 Snapshots: …`). To look
+at the design, launch with `CUE_HOME` and `CUE_SNAPSHOT`, show a page with
+`CUE_CONTROL`, and open the PNGs; then the same with the other appearance:
+
+```bash
+CUE_HOME=$(mktemp -d) CUE_NO_LIVE_AUDIO=1 CUE_APPEARANCE=dark CUE_SNAPSHOT=/tmp/cue.png \
+  build/Cue.app/Contents/MacOS/Cue    # /tmp/cue-dashboard.png; /tmp/cue.png is captured once Start Cue shows it
+```
+
 `CUE_HOME=dir` keeps all files and settings in `dir`, `CUE_CLAUDE_BIN` swaps in
 another `claude` and `CUE_WHISPER_CLI` another `whisper-cli` for the second
 pass, `CUE_SPEAKER_MODELS=dir` keeps the speaker models in `dir`,
@@ -294,5 +309,6 @@ session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` read
 calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs using the
 microphone from a text file, both again on every check; `CUE_MEETING_TICK` and
 `CUE_MIC_RELEASE` shorten the 5 s check and the 60 s wait after a call app lets
-go of the microphone. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay.
+go of the microphone. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay
+(snapshots always can).
 `swift scripts/make_icon.swift` regenerates the app icon.

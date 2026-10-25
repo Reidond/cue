@@ -91,7 +91,9 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_NO_LIVE_AUDIO=1` | Don't open the microphone or call audio. |
 | `CUE_REHEARSE_PARTICIPANT=wav` / `CUE_REHEARSE_ME=wav` | Play a file as the call / as your microphone, in real time; a recording gets its audio too (digital silence on the call side is left out, as ScreenCaptureKit delivers nothing while the Mac is silent). |
 | `CUE_REHEARSE_RECORD=1` | Record the rehearsal and write its notes. |
-| `CUE_SNAPSHOT=png` | Render the overlay to `png` every 2 s, and the dashboard and Settings, when open, to `…-dashboard.png` / `…-settings.png` (whole window, light appearance). |
+| `CUE_SNAPSHOT=png` | Every 2 s, the overlay to `png`, and the dashboard and Settings, when open, to `…-dashboard.png` / `…-settings.png` (whole window, at the display's scale). With Screen Recording access these are the windows' real pixels from ScreenCaptureKit — glass, materials, selection — in the system appearance; without it (CI), or for a window that isn't on screen (the overlay before Start Cue), the app draws the window offscreen instead (layout and text only, light appearance). The session log says which: `📸 Snapshots: window capture (…), in the dark appearance` or `📸 Snapshots: offscreen, … — reason`, and `📸 Overlay: …` when one window differs. The overlay is capturable while this is set. |
+| `CUE_SNAPSHOT_METHOD=m` | How `CUE_SNAPSHOT` takes them: `desktop` (the default: each window over the desktop picture alone, so its glass refracts real pixels yet no other window covers it or shows through), `window` (the window alone: the overlay's glass over nothing), `display` (what's on screen behind the window now, other apps included, minus whatever is in front of it) or `offscreen` (the fallback, forced). |
+| `CUE_APPEARANCE=light\|dark` | Use this appearance instead of the system's. |
 | `CUE_PROJECT=name` | Make this project active at launch, creating it if there is none by that name. |
 | `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `download speakers` (Download on Home's Speaker models row). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
 | `CUE_CALENDAR_EVENTS=file.json` | Read the calendar from this file instead of EventKit (no permission asked), again on every check: a JSON array of `{title, start, end}` (ISO 8601) with optional `id`, `series` (shared by a recurring event's occurrences), `calendar` (name), `url`, `location`, `notes`, `attendees` (names), `recurring`. |
@@ -99,6 +101,21 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_MEETING_TICK=s` / `CUE_MIC_RELEASE=s` | Check for calls every `s` seconds instead of 5; stop a call's recording once the call app has been off the microphone for `s` seconds instead of 60. |
 | `CUE_ALLOW_CAPTURE=1` | Let screenshots see the overlay. |
 | `CUE_SHOW_SETTINGS=1` | Open Settings at launch. |
+
+To look at a design you changed, run the app in a sandbox with snapshots on, show the page,
+and read the PNGs as images — then the same in the other appearance:
+
+```bash
+home=$(mktemp -d)
+CUE_HOME=$home CUE_NO_LIVE_AUDIO=1 CUE_SHOW_SETTINGS=1 CUE_APPEARANCE=dark \
+  CUE_SNAPSHOT=$home/cue.png CUE_CONTROL=$home/control build/Cue.app/Contents/MacOS/Cue & pid=$!
+sleep 3; echo "new Bee talk" >> "$home/control"   # any CUE_CONTROL line: `page home`, `start NAME`, …
+sleep 5; ls "$home"/*.png                         # cue.png (overlay), cue-dashboard.png, cue-settings.png
+grep 📸 "$home/Application Support/Cue/sessions/"*.md; kill $pid  # then CUE_APPEARANCE=light
+```
+
+A case keeps its sandbox, PNGs included, with `tests/e2e/run.sh --keep PREFIX`. Never commit
+snapshots or put them anywhere in the repository.
 
 The session log (`Application Support/Cue/sessions/*.md`) is the app's
 progress record and what cases wait on: keep writing a line for every step a
