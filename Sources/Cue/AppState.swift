@@ -444,11 +444,18 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Deepgram turned a stream down after starting fine (a key revoked, no credit left).
-    private func speechProblem(_ problem: String) {
-        guard preferences.speechProvider == .deepgram, speech.ok || speech.detail != problem else { return }
-        speech = ServiceStatus(ok: false, detail: problem)
-        log.write("⚠︎ Speech recognition unavailable: \(problem)")
+    /// A Deepgram stream failed after starting fine (a key revoked, no credit left, the connection lost), or,
+    /// with nil, one answered again after that.
+    private func speechProblem(_ problem: String?) {
+        guard preferences.speechProvider == .deepgram else { return }
+        if let problem {
+            guard speech.ok || speech.detail != problem else { return }
+            speech = ServiceStatus(ok: false, detail: problem)
+            log.write("⚠︎ Speech recognition unavailable: \(problem)")
+        } else if !speech.ok {
+            speech = ServiceStatus(ok: true, detail: "Speech recognition ready")
+            log.write("🗣 Speech recognition ready again: Deepgram")
+        }
     }
 
     private func startAudio() {

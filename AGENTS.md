@@ -28,17 +28,19 @@ This rule is strict and has no exceptions.
     real CLI with `node tests/e2e/run.ts --real-claude`;
   - the paid cloud providers of Settings › Providers: `harness/fake-providers.ts`
     serves the Anthropic Messages API (replying as the fake claude does;
-    `FAKE_ANTHROPIC_OVERLOADED=N` answers the judge's first N requests with a 529) and
+    `FAKE_ANTHROPIC_OVERLOADED=N` answers the judge's first N requests with a 529,
+    `FAKE_ANTHROPIC_CUT=N` breaks off the first N answers partway) and
     Deepgram (a live WebSocket stream per utterance, answered with the next line
-    of `FAKE_DEEPGRAM_LIVE` or "Utterance N."; a recorded file, answered with one
-    utterance per stretch of speech) from the case's own process, through
+    of `FAKE_DEEPGRAM_LIVE` or "Utterance N.", `FAKE_DEEPGRAM_DROP=N` dropping the
+    Nth; a recorded file, answered with one utterance per stretch of speech) from
+    the case's own process, through
     `CUE_ANTHROPIC_URL` and `CUE_DEEPGRAM_URL`, and takes only the keys in
     `FAKE_KEYS`. `--real-anthropic` and `--real-deepgram` use the real services
     instead, with keys the runner reads from the login keychain (items
     `Cue e2e Anthropic API key` and `Cue e2e Deepgram API key`, added with
     `security add-generic-password -a "$USER" -s "…" -w`): never put a real key
     in a case, a fixture, the control file or the chat. A recording of a real
-    call (someone's conversation) never goes into the repository either: case 78
+    call (someone's conversation) never goes into the repository either: case 84
     reads one from `E2E_REAL_CALL=path` (any recording macOS can read, a screen
     recording's `.mov` too) and skips without it;
   - system sources that need the user's permission or a live person (the
@@ -75,7 +77,7 @@ itself: no build step, no transpiler, no runtime packages.
 node tests/e2e/run.ts                  # build the app, then run every case
 node tests/e2e/run.ts --no-build 4 5   # the existing build; cases whose name starts with 4 or 5
 node tests/e2e/run.ts --real-claude 45 # the real claude CLI instead of the stand-in
-node tests/e2e/run.ts --real-anthropic --real-deepgram 7   # the real cloud providers, keys from the keychain
+node tests/e2e/run.ts --real-anthropic --real-deepgram 7 8   # the real cloud providers, keys from the keychain
 node tests/e2e/run.ts --keep           # keep every sandbox (a failed case always keeps its own)
 cd tests/e2e && npm ci && npm run typecheck   # tsc --noEmit; run it before you commit
 ```
@@ -95,7 +97,7 @@ windows stay behind all others, where snapshots still capture them.
 Each case is a TypeScript file, `tests/e2e/cases/NN-name.test.ts`, numbered
 by feature area (`0x` CLI and launch, `1x` prompter and recording, `2x`
 projects and dashboard, `3x` call audio, `4x` second-pass transcript, `5x`
-speakers, `6x` calendar, `7x` cloud providers). It declares one test, whose title says the
+speakers, `6x` calendar, `7x` the Anthropic API and Settings › Providers, `8x` Deepgram). It declares one test, whose title says the
 behaviour it checks:
 
 ```ts
@@ -229,7 +231,8 @@ for every notification, `⚠︎ Nothing was recorded: …` for every alert,
 `🧐 Question judge ready: Claude Haiku` or
 `⚠︎ Question judge unavailable (…) — going by question marks`,
 `🤖 Claude: PROVIDER` and `🗣 Speech recognition: PROVIDER` at launch and on
-every change, `⚠︎ Speech recognition unavailable: …`,
+every change, `⚠︎ Speech recognition unavailable: …` and
+`🗣 Speech recognition ready again: Deepgram`,
 `🔑 Anthropic API key saved in the keychain` or `… removed` — never a key — and so
 on), and never rename existing lines without
 updating the cases.

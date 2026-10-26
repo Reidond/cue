@@ -300,7 +300,7 @@ the types; there is nothing to build or install to run them):
 node tests/e2e/run.ts                 # build, then run every case
 node tests/e2e/run.ts --no-build 1    # only cases whose name starts with 1
 node tests/e2e/run.ts --real-claude   # use the real Claude Code instead of the stand-in
-node tests/e2e/run.ts --real-anthropic --real-deepgram 7   # the real cloud providers
+node tests/e2e/run.ts --real-anthropic --real-deepgram 7 8   # the real cloud providers
 cd tests/e2e && npm ci && npm run typecheck   # type-check the cases and the harness
 ```
 

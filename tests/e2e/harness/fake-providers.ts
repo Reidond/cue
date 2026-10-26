@@ -11,12 +11,15 @@
 //                  judge-system), a question is `ask` or `judge`, a transcript `summary-system` and
 //                  `summary-input`; each request also as `anthropic-request`. FAKE_CLAUDE_JUDGE_FAILS=1
 //                  fails every judge request with a 500, FAKE_ANTHROPIC_OVERLOADED=N the first N judge
-//                  requests with a 529 (overloaded), FAKE_CLAUDE_JUDGE_DELAY and
+//                  requests with a 529 (overloaded), FAKE_ANTHROPIC_CUT=N breaks off the first N streamed
+//                  answers after their first words (no `message_stop`), FAKE_CLAUDE_JUDGE_DELAY and
 //                  FAKE_CLAUDE_SUMMARY_DELAY (seconds) slow them down.
 //   /v1/listen     WebSocket: a live stream, one per utterance. Every audio message gets an interim result,
 //                  CloseStream the final one, then the socket closes. The text is the next line of
-//                  FAKE_DEEPGRAM_LIVE (a JSON array, one line per stream, in the order they open), or
-//                  "Utterance N." (too short to pass for an echo of the other side). Noted as `deepgram-live`.
+//                  FAKE_DEEPGRAM_LIVE (a JSON array, one line per stream that gets audio, in that order), or
+//                  "Utterance N." (too short to pass for an echo of the other side); FAKE_DEEPGRAM_DROP=N
+//                  drops the Nth such stream at its first audio, as a lost connection would. Noted as
+//                  `deepgram-live`.
 //   /v1/listen     POST: a recorded file. One utterance per stretch of speech in it, "Second pass by Deepgram,
 //                  part N.", at its times. Noted as `deepgram-file`.
 //   /v1/projects   GET: the key check.
@@ -58,6 +61,8 @@ export interface DeepgramRequest {
     closed?: boolean;
     /** Live: seconds from the stream opening to its first audio. */
     waited?: number;
+    /** Live: dropped on purpose (FAKE_DEEPGRAM_DROP). */
+    dropped?: boolean;
     /** File: its Content-Type. */
     contentType?: string;
 }
@@ -198,7 +203,7 @@ function frames(socket: Duplex, head: Buffer, onMessage: (opcode: number, payloa
 
 /** Starts the stand-ins; `log` is where they note requests, `env` the environment of the Cue running. */
 export async function startFakeProviders(log: string, env: () => Env): Promise<FakeProviders> {
-    let streams = 0, judged = 0;
+    let streams = 0, judged = 0, answered = 0;
     const sockets = new Set<Socket | Duplex>();
 
     async function anthropic(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -253,6 +258,11 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         const event = (type: string, data: object): boolean => response.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
         event('message_start', { message: { type: 'message', role: 'assistant', model: noted.model, content: [], stop_reason: null } });
         event('content_block_start', { index: 0, content_block: { type: 'text', text: '' } });
+        if (kind === 'answer' && ++answered <= Number(environment['FAKE_ANTHROPIC_CUT'] ?? 0)) {
+            event('content_block_delta', { index: 0, delta: { type: 'text_delta', text: pieces(text)[0] ?? '' } });
+            response.end();
+            return;
+        }
         for (const piece of pieces(text)) event('content_block_delta', { index: 0, delta: { type: 'text_delta', text: piece } });
         event('content_block_stop', { index: 0 });
         event('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: text.split(' ').length } });
@@ -287,12 +297,12 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         }
         const accept = createHash('sha1').update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
         socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
-        const lines = JSON.parse(env()['FAKE_DEEPGRAM_LIVE'] ?? '[]') as string[];
-        const line = lines[streams++];
+        const environment = env();
+        const lines = JSON.parse(environment['FAKE_DEEPGRAM_LIVE'] ?? '[]') as string[];
         const rate = Number(url.searchParams.get('sample_rate') ?? 16000);
-        let bytes = 0, messages = 0, done = false, waited: number | undefined;
+        let bytes = 0, messages = 0, done = false, waited: number | undefined, number = 0;
         const opened = performance.now();
-        const number = streams, said = (): string => line ?? `Utterance ${number}.`;
+        const said = (): string => lines[number - 1] ?? `Utterance ${number}.`;
         const results = (final: boolean): void => {
             const words = said().split(' '), text = final ? said() : words.slice(0, Math.min(words.length, messages)).join(' ');
             const result = {
@@ -301,16 +311,24 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
             };
             socket.write(frame(1, Buffer.from(JSON.stringify(result))));
         };
-        const finish = (closed: boolean): void => {
+        const finish = (closed: boolean, dropped = false): void => {
             if (done) return;
             done = true;
             record(log, 'deepgram-live', JSON.stringify({
-                ...queryOf(url), key, seconds: bytes / 2 / rate, messages, closed, waited,
+                ...queryOf(url), key, seconds: bytes / 2 / rate, messages, closed, waited, dropped,
             } satisfies DeepgramRequest));
         };
         frames(socket, head, (opcode, payload) => {
             if (opcode === 2) {
-                waited ??= (performance.now() - opened) / 1000;
+                if (waited === undefined) {
+                    waited = (performance.now() - opened) / 1000;
+                    number = ++streams;
+                    if (number === Number(environment['FAKE_DEEPGRAM_DROP'] ?? 0)) {
+                        finish(false, true);
+                        socket.destroy();
+                        return;
+                    }
+                }
                 bytes += payload.length;
                 messages++;
                 results(false);

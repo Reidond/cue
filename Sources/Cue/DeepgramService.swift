@@ -124,6 +124,8 @@ actor DeepgramService: SpeechRecognizer {
         var interim = ""
         var replies = 0
         var closed = false
+        /// Cue is ending it (CloseStream, or cancelled): its socket closing is expected.
+        var ending = false
 
         init(_ socket: URLSessionWebSocketTask) { self.socket = socket }
 
@@ -134,15 +136,17 @@ actor DeepgramService: SpeechRecognizer {
     private var terms: [String] = []
     private var key: String?
     private var streams: [Channel: Stream] = [:]
-    /// Told when Deepgram turns a stream down (a key revoked meanwhile, no credit left).
-    private var onProblem: @Sendable (String) -> Void = { _ in }
+    /// Told when a stream fails that Cue didn't end — Deepgram turned it down (a key revoked meanwhile, no
+    /// credit left) or the connection broke — and, with nil, when a stream answers again after that.
+    private var onProblem: @Sendable (String?) -> Void = { _ in }
+    private var troubled = false
 
     func configure(language: String, prompt: String, terms: [String], hallucinations: [String]) {
         self.language = language
         self.terms = terms
     }
 
-    func setProblemHandler(_ handler: @escaping @Sendable (String) -> Void) {
+    func setProblemHandler(_ handler: @escaping @Sendable (String?) -> Void) {
         onProblem = handler
     }
 
@@ -221,11 +225,15 @@ actor DeepgramService: SpeechRecognizer {
     }
 
     private func close(_ stream: Stream) {
+        stream.ending = true
         stream.socket.send(.string(#"{"type":"CloseStream"}"#)) { _ in }
     }
 
     private func closeAll() {
-        for stream in streams.values { stream.socket.cancel(with: .goingAway, reason: nil) }
+        for stream in streams.values {
+            stream.ending = true
+            stream.socket.cancel(with: .goingAway, reason: nil)
+        }
         streams = [:]
     }
 
@@ -246,11 +254,22 @@ actor DeepgramService: SpeechRecognizer {
                     stream.interim = transcript
                 }
                 stream.replies += 1
+                if troubled {
+                    troubled = false
+                    onProblem(nil)
+                }
             } catch {
-                // A closed stream ends here too; one Deepgram turned down says why in its handshake's status.
-                let status = (stream.socket.response as? HTTPURLResponse)?.statusCode ?? 0
-                if status >= 400 { onProblem(Deepgram.failure(status).message) }
+                // A stream Cue ended closes here too. One Deepgram turned down says why in its handshake's
+                // status; any other that fails before Cue ends it lost its connection.
                 stream.closed = true
+                let status = (stream.socket.response as? HTTPURLResponse)?.statusCode ?? 0
+                if status >= 400 {
+                    troubled = true
+                    onProblem(Deepgram.failure(status).message)
+                } else if !stream.ending {
+                    troubled = true
+                    onProblem("Deepgram stopped answering: \(error.localizedDescription)")
+                }
                 return
             }
         }

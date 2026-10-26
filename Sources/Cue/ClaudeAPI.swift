@@ -60,11 +60,16 @@ enum AnthropicAPI {
         var errorDescription: String? { "Can't reach the Anthropic API: \(reason.localizedDescription)" }
     }
 
+    /// A streamed reply that ended without `message_stop`: the connection closed partway.
+    struct BrokenOff: LocalizedError {
+        var errorDescription: String? { "The Anthropic API's reply broke off before the end" }
+    }
+
     /// Worth trying again in a moment: rate limits, overload, server errors, a connection that failed.
     static func transient(_ error: Error) -> Bool {
         if let error = error as? Failure { return error.transient }
         if let error = error as? URLError { return error.code != .cancelled }
-        return error is Unreachable
+        return error is Unreachable || error is BrokenOff
     }
 
     /// Sends a request and waits for the whole reply (no streaming, as for warming the cache). What's
@@ -85,8 +90,9 @@ enum AnthropicAPI {
         }
     }
 
-    /// Streams a reply's text through `onText`, piece by piece, and returns all of it. Rate limits, overload
-    /// and dropped connections are tried twice more, unless some of the reply has come already.
+    /// Streams a reply's text through `onText`, piece by piece, and returns all of it — only once
+    /// `message_stop` says it's whole. Rate limits, overload and dropped connections are tried twice more,
+    /// unless some of the reply has come already.
     static func stream(_ body: [String: Any], key: String, onText: @escaping (String) -> Void) async throws -> String {
         var streamed = body
         streamed["stream"] = true
@@ -101,7 +107,7 @@ enum AnthropicAPI {
                     for try await byte in bytes { data.append(byte) }
                     throw failure(status, data)
                 }
-                var stopReason: String?
+                var stopReason: String?, finished = false
                 events: for try await line in bytes.lines where line.hasPrefix("data:") {
                     guard let event = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any] else { continue }
                     switch event["type"] as? String {
@@ -117,11 +123,13 @@ enum AnthropicAPI {
                         let type = error?["type"] as? String ?? ""
                         throw Failure(status: type == "overloaded_error" ? 529 : 500, type: type, message: error?["message"] as? String ?? "")
                     case "message_stop":
+                        finished = true
                         break events
                     default:
                         break
                     }
                 }
+                guard finished else { throw BrokenOff() }
                 if stopReason == "refusal" && text.isEmpty { throw ServiceError("Claude declined to answer this") }
                 return text
             } catch {
