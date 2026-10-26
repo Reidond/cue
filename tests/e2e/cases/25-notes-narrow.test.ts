@@ -12,9 +12,9 @@ e2eCase('In a dashboard as narrow as it goes, the Notes page fits: the sidebar, 
     cue.control('size 820 700');
     await cue.dashboardPage('Bee talk/notes', /Start Cue/);
     const page = cue.page;
-    // Vision reads the sidebar's icons as a bullet, or not at all; cut off, these were "ne" and "oming".
-    assertContains(page, /^\W*Home$/, "the sidebar shouldn't be cut off on the left");
-    assertContains(page, /^\W*Upcoming$/, "the sidebar shouldn't be cut off on the left");
+    // Vision reads the sidebar's icons as a bullet, a letter or nothing; cut off, these were "ne" and "oming".
+    assertContains(page, /(^|\s)Home$/, "the sidebar shouldn't be cut off on the left");
+    assertContains(page, /(^|\s)Upcoming$/, "the sidebar shouldn't be cut off on the left");
     assertContains(page, /Start Cue/, "nor the header's button on the right");
     assertContains(page, /Weekly sync about/, 'the note is open');
     assertContains(page, /report by Friday\.$/, 'its summary wraps rather than running off the edge');
