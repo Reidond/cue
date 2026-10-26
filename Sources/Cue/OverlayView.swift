@@ -193,11 +193,14 @@ private struct IconButton: View {
 
 // MARK: - Questions
 
-/// Everything asked so far, newest on top. One exchange shows in full; the others are compact rows
-/// (the questions and what to say, or that it's still coming), so a new question never replaces
+/// Everything asked so far, in three parts: the exchange shown in full on top; under it New, the ones not
+/// shown in full yet (still coming, ready, or waiting for Prepare Answer); at the bottom Answered, the
+/// ones shown and left, and remarks that weren't questions. Each part is newest first, the others compact
+/// rows (the questions and what to say, or that it's still coming), so a new question never replaces
 /// what's being read. Click a row, or use ⌃⌥← →, to show it in full. While an older one is open or
 /// the list is scrolled down, new questions stay out of the list, so nothing in it moves, and wait
-/// under a button at the top that shows them.
+/// under a button at the top that shows them. One asked while the answer in view is read aloud waits in
+/// New, under it.
 private struct QuestionList: View {
     @ObservedObject var state: AppState
     let size: CGFloat
@@ -211,19 +214,14 @@ private struct QuestionList: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 2) {
-                        ForEach(state.exchanges.reversed().filter { !state.unseen.contains($0.id) }) { exchange in
-                            Group {
-                                if exchange.id == state.expandedID {
-                                    ExchangeCard(exchange: exchange, size: size, lexicon: state.lexicon,
-                                                 prepare: { state.prepare(exchange.id) },
-                                                 answerAnyway: { state.ask($0, force: true) })
-                                } else {
-                                    ExchangeRow(exchange: exchange, size: size,
-                                                expand: { state.expand(exchange.id) }, prepare: { state.prepare(exchange.id) })
-                                }
-                            }
-                            .id(exchange.id)
+                        if let exchange = state.current {
+                            ExchangeCard(exchange: exchange, size: size, lexicon: state.lexicon,
+                                         prepare: { state.prepare(exchange.id) },
+                                         answerAnyway: { state.ask($0, force: true) })
+                                .id(exchange.id)
                         }
+                        group("New", state.newExchanges)
+                        group("Answered", state.answeredExchanges).opacity(0.75)
                     }
                     .scrollTargetLayout()
                 }
@@ -238,10 +236,9 @@ private struct QuestionList: View {
                     if !state.holding && !state.listScrolled { position.scrollTo(edge: .top) }
                 }
                 .onChange(of: state.expandedID) { _, id in
-                    guard let id else { return }
-                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.2)) {
-                        if id == state.exchanges.last?.id { position.scrollTo(edge: .top) } else { position.scrollTo(id: id, anchor: .top) }
-                    }
+                    // The exchange shown in full is always on top.
+                    guard id != nil else { return }
+                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.2)) { position.scrollTo(edge: .top) }
                 }
                 .overlay(alignment: .top) {
                     if !state.unseen.isEmpty {
@@ -259,6 +256,24 @@ private struct QuestionList: View {
         .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: state.expandedID)
         .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: state.unseen.isEmpty)
         .glassEffect(.regular, in: .rect(cornerRadius: 24))
+    }
+
+    /// A part of the list under its name, when it has any.
+    @ViewBuilder private func group(_ title: String, _ exchanges: [Exchange]) -> some View {
+        if !exchanges.isEmpty {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 2)
+            ForEach(exchanges) { exchange in
+                ExchangeRow(exchange: exchange, size: size,
+                            expand: { state.expand(exchange.id) }, prepare: { state.prepare(exchange.id) })
+                    .id(exchange.id)
+            }
+        }
     }
 }
 

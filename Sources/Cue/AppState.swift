@@ -118,15 +118,29 @@ final class AppState: ObservableObject {
     /// button (or the newest end of the list) shows them.
     @Published private(set) var unseen: Set<UUID> = []
     /// Whether the speaker reads the answer in view aloud: they started talking after it came into view and
-    /// haven't paused for `readingPause` since. New questions meanwhile wait under the "new questions"
-    /// button, and the newest comes into view when they pause — the text being read never moves. Talking
-    /// once they're done with it ("Thank you for the question") holds nothing back.
+    /// haven't paused for `readingPause` since. New questions meanwhile wait in the list's New group, under
+    /// the answer being read, and the newest comes into view when they pause — the text being read never
+    /// moves. Talking once they're done with it ("Thank you for the question") holds nothing back.
     private enum Reading { case notYet, reading, done }
     private var reading = Reading.notYet
     private var presenterSpoke = Date.distantPast
     private let readingPause: TimeInterval = 5
     /// The exchanges held back while the speaker read.
     private var heldWhileReading: Set<UUID> = []
+    /// Exchanges shown in full at some point: once another takes their place, they've been answered.
+    @Published private(set) var seen: Set<UUID> = []
+
+    /// The exchange shown in full, at the top of the list.
+    var current: Exchange? { exchanges.first { $0.id == expandedID } }
+    /// Under it, newest first: the ones not shown in full yet — still coming, ready, or waiting for
+    /// Prepare Answer.
+    var newExchanges: [Exchange] {
+        exchanges.reversed().filter { $0.id != expandedID && !unseen.contains($0.id) && !seen.contains($0.id) && !$0.isNotAQuestion }
+    }
+    /// At the bottom, newest first: the ones shown and left, and remarks that weren't questions.
+    var answeredExchanges: [Exchange] {
+        exchanges.reversed().filter { $0.id != expandedID && !unseen.contains($0.id) && (seen.contains($0.id) || $0.isNotAQuestion) }
+    }
     @Published var micLevel: Float = 0
     @Published var callLevel: Float = 0
     @Published var mic = ServiceStatus()
@@ -860,6 +874,7 @@ final class AppState: ObservableObject {
         guard let index = exchanges.firstIndex(where: { $0.id == id }) else { return }
         selected = index
         expandedID = id
+        seen.insert(id)
         reading = .notYet
         heldWhileReading = []
         holding = index < exchanges.count - 1
@@ -881,12 +896,12 @@ final class AppState: ObservableObject {
         if reading == .reading { return hold(id) }
         selected = index
         expandedID = id
+        seen.insert(id)
         reading = .notYet
     }
 
-    /// Keeps a new exchange under the button while the speaker reads the answer in view.
+    /// Keeps a new exchange in the New group, under the answer the speaker reads aloud.
     private func hold(_ id: UUID) {
-        unseen.insert(id)
         guard heldWhileReading.insert(id).inserted, let exchange = exchanges.first(where: { $0.id == id }) else { return }
         log.write("📖 Waits while you read the answer in view: \(exchange.answers.map(\.question).joined(separator: " / "))")
     }
@@ -902,7 +917,6 @@ final class AppState: ObservableObject {
         let held = heldWhileReading
         heldWhileReading = []
         guard !held.isEmpty, !holding, !listScrolled else { return }
-        unseen.subtract(held)
         guard let index = exchanges.lastIndex(where: { held.contains($0.id) && $0.answers.contains(where: \.isUnderWay) }) else { return }
         log.write("📖 Shown now that you've paused: \(exchanges[index].answers.map(\.question).joined(separator: " / "))")
         reveal(index)

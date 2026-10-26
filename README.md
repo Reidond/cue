@@ -123,12 +123,15 @@ and your notes move from `~/Documents/Cue Recordings` into its `Notes/`.
 Click any transcript line to get an answer for it, or type a question into the
 field at the bottom. Drag the top bar to move Cue.
 
-Each question stays in Cue's list, newest on top. While you have an older one
-open, or have scrolled down, the list stays where it is: new questions wait
-under a **New Question** button at the top until you click it. So they do while
-you read the answer in view aloud: once you pause for five seconds, the newest
-comes into view by itself (or click the button sooner). Saying «Thank you for the
-question» while the next answer loads holds nothing back.
+Each question stays in Cue's list: the answer in view on top, then **New** —
+questions you haven't had in full yet (still coming, ready, or waiting for
+Prepare Answer) — and **Answered** at the bottom, each newest first. While you
+have an older one open, or have scrolled down, the list stays where it is: new
+questions wait under a **New Question** button at the top until you click it.
+While you read the answer in view aloud, a new question waits in **New**, under
+it; once you pause for five seconds, the newest comes into view by itself and
+the one you read moves to **Answered**. Saying «Thank you for the question» while
+the next answer loads holds nothing back.
 
 ## Recording calls
 
