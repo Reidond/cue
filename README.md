@@ -377,7 +377,7 @@ the Anthropic API and Deepgram, `CUE_SPEAKER_MODELS=dir` keeps the speaker model
 `ask TEXT`, `timestamp 00:00:12`, `assign EVENT | PROJECT`,
 `notification record|dismiss`, `rename NAME | NEW`, `apply LABEL`,
 `download speakers`, `show TEXT`, `newest`, `prepare`, `record`, `settings providers`,
-`provider deepgram`, `key anthropic KEY`; see `AGENTS.md`) and keeps notifications in the
+`provider deepgram`, `key anthropic KEY`, `size 820 700`; see `AGENTS.md`) and keeps notifications in the
 session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` reads the
 calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs using the
 microphone from a text file, both again on every check; `CUE_MEETING_TICK` and

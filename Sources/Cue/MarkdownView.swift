@@ -144,10 +144,10 @@ private struct BlockView: View {
     var body: some View {
         switch block {
         case .metadata(let pairs):
-            HStack(spacing: 14) {
-                ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
-                    Label(display(pair.key, pair.value), systemImage: symbol(pair.key))
-                }
+            // In a row while it fits; one under another in a narrow note, so no name breaks mid-word.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) { labels(pairs) }
+                VStack(alignment: .leading, spacing: 6) { labels(pairs) }
             }
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -200,6 +200,12 @@ private struct BlockView: View {
             }
         case .rule:
             Divider()
+        }
+    }
+
+    @ViewBuilder private func labels(_ pairs: [(key: String, value: String)]) -> some View {
+        ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
+            Label(display(pair.key, pair.value), systemImage: symbol(pair.key))
         }
     }
 

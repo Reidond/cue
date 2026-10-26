@@ -75,11 +75,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hosting = NSHostingView(rootView: OverlayView(state: state, preferences: preferences))
         hosting.sizingOptions = []
         panel.contentView = hosting
-        if !panel.setFrameUsingName("overlay"), let screen = NSScreen.main {
+        if isSandboxed || !panel.setFrameUsingName("overlay"), let screen = NSScreen.main {
             let visible = screen.visibleFrame
             panel.setFrameOrigin(NSPoint(x: visible.maxX - 540, y: visible.maxY - 660))
         }
-        panel.setFrameAutosaveName("overlay")
+        if !isSandboxed { panel.setFrameAutosaveName("overlay") }
         if background {
             keepBehind(panel)
             activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "CUE_BACKGROUND")
@@ -146,7 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.isReleasedWhenClosed = false
             window.setContentSize(SettingsTab.general.size)
             window.center()
-            window.setFrameAutosaveName("settings")
+            if !isSandboxed { window.setFrameAutosaveName("settings") }
             if background { keepBehind(window) }
             settingsWindow = window
             settingsTabs = tabs
@@ -174,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.delegate = self
             window.contentView = NSHostingView(rootView: DashboardView(state: state, projects: state.projects, model: dashboard))
             window.center()
-            window.setFrameAutosaveName("dashboard")
+            if !isSandboxed { window.setFrameAutosaveName("dashboard") }
             if background { keepBehind(window) }
             dashboardWindow = window
         }
@@ -362,8 +362,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions
     /// waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's
     /// menu), `settings general|providers|calendar` (a Settings tab), `provider NAME` (a provider
-    /// picked in Settings › Providers: claudeCode, anthropicAPI, whisper or deepgram) and
-    /// `key anthropic|deepgram [KEY]` (a key pasted into its field and saved; without one, Remove).
+    /// picked in Settings › Providers: claudeCode, anthropicAPI, whisper or deepgram),
+    /// `key anthropic|deepgram [KEY]` (a key pasted into its field and saved; without one, Remove) and
+    /// `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes).
     private func startControl(from path: String) {
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -426,6 +427,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let exchange = state.exchanges.last(where: \.waiting) { state.prepare(exchange.id) }
         case "settings":
             showSettings(SettingsTab(rawValue: argument))
+        case "size":
+            // The dashboard's edge dragged to make it W × H points (as small as it lets it be).
+            let numbers = argument.split(separator: " ").compactMap { Double($0) }
+            if numbers.count == 2, let window = dashboardWindow { window.setContentSize(NSSize(width: numbers[0], height: numbers[1])) }
         case "provider":
             if let provider = ClaudeProvider(rawValue: argument) { preferences.claudeProvider = provider }
             if let provider = SpeechProvider(rawValue: argument) { preferences.speechProvider = provider }
