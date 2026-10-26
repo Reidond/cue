@@ -55,6 +55,11 @@ struct Answer: Identifiable {
 
     /// Claude's "—": nothing to answer (even when it explains why after the dash).
     var isNotAQuestion: Bool { done && text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("—") }
+    /// The first words of a real answer have come (not "—").
+    var isUnderWay: Bool {
+        let said = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !said.hasPrefix("—") && said.contains { !"—- \n".contains($0) }
+    }
 
     /// Claude's first line, once it is complete.
     var firstLine: String? {
@@ -112,6 +117,16 @@ final class AppState: ObservableObject {
     /// Exchanges that came in while the view was held: kept out of the list until the "new questions"
     /// button (or the newest end of the list) shows them.
     @Published private(set) var unseen: Set<UUID> = []
+    /// Whether the speaker reads the answer in view aloud: they started talking after it came into view and
+    /// haven't paused for `readingPause` since. New questions meanwhile wait under the "new questions"
+    /// button, and the newest comes into view when they pause — the text being read never moves. Talking
+    /// once they're done with it ("Thank you for the question") holds nothing back.
+    private enum Reading { case notYet, reading, done }
+    private var reading = Reading.notYet
+    private var presenterSpoke = Date.distantPast
+    private let readingPause: TimeInterval = 5
+    /// The exchanges held back while the speaker read.
+    private var heldWhileReading: Set<UUID> = []
     @Published var micLevel: Float = 0
     @Published var callLevel: Float = 0
     @Published var mic = ServiceStatus()
@@ -261,6 +276,7 @@ final class AppState: ObservableObject {
             Task { @MainActor in
                 self.micLevel = self.micSegmenter.level
                 self.callLevel = self.systemSegmenter.level
+                self.checkReading()
             }
         }
     }
@@ -568,7 +584,10 @@ final class AppState: ObservableObject {
             detector.participantsSpeaking()
         case .me:
             // With speakers instead of headphones the mic also hears the call; don't mistake that for the user.
-            if !systemSegmenter.isSpeaking { detector.presenterSpeaking() }
+            guard !systemSegmenter.isSpeaking else { return }
+            detector.presenterSpeaking()
+            presenterSpoke = Date()
+            if reading == .notYet && expandedID != nil { reading = .reading }
         }
     }
 
@@ -786,8 +805,15 @@ final class AppState: ObservableObject {
         } else {
             for question in questions { log.write("❔ **Question (Auto is off):** \(question)") }
         }
-        // Asked for by the user: show it now. Noticed by Cue: it waits as a row until it's a real answer.
-        if force { expand(exchange.id) } else if holding || listScrolled { unseen.insert(exchange.id) }
+        // Asked for by the user: show it now. Noticed by Cue: it waits as a row until it's a real answer,
+        // or under the button while the view is held or the speaker reads the answer in view.
+        if force {
+            expand(exchange.id)
+        } else if holding || listScrolled {
+            unseen.insert(exchange.id)
+        } else if reading == .reading {
+            hold(exchange.id)
+        }
     }
 
     /// Prepare Answer on questions noticed with Auto off.
@@ -834,6 +860,8 @@ final class AppState: ObservableObject {
         guard let index = exchanges.firstIndex(where: { $0.id == id }) else { return }
         selected = index
         expandedID = id
+        reading = .notYet
+        heldWhileReading = []
         holding = index < exchanges.count - 1
         unseen.remove(id)
         if !holding { unseen = [] }
@@ -844,13 +872,40 @@ final class AppState: ObservableObject {
         if let newest = exchanges.last { expand(newest.id) }
     }
 
-    /// Cue brings an exchange into view by itself, unless the user holds the view on another one.
+    /// Cue brings an exchange into view by itself, unless the user holds the view on another one or reads
+    /// the one in view aloud.
     private func reveal(_ index: Int) {
         let id = exchanges[index].id
         guard id != expandedID else { return }
         if holding || listScrolled { unseen.insert(id); return }
+        if reading == .reading { return hold(id) }
         selected = index
         expandedID = id
+        reading = .notYet
+    }
+
+    /// Keeps a new exchange under the button while the speaker reads the answer in view.
+    private func hold(_ id: UUID) {
+        unseen.insert(id)
+        guard heldWhileReading.insert(id).inserted, let exchange = exchanges.first(where: { $0.id == id }) else { return }
+        log.write("📖 Waits while you read the answer in view: \(exchange.answers.map(\.question).joined(separator: " / "))")
+    }
+
+    /// The speaker paused for `readingPause` after reading: what came in meanwhile shows, the newest
+    /// answer under way in full. Checked every tick of the level meters, which also notes that they're
+    /// still talking (their utterance isn't transcribed yet when it ends).
+    private func checkReading() {
+        guard reading == .reading else { return }
+        if micSegmenter.isSpeaking && !systemSegmenter.isSpeaking { presenterSpoke = Date(); return }
+        guard Date().timeIntervalSince(presenterSpoke) >= readingPause else { return }
+        reading = .done
+        let held = heldWhileReading
+        heldWhileReading = []
+        guard !held.isEmpty, !holding, !listScrolled else { return }
+        unseen.subtract(held)
+        guard let index = exchanges.lastIndex(where: { held.contains($0.id) && $0.answers.contains(where: \.isUnderWay) }) else { return }
+        log.write("📖 Shown now that you've paused: \(exchanges[index].answers.map(\.question).joined(separator: " / "))")
+        reveal(index)
     }
 
     private func position(of answer: UUID) -> (exchange: Int, part: Int)? {
@@ -871,10 +926,8 @@ final class AppState: ObservableObject {
         if exchanges[index].answers[part].firstTokenAt == nil { exchanges[index].answers[part].firstTokenAt = Date() }
         exchanges[index].answers[part].text += text
         // The first words of a real answer (not "—") bring it into view, unless a newer one is there.
-        let said = exchanges[index].answers[part].text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let real = !said.hasPrefix("—") && said.contains { !"—- \n".contains($0) }
         let shown = exchanges.firstIndex { $0.id == expandedID }
-        if real, shown.map({ $0 < index }) ?? true { reveal(index) }
+        if exchanges[index].answers[part].isUnderWay, shown.map({ $0 < index }) ?? true { reveal(index) }
     }
 
     private func finish(_ id: UUID, error: String?) {

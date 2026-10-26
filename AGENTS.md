@@ -232,7 +232,8 @@ for every notification, `⚠︎ Nothing was recorded: …` for every alert,
 `⚠︎ Question judge unavailable (…) — going by question marks`,
 `🤖 Claude: PROVIDER` and `🗣 Speech recognition: PROVIDER` at launch and on
 every change, `⚠︎ Speech recognition unavailable: …` and
-`🗣 Speech recognition ready again: Deepgram`,
+`🗣 Speech recognition ready again: Deepgram`, `📖 Waits while you read the answer in view: …`
+and `📖 Shown now that you've paused: …`,
 `🔑 Anthropic API key saved in the keychain` or `… removed` — never a key — and so
 on), and never rename existing lines without
 updating the cases.

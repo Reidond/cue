@@ -125,7 +125,10 @@ field at the bottom. Drag the top bar to move Cue.
 
 Each question stays in Cue's list, newest on top. While you have an older one
 open, or have scrolled down, the list stays where it is: new questions wait
-under a **New Question** button at the top until you click it.
+under a **New Question** button at the top until you click it. So they do while
+you read the answer in view aloud: once you pause for five seconds, the newest
+comes into view by itself (or click the button sooner). Saying «Thank you for the
+question» while the next answer loads holds nothing back.
 
 ## Recording calls
 
