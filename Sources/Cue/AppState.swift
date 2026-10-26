@@ -116,7 +116,8 @@ final class AppState: ObservableObject {
     @Published var callLevel: Float = 0
     @Published var mic = ServiceStatus()
     @Published var call = ServiceStatus()
-    @Published var whisper = ServiceStatus()
+    /// Speech recognition, by whichever provider: whisper-server's start, or Deepgram's key check.
+    @Published var speech = ServiceStatus()
     @Published var claude = ServiceStatus()
     @Published private(set) var knowledge: KnowledgeBase?
     @Published private(set) var readingMaterials = false
@@ -126,13 +127,21 @@ final class AppState: ObservableObject {
     private var capturing = false
 
     var openSettings: () -> Void = {}
+    /// Settings on its Providers tab.
+    var openProviders: () -> Void = {}
     var openDashboard: () -> Void = {}
     var openRecordings: (_ selecting: String?) -> Void = { _ in }
     var showOverlay: () -> Void = {}
     var hideOverlay: () -> Void = {}
 
-    private var whisperService = WhisperService()
-    private var claudeService: ClaudeService?
+    private let whisperService = WhisperService()
+    private let deepgramService = DeepgramService()
+    /// The service `speech` is about: the provider's.
+    private lazy var recognizer: SpeechRecognizer = preferences.speechProvider == .deepgram ? deepgramService : whisperService
+    private var rehearsalStarted = false
+    private var claudeService: ClaudeSession?
+    /// The provider `claudeService` goes through.
+    private var claudeProvider: ClaudeProvider?
     private let micCapture = MicCapture()
     private let systemCapture = SystemAudioCapture()
     private let micSegmenter = SpeechSegmenter()
@@ -185,7 +194,7 @@ final class AppState: ObservableObject {
     var status: (text: String, kind: StatusKind) {
         if readingMaterials { return ("Reading materials…", .working) }
         if let progress = downloader.progress { return ("Downloading speech model \(Int(progress * 100))%", .working) }
-        if !whisper.ok { return (whisper.detail, whisper.detail.hasPrefix("Starting") ? .working : .problem) }
+        if !speech.ok { return (speech.detail, speech.detail.hasPrefix("Starting") ? .working : .problem) }
         if !claude.ok { return (claude.detail, claude.detail.contains("…") ? .working : .problem) }
         if !call.ok && !mic.ok { return ("No audio", .problem) }
         guard let activeProject else { return ("No project", .problem) }
@@ -228,11 +237,20 @@ final class AppState: ObservableObject {
         systemCapture.onStop = { error in
             Task { @MainActor in self.call = ServiceStatus(ok: false, detail: "Call audio stopped: \(error.localizedDescription)") }
         }
-        downloader.onFinished = { [weak self] in self?.startWhisper() }
+        downloader.onFinished = { [weak self] in if self?.preferences.speechProvider == .whisper { self?.startSpeech() } }
+        preferences.onKeyChange = { [weak self] key, saved in self?.keyChanged(key, saved: saved) }
+        log.write("🤖 Claude: \(preferences.claudeProvider.title)")
+        log.write("🗣 Speech recognition: \(preferences.speechProvider.title)")
+        let deepgramService = deepgramService
+        Task {
+            await deepgramService.setProblemHandler { problem in
+                Task { @MainActor in self.speechProblem(problem) }
+            }
+        }
 
         applyLanguage()
         rebuildKnowledge()
-        startWhisper()
+        startSpeech()
         // Listening starts with Start Cue (or a recording), not at launch.
         mic = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
         call = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
@@ -255,6 +273,7 @@ final class AppState: ObservableObject {
         claudeService?.stop()
         judge.stop()
         whisperService.stop()
+        deepgramService.stop()
     }
 
     private func observeSettings() {
@@ -301,6 +320,23 @@ final class AppState: ObservableObject {
             .sink { [weak self] model in self?.restartClaude(model: model) }
             .store(in: &subscriptions)
 
+        // Settings › Providers: speech recognition, live and after a recording, by the provider picked there…
+        preferences.$speechProvider.removeDuplicates().dropFirst()
+            .sink { [weak self] provider in
+                self?.log.write("🗣 Speech recognition: \(provider.title)")
+                self?.startSpeech(provider: provider)
+            }
+            .store(in: &subscriptions)
+        // …and answers, the judge and summaries too.
+        preferences.$claudeProvider.removeDuplicates().dropFirst()
+            .sink { [weak self] provider in
+                guard let self else { return }
+                self.log.write("🤖 Claude: \(provider.title)")
+                self.restartClaude(provider: provider)
+                if let context = self.knowledgeInputs?.context { self.judge.configure(context, provider: provider) }
+            }
+            .store(in: &subscriptions)
+
         projects.objectWillChange
             .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &subscriptions)
@@ -316,10 +352,11 @@ final class AppState: ObservableObject {
 
     private func applyLanguage() {
         let lexicon = self.lexicon
-        let whisperService = whisperService
         let language = activeProject?.language ?? Project.defaultLanguage, prompt = activeProject?.whisperPrompt ?? ""
-        let hallucinations = lexicon.hallucinations
-        Task { await whisperService.configure(language: language, vocabularyPrompt: prompt, hallucinations: hallucinations) }
+        let terms = activeProject?.terms ?? [], hallucinations = lexicon.hallucinations
+        for recognizer in [whisperService, deepgramService] as [SpeechRecognizer] {
+            Task { await recognizer.configure(language: language, prompt: prompt, terms: terms, hallucinations: hallucinations) }
+        }
     }
 
     private static func knowledgeInputs(project: Project?, speaker: String) -> KnowledgeInputs {
@@ -346,16 +383,20 @@ final class AppState: ObservableObject {
                 let files = knowledge.documents.map { "\($0.name) — \($0.error ?? $0.summary)" }.joined(separator: "; ")
                 self.log.write("📚 Materials for \(project) (~\(knowledge.estimatedTokens / 1000)k tokens): \(files.isEmpty ? "none" : files)")
                 if changed || self.claudeService == nil { self.restartClaude(model: self.preferences.model) }
-                self.judge.configure(context)
+                self.judge.configure(context, provider: self.preferences.claudeProvider)
             }
         }
     }
 
-    func restartClaude(model: ClaudeService.Model? = nil) {
+    /// `provider` when it just changed (the preference still has the old one).
+    func restartClaude(model: ClaudeService.Model? = nil, provider: ClaudeProvider? = nil) {
         guard knowledge != nil else { return }
         claude = ServiceStatus(ok: false, detail: "Warming up…")
-        if claudeService == nil {
-            claudeService = ClaudeService(systemPromptFile: KnowledgeBase.systemPromptFile, model: preferences.model, handlers: .init(
+        let provider = provider ?? preferences.claudeProvider
+        if claudeService == nil || provider != claudeProvider {
+            claudeService?.stop()
+            claudeProvider = provider
+            claudeService = makeClaudeSession(provider, systemPromptFile: KnowledgeBase.systemPromptFile, model: preferences.model, handlers: .init(
                 onDelta: { id, text in Task { @MainActor in self.appendDelta(id, text) } },
                 onDone: { id, error in Task { @MainActor in self.finish(id, error: error) } },
                 onReady: { ready, detail in Task { @MainActor in self.claude = ServiceStatus(ok: ready, detail: detail) } }
@@ -364,18 +405,50 @@ final class AppState: ObservableObject {
         claudeService?.start(model: model ?? preferences.model)
     }
 
-    func startWhisper() {
-        whisper = ServiceStatus(ok: false, detail: "Starting speech recognition…")
-        let whisperService = whisperService
+    /// A key saved or removed in Settings › Providers: the provider that uses it starts again with it.
+    private func keyChanged(_ key: APIKey, saved: Bool) {
+        log.write("🔑 \(key.title) \(saved ? "saved in the keychain" : "removed")")
+        switch key {
+        case .anthropic where preferences.claudeProvider == .anthropicAPI:
+            restartClaude()
+            judge.restart()
+        case .deepgram where preferences.speechProvider == .deepgram:
+            startSpeech()
+        default:
+            break
+        }
+    }
+
+    /// Starts the provider's speech recognition (`provider` when it just changed): whisper-server, or a
+    /// check of the Deepgram key. The other one stops, so whisper-server doesn't hold the GPU for nothing.
+    func startSpeech(provider: SpeechProvider? = nil) {
+        let provider = provider ?? preferences.speechProvider
+        recognizer = provider == .deepgram ? deepgramService : whisperService
+        (provider == .deepgram ? whisperService as SpeechRecognizer : deepgramService).stop()
+        for segmenter in [micSegmenter, systemSegmenter] {
+            segmenter.partialFrames = Int(recognizer.partialInterval * whisperSampleRate) / 320
+        }
+        speech = ServiceStatus(ok: false, detail: "Starting speech recognition…")
+        let recognizer = recognizer
         Task {
             do {
-                try await whisperService.start()
-                whisper = ServiceStatus(ok: true, detail: "Speech recognition ready")
+                try await recognizer.start()
+                guard recognizer === self.recognizer else { return }
+                speech = ServiceStatus(ok: true, detail: "Speech recognition ready")
                 startRehearsalIfRequested()
             } catch {
-                whisper = ServiceStatus(ok: false, detail: error.localizedDescription)
+                guard recognizer === self.recognizer else { return }
+                speech = ServiceStatus(ok: false, detail: error.localizedDescription)
+                log.write("⚠︎ Speech recognition unavailable: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Deepgram turned a stream down after starting fine (a key revoked, no credit left).
+    private func speechProblem(_ problem: String) {
+        guard preferences.speechProvider == .deepgram, speech.ok || speech.detail != problem else { return }
+        speech = ServiceStatus(ok: false, detail: problem)
+        log.write("⚠︎ Speech recognition unavailable: \(problem)")
     }
 
     private func startAudio() {
@@ -426,7 +499,8 @@ final class AppState: ObservableObject {
 
     /// Rehearsal mode: CUE_REHEARSE_PARTICIPANT=/path/to/audio plays a recording as the call.
     private func startRehearsalIfRequested() {
-        guard let path = ProcessInfo.processInfo.environment["CUE_REHEARSE_PARTICIPANT"] else { return }
+        guard let path = ProcessInfo.processInfo.environment["CUE_REHEARSE_PARTICIPANT"], !rehearsalStarted else { return }
+        rehearsalStarted = true
         Task {
             while !claude.ok || judge.state == .starting { try? await Task.sleep(for: .milliseconds(300)) }
             do {
@@ -462,15 +536,16 @@ final class AppState: ObservableObject {
             guard let self else { return }
             switch event {
             case .onset:
+                Task { await self.recognizer.begin(channel: channel) }
                 Task { @MainActor in self.speechStarted(channel) }
             case .partial(let audio):
                 Task {
-                    guard let text = await self.whisperService.transcribePartial(audio, channel: channel), !text.isEmpty else { return }
+                    guard let text = await self.recognizer.transcribePartial(audio, channel: channel), !text.isEmpty else { return }
                     await MainActor.run { if self.partial[channel] != nil { self.partial[channel] = text } }
                 }
             case .final(let audio, let speechStarted, let speechEnded):
                 Task {
-                    let text = audio.isEmpty ? "" : await self.whisperService.transcribeFinal(audio)
+                    let text = await self.recognizer.transcribeFinal(audio, channel: channel)
                     await MainActor.run {
                         self.utteranceFinished(channel, text: text, speechStarted: speechStarted, speechEnded: speechEnded)
                     }

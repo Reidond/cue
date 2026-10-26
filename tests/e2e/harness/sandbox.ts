@@ -5,10 +5,11 @@ import { appendFileSync, closeSync, openSync, readdirSync, readFileSync, renameS
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { CLAUDE, CUE_BIN, E2E_CACHE, E2E_WORK, FAKE_CLAUDE, KEEP, REAL_SUPPORT } from './config.ts';
+import { ANTHROPIC, CLAUDE, CUE_BIN, DEEPGRAM, E2E_CACHE, E2E_WORK, FAKE_CLAUDE, KEEP, REAL_SUPPORT } from './config.ts';
+import { FAKE_KEYS, startFakeProviders, type AnthropicRequest, type DeepgramRequest, type FakeProviders } from './fake-providers.ts';
 import { countLines, exists, findFiles, isDirectory, lines, linesOf, matches, nonEmpty, tail, withFlags, writeExecutable } from './files.ts';
 import { exec, shellQuote, type Ran } from './process.ts';
-import { needOverlaySnapshots, needWhisperCli, needWindowSnapshots } from './requirements.ts';
+import { keychainKey, needOverlaySnapshots, needWhisperCli, needWindowSnapshots } from './requirements.ts';
 import { fail, print, Skip } from './results.ts';
 import { ocr, readImage } from './screen.ts';
 import { sleep, within } from './time.ts';
@@ -35,8 +36,15 @@ export interface CalendarEvent {
     recurring?: boolean;
 }
 
-/** What Cue sent the fake claude, by kind (see tools/fake-claude.ts). */
+/** What Cue sent the fake claude or the Anthropic API's stand-in, by kind (see tools/fake-claude.ts). */
 export type ClaudeRequest = 'answer-system' | 'ask' | 'judge-system' | 'judge' | 'summary-system' | 'summary-input';
+
+/** What the cloud services' stand-ins noted, by kind (see harness/fake-providers.ts). */
+export interface ServiceRequests {
+    'anthropic-request': AnthropicRequest;
+    'deepgram-live': DeepgramRequest;
+    'deepgram-file': DeepgramRequest;
+}
 
 type DefaultsValue = string | boolean | number | readonly string[];
 
@@ -45,6 +53,15 @@ export type LaunchEnv = Record<string, string>;
 
 function speakerModelsIn(models: string): boolean {
     return SPEAKER_FILES.every((file) => exists(join(models, 'speaker-diarization', file)));
+}
+
+/** A JSON object in a file, or {} when there is none yet. */
+function existsJson(file: string): Record<string, string> {
+    try {
+        return JSON.parse(readFileSync(file, 'utf8')) as Record<string, string>;
+    } catch {
+        return {};
+    }
 }
 
 /** A whisper-server port nothing listens on yet. */
@@ -75,7 +92,12 @@ export class Cue {
     readonly port: number;
     /** The environment of every Cue this case runs. */
     readonly env: NodeJS.ProcessEnv;
+    /** Where Cue keeps API keys under CUE_HOME, instead of the keychain. */
+    readonly keysFile: string;
     #app: ChildProcess | undefined;
+    /** The environment of the Cue running, for the services' stand-ins to reply by. */
+    #launched: NodeJS.ProcessEnv = {};
+    #providers: FakeProviders | undefined;
     #closing: Promise<void> | undefined;
 
     private constructor(dir: string, domain: string, port: number) {
@@ -86,6 +108,7 @@ export class Cue {
         this.events = join(dir, 'events.json');
         this.micAppsFile = join(dir, 'mic-apps');
         this.claudeLog = join(dir, 'claude');
+        this.keysFile = join(this.home, 'Keychain.json');
         this.domain = domain;
         this.port = port;
         const env: NodeJS.ProcessEnv = {
@@ -118,6 +141,12 @@ export class Cue {
         if (isDirectory(models)) await symlink(models, join(cue.support, 'models'));
         await exec('defaults', ['delete', cue.domain]);
         if (CLAUDE === 'fake') await mkdir(cue.claudeLog, { recursive: true });
+        // The cloud services' stand-ins, unless the run uses the real ones.
+        if (ANTHROPIC === 'fake' || DEEPGRAM === 'fake') {
+            cue.#providers = await startFakeProviders(cue.claudeLog, () => cue.#launched);
+            if (ANTHROPIC === 'fake') cue.env['CUE_ANTHROPIC_URL'] = cue.#providers.url;
+            if (DEEPGRAM === 'fake') cue.env['CUE_DEEPGRAM_URL'] = cue.#providers.url;
+        }
         return cue;
     }
 
@@ -128,6 +157,9 @@ export class Cue {
     close(succeeded: boolean): Promise<void> {
         this.#closing ??= (async () => {
             await this.stop();
+            await this.#providers?.close();
+            // A real key never stays behind, not even in a kept sandbox.
+            await rm(this.keysFile, { force: true });
             // Left behind if Cue was killed.
             await exec('pkill', ['-f', '--', `whisper-server .*--port ${this.port}( |$)`]);
             await exec('defaults', ['delete', this.domain]);
@@ -168,6 +200,18 @@ export class Cue {
     // MARK: Driving Cue
 
     /**
+     * Saves a provider's API key where Cue keeps it under CUE_HOME, as Settings › Providers would: the
+     * stand-in's (FAKE_KEYS), `key` (one the stand-in rejects, say), or with `--real-anthropic` /
+     * `--real-deepgram` the real one from the login keychain.
+     */
+    async apiKey(service: 'anthropic' | 'deepgram', key?: string): Promise<void> {
+        const real = (service === 'anthropic' ? ANTHROPIC : DEEPGRAM) === 'real';
+        const keys = existsJson(this.keysFile);
+        keys[service] = key ?? (real ? await keychainKey(service) : FAKE_KEYS[service]);
+        await writeFile(this.keysFile, JSON.stringify(keys));
+    }
+
+    /**
      * Writes a setting into the case's defaults domain, typed by its value:
      * `defaults('language', 'uk')`, `defaults('materials', [a, b])`, `defaults('autoAnswer', true)`.
      */
@@ -190,13 +234,11 @@ export class Cue {
         const previous = this.#newestSessionLog();
         writeFileSync(this.path('control'), '');
         const out = openSync(this.path('cue.out'), 'a');
-        const app = spawn(CUE_BIN, [], {
-            env: {
-                ...this.env, CUE_NO_LIVE_AUDIO: '1', CUE_BACKGROUND: '1', CUE_CONTROL: this.path('control'),
-                CUE_CALENDAR_EVENTS: this.events, CUE_MIC_APPS: this.micAppsFile, ...env,
-            },
-            stdio: ['ignore', out, out],
-        });
+        this.#launched = {
+            ...this.env, CUE_NO_LIVE_AUDIO: '1', CUE_BACKGROUND: '1', CUE_CONTROL: this.path('control'),
+            CUE_CALENDAR_EVENTS: this.events, CUE_MIC_APPS: this.micAppsFile, ...env,
+        };
+        const app = spawn(CUE_BIN, [], { env: this.#launched, stdio: ['ignore', out, out] });
         closeSync(out);
         app.on('error', (error) => appendFileSync(this.path('cue.out'), `couldn't start Cue: ${error.message}\n`));
         this.#app = app;
@@ -352,9 +394,19 @@ export class Cue {
         return findFiles(this.documents, /\.md$/, /\/Materials\//);
     }
 
-    /** What Cue sent the fake claude: every request of that kind, oldest first. */
+    /** What Cue sent the fake claude or the Anthropic API's stand-in: every request of that kind, oldest first. */
     claudeRequests(kind: ClaudeRequest): string[] {
-        if (CLAUDE !== 'fake') fail('claudeRequests needs the fake claude');
+        if (CLAUDE !== 'fake' && ANTHROPIC !== 'fake') fail('claudeRequests needs the fake claude or the Anthropic stand-in');
+        return this.#noted(kind);
+    }
+
+    /** What the cloud services' stand-ins noted about Cue's requests of that kind, oldest first. */
+    serviceRequests<Kind extends keyof ServiceRequests>(kind: Kind): ServiceRequests[Kind][] {
+        if ((kind === 'anthropic-request' ? ANTHROPIC : DEEPGRAM) !== 'fake') fail(`serviceRequests('${kind}') needs the stand-in`);
+        return this.#noted(kind).map((text) => JSON.parse(text) as ServiceRequests[Kind]);
+    }
+
+    #noted(kind: string): string[] {
         let names: string[];
         try {
             names = readdirSync(this.claudeLog).filter((name) => name.endsWith(`-${kind}.txt`)).sort();

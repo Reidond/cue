@@ -30,6 +30,14 @@ struct Project: Codable, Identifiable, Hashable {
             .joined(separator: ". ")
     }
 
+    /// The names and terms one by one, as Deepgram's keyterms: they're written one per line or
+    /// separated by commas or semicolons.
+    var terms: [String] {
+        vocabulary.components(separatedBy: CharacterSet(charactersIn: ",;\n"))
+            .map { $0.trimmingCharacters(in: .whitespaces.union(CharacterSet(charactersIn: "."))) }
+            .filter { !$0.isEmpty }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case name, occasion, language, vocabulary = "namesAndTerms", created, lastUsed
     }

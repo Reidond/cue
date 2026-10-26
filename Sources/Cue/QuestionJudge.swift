@@ -2,7 +2,7 @@ import Foundation
 
 /// A second, small Claude session (Haiku, without the materials) that reads what the participants
 /// just said and tells which questions in it are for the speaker, so only those get an answer.
-/// Uses the same Claude Code login as the answers; Resources/judge.md is its prompt.
+/// Goes through the same provider as the answers (Claude Code or the Anthropic API); Resources/judge.md is its prompt.
 @MainActor
 final class QuestionJudge {
     enum State: Equatable { case starting, ready, unavailable(String) }
@@ -13,14 +13,15 @@ final class QuestionJudge {
 
     static let systemPromptFile = appSupport.appendingPathComponent("run/judge.md")
 
-    private var service: ClaudeService?
+    private var service: ClaudeSession?
+    private var provider: ClaudeProvider?
     private var replies: [UUID: String] = [:]
     private var waiting: [UUID: ([String]?) -> Void] = [:]
     /// A verdict slower than this is no use: the question would have been answered already.
     private let patience: TimeInterval = 6
 
-    /// Writes the prompt for the talk; (re)starts the session when it changed.
-    func configure(_ context: PromptContext) {
+    /// Writes the prompt for the talk; (re)starts the session when it or the provider changed.
+    func configure(_ context: PromptContext, provider: ClaudeProvider) {
         let template = Bundle.main.url(forResource: "judge", withExtension: "md")
             .flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
         let speaker = context.speaker.trimmingCharacters(in: .whitespaces).isEmpty ? "the speaker" : context.speaker
@@ -35,9 +36,11 @@ final class QuestionJudge {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? prompt.write(to: url, atomically: true, encoding: .utf8)
         }
-        guard !unchanged || service == nil else { return }
-        if service == nil {
-            service = ClaudeService(systemPromptFile: url, model: .haiku, handlers: .init(
+        guard !unchanged || service == nil || provider != self.provider else { return }
+        if service == nil || provider != self.provider {
+            service?.stop()
+            self.provider = provider
+            service = makeClaudeSession(provider, systemPromptFile: url, model: .haiku, handlers: .init(
                 onDelta: { id, text in Task { @MainActor in self.replies[id, default: ""] += text } },
                 onDone: { id, error in Task { @MainActor in self.finish(id, error: error) } },
                 onReady: { ready, detail in Task { @MainActor in self.ready(ready, detail: detail) } }
@@ -45,6 +48,13 @@ final class QuestionJudge {
         }
         set(.starting)
         service?.start(model: .haiku)
+    }
+
+    /// Starts the session again, e.g. with a new API key.
+    func restart() {
+        guard let service else { return }
+        set(.starting)
+        service.start(model: .haiku)
     }
 
     func stop() {

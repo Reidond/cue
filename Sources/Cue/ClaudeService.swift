@@ -2,8 +2,9 @@ import Foundation
 
 /// Keeps one headless Claude Code session alive (`claude -p` with stream-json on
 /// stdin/stdout) so each question skips process start-up and hits the prompt cache
-/// holding the dissertation. Uses the user's Claude Code login — no API key.
-final class ClaudeService {
+/// holding the dissertation. Uses the user's Claude Code login — no API key (`ClaudeAPIService` is the
+/// same over the Anthropic API).
+final class ClaudeService: ClaudeSession {
     enum Model: String, CaseIterable {
         case sonnet, haiku
         var title: String { self == .sonnet ? "Sonnet (best answers)" : "Haiku (fastest)" }
@@ -24,6 +25,8 @@ final class ClaudeService {
     /// Requests written to stdin; the CLI answers them strictly in order.
     private var inFlight: [UUID] = []
     private var warmupID: UUID?
+    /// Stopped for good (until started again): an exited process isn't restarted.
+    private var stopped = false
     private var lastActivity = Date()
     private var keepAlive: Timer?
     private(set) var model: Model
@@ -45,12 +48,16 @@ final class ClaudeService {
     func start(model: Model? = nil) {
         queue.async { [self] in
             if let model { self.model = model }
+            stopped = false
             launch()
         }
     }
 
     func stop() {
-        queue.sync { shutdown() }
+        queue.sync {
+            stopped = true
+            shutdown()
+        }
     }
 
     /// `id` names the request in the handlers' calls.
@@ -96,7 +103,7 @@ final class ClaudeService {
                 self.failAll("Claude exited (code \(finished.terminationStatus))")
                 self.process = nil
                 self.handlers.onReady(false, "Claude stopped — restarting…")
-                self.queue.asyncAfter(deadline: .now() + 2) { if self.process == nil { self.launch() } }
+                self.queue.asyncAfter(deadline: .now() + 2) { if self.process == nil && !self.stopped { self.launch() } }
             }
         }
         do {

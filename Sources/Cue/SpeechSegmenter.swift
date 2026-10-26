@@ -1,7 +1,7 @@
 import Foundation
 
 /// Cuts a continuous 16 kHz stream into utterances with an adaptive energy VAD.
-/// Emits a growing partial every `partialInterval` while someone is talking and a
+/// Emits a growing partial every `partialFrames` while someone is talking and a
 /// final when they pause, so the overlay can show live text and still get clean
 /// sentence-sized chunks for question detection.
 final class SpeechSegmenter {
@@ -23,7 +23,8 @@ final class SpeechSegmenter {
     private let hangoverFrames = 40             // 800 ms of silence closes it
     private let maxFrames = 1250                // 25 s — Whisper's window is 30 s
     private let minSpeechFrames = 20            // drop blips shorter than 400 ms
-    private let partialInterval = 60            // re-transcribe every 1.2 s
+    /// 1.2 s for Whisper, which reads the whole partial again each time; 0.2 s for Deepgram, which only gets what's new.
+    var partialFrames = 60
     private let absoluteFloor: Float = 0.003
 
     private var pending: [Float] = []
@@ -86,7 +87,7 @@ final class SpeechSegmenter {
 
         if silentRun >= hangoverFrames || segment.count >= maxFrames * frameSize {
             finish()
-        } else if framesSincePartial >= partialInterval {
+        } else if framesSincePartial >= partialFrames {
             framesSincePartial = 0
             onEvent?(.partial(segment))
         }

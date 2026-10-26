@@ -3,7 +3,9 @@ import Foundation
 /// Runs a local whisper.cpp server and transcribes utterances through it.
 /// The server handles one request at a time, so finals queue ahead of partials
 /// and a newer partial replaces an older one that has not started yet.
-actor WhisperService {
+actor WhisperService: SpeechRecognizer {
+    /// whisper-server reads a partial's whole audio each time.
+    nonisolated let partialInterval: TimeInterval = 1.2
     /// CUE_WHISPER_PORT lets end-to-end runs in parallel each have their own server.
     static let port = Int(ProcessInfo.processInfo.environment["CUE_WHISPER_PORT"] ?? "") ?? 8178
     static let modelPath = appSupport.appendingPathComponent("models/ggml-large-v3-turbo.bin").path
@@ -22,10 +24,11 @@ actor WhisperService {
     static var serverBinary: String? { serverCandidates.first(where: FileManager.default.isExecutableFile) }
     static var modelInstalled: Bool { FileManager.default.fileExists(atPath: modelPath) }
 
-    /// Language, vocabulary and known artefacts apply from the next request on.
-    func configure(language: String, vocabularyPrompt: String, hallucinations: [String]) {
+    /// Language, vocabulary and known artefacts apply from the next request on. The prompt carries the
+    /// names and terms too.
+    func configure(language: String, prompt: String, terms: [String], hallucinations: [String]) {
         self.language = language
-        self.vocabularyPrompt = vocabularyPrompt
+        self.vocabularyPrompt = prompt
         self.hallucinations = hallucinations
     }
 
@@ -56,8 +59,11 @@ actor WhisperService {
         server.terminate()
     }
 
-    func transcribeFinal(_ audio: [Float]) async -> String {
-        await withCheckedContinuation { continuation in
+    func begin(channel: Channel) {}
+
+    func transcribeFinal(_ audio: [Float], channel: Channel) async -> String {
+        guard !audio.isEmpty else { return "" }
+        return await withCheckedContinuation { continuation in
             finals.append((audio, continuation))
             pump()
         }

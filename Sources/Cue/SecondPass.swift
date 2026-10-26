@@ -7,7 +7,8 @@ import Foundation
 /// project's names and terms, and the two sides are merged back into one transcript by time.
 ///
 /// It runs as a separate process at background priority, so recognition in a call that
-/// starts meanwhile keeps the machine first.
+/// starts meanwhile keeps the machine first. With Deepgram as the speech provider, Deepgram reads
+/// both files instead, with the names and terms as keyterms.
 enum SecondPass {
     static let candidates = ["/opt/homebrew/bin/whisper-cli", "/usr/local/bin/whisper-cli"]
 
@@ -24,7 +25,10 @@ enum SecondPass {
         let language: String
         /// The project's occasion and names and terms.
         let prompt: String
+        /// The names and terms one by one, for Deepgram.
+        let terms: [String]
         let lexicon: Lexicon
+        let provider: SpeechProvider
     }
 
     struct Result {
@@ -33,11 +37,9 @@ enum SecondPass {
         let duration: TimeInterval
     }
 
-    /// `progress` gets the share done (0…1) as whisper-cli reports it; `child` lets the caller stop it.
+    /// `progress` gets the share done (0…1) as whisper-cli reports it, or as Deepgram finishes each side;
+    /// `child` lets the caller stop whisper-cli.
     static func run(_ job: Job, child: SecondPassProcess, progress: @escaping @Sendable (Double) -> Void) async throws -> Result {
-        guard let binary else { throw ServiceError("whisper-cli is not installed (brew install whisper-cpp)") }
-        guard FileManager.default.isExecutableFile(atPath: binary) else { throw ServiceError("whisper-cli not found at \(binary)") }
-        guard WhisperService.modelInstalled else { throw ServiceError("Speech model not downloaded") }
         let sides: [(channel: Channel, audio: URL)] = [
             (.me, job.folder.appendingPathComponent(AudioRecorder.micFile)),
             (.others, job.folder.appendingPathComponent(AudioRecorder.callFile)),
@@ -45,20 +47,14 @@ enum SecondPass {
         guard sides.allSatisfy({ FileManager.default.fileExists(atPath: $0.audio.path) }) else {
             throw ServiceError("The call's audio is missing")
         }
-        let outputs = sides.map { $0.audio.deletingPathExtension() }  // whisper-cli adds .json
-        for output in outputs { try? FileManager.default.removeItem(at: output.appendingPathExtension("json")) }
-
-        var arguments = ["-m", WhisperService.modelPath, "-l", job.language, "-bs", "5", "-ojf", "-np", "-pp"]
-        // The names and terms bias every 30 s window, not only the first.
-        if !job.prompt.isEmpty { arguments += ["--prompt", job.prompt, "--carry-initial-prompt"] }
-        arguments += outputs.flatMap { ["-of", $0.path] } + sides.map(\.audio.path)
-        try await whisper(binary, arguments, child: child, files: sides.count, progress: progress)
+        let segmentsOfSides = job.provider == .deepgram
+            ? try await deepgram(sides.map(\.audio), job: job, progress: progress)
+            : try await whisper(sides.map(\.audio), job: job, child: child, progress: progress)
 
         return try await Task.detached(priority: .utility) {
             var lines: [Utterance] = []
             var duration: TimeInterval = 0
-            for (side, output) in zip(sides, outputs) {
-                let segments = try segments(in: output.appendingPathExtension("json"))
+            for (side, segments) in zip(sides, segmentsOfSides) {
                 let levels = try SpeechLevels(side.audio)
                 duration = max(duration, levels.duration)
                 lines += utterances(segments, levels: levels, channel: side.channel, job: job)
@@ -72,11 +68,66 @@ enum SecondPass {
                         && Utterance.isEcho(line.text, of: other.text, stopWords: stopWords)
                 }
             }
-            guard !lines.isEmpty else { throw ServiceError("whisper-cli found no speech in the call's audio") }
+            guard !lines.isEmpty else {
+                throw ServiceError("\(job.provider == .deepgram ? "Deepgram" : "whisper-cli") found no speech in the call's audio")
+            }
             return Result(transcript: CallTranscript(startedAt: job.startedAt, endedAt: job.endedAt,
                                                      lines: lines.sorted { $0.started < $1.started }),
                           duration: duration)
         }.value
+    }
+
+    /// whisper-cli over both files in one run: the segments of each.
+    private static func whisper(_ files: [URL], job: Job, child: SecondPassProcess,
+                                progress: @escaping @Sendable (Double) -> Void) async throws -> [[Segment]] {
+        guard let binary else { throw ServiceError("whisper-cli is not installed (brew install whisper-cpp)") }
+        guard FileManager.default.isExecutableFile(atPath: binary) else { throw ServiceError("whisper-cli not found at \(binary)") }
+        guard WhisperService.modelInstalled else { throw ServiceError("Speech model not downloaded") }
+        let outputs = files.map { $0.deletingPathExtension() }  // whisper-cli adds .json
+        for output in outputs { try? FileManager.default.removeItem(at: output.appendingPathExtension("json")) }
+
+        var arguments = ["-m", WhisperService.modelPath, "-l", job.language, "-bs", "5", "-ojf", "-np", "-pp"]
+        // The names and terms bias every 30 s window, not only the first.
+        if !job.prompt.isEmpty { arguments += ["--prompt", job.prompt, "--carry-initial-prompt"] }
+        arguments += outputs.flatMap { ["-of", $0.path] } + files.map(\.path)
+        try await whisper(binary, arguments, child: child, files: files.count, progress: progress)
+        return try outputs.map { try segments(in: $0.appendingPathExtension("json")) }
+    }
+
+    /// Deepgram over both files at once: the utterances of each.
+    private static func deepgram(_ files: [URL], job: Job, progress: @escaping @Sendable (Double) -> Void) async throws -> [[Segment]] {
+        guard let key = APIKey.deepgram.value else { throw ServiceError("No Deepgram API key — add one in Settings › Providers") }
+        let done = Done(of: files.count, progress)
+        return try await withThrowingTaskGroup(of: (Int, [Segment]).self) { group in
+            for (index, file) in files.enumerated() {
+                group.addTask {
+                    let utterances = try await Deepgram.utterances(in: file, language: job.language, terms: job.terms, key: key)
+                    done.one()
+                    return (index, utterances.map { Segment(start: $0.start, end: $0.end, text: $0.text) })
+                }
+            }
+            var sides = [[Segment]](repeating: [], count: files.count)
+            for try await (index, segments) in group { sides[index] = segments }
+            return sides
+        }
+    }
+
+    /// Counts the files Deepgram has finished, for the progress.
+    private final class Done: @unchecked Sendable {  // its count is only touched under `lock`
+        private let lock = NSLock()
+        private var count = 0
+        private let total: Int
+        private let progress: @Sendable (Double) -> Void
+
+        init(of total: Int, _ progress: @escaping @Sendable (Double) -> Void) {
+            self.total = total
+            self.progress = progress
+        }
+
+        func one() {
+            let share = lock.withLock { count += 1; return Double(count) / Double(total) }
+            progress(share)
+        }
     }
 
     /// Runs whisper-cli to the end at background priority, following the progress it prints.
@@ -182,7 +233,8 @@ enum SecondPass {
             if let best = overlaps.indices.max(by: { overlaps[$0] < overlaps[$1] }), overlaps[best] > 0 { owned[best].append(run) }
         }
         return zip(segments, owned).compactMap { segment, runs in
-            let text = WhisperService.clean(segment.text, hallucinations: job.lexicon.hallucinations)
+            // Whisper makes up the lexicon's phrases on silence; Deepgram doesn't.
+            let text = WhisperService.clean(segment.text, hallucinations: job.provider == .whisper ? job.lexicon.hallucinations : [])
             guard !text.isEmpty else { return nil }
             let shared = levels.speech.filter { overlap($0, segment.start, segment.end) > 0 }
             let start: TimeInterval, end: TimeInterval

@@ -77,9 +77,9 @@ final class ModelDownloader: NSObject, ObservableObject {
     }
 }
 
-/// What Cue needs from the Mac, checked on demand for the Settings window.
+/// What Cue needs from the Mac and the providers picked in Settings, checked on demand for Home.
 struct SetupCheck: Identifiable {
-    enum Item: String { case whisper, model, speakerModels, claude, microphone, screenAudio, calendar }
+    enum Item: String { case whisper, model, deepgramKey, speakerModels, claude, anthropicKey, microphone, screenAudio, calendar }
 
     let item: Item
     let ok: Bool
@@ -89,8 +89,10 @@ struct SetupCheck: Identifiable {
         switch item {
         case .whisper: "Speech recognizer"
         case .model: "Speech model"
+        case .deepgramKey: "Deepgram API key"
         case .speakerModels: "Speaker models"
         case .claude: "Claude Code"
+        case .anthropicKey: "Anthropic API key"
         case .microphone: "Microphone access"
         case .screenAudio: "Call audio access"
         case .calendar: "Calendar access"
@@ -103,10 +105,14 @@ struct SetupCheck: Identifiable {
         case (.whisper, false): "Install with Homebrew: brew install whisper-cpp"
         case (.model, true): "Whisper large-v3-turbo, runs on this Mac"
         case (.model, false): "1.6 GB download, stays on this Mac"
+        case (.deepgramKey, true): "Speech recognition goes through Deepgram"
+        case (.deepgramKey, false): "Speech recognition goes through Deepgram: add your key in Settings › Providers"
         case (.speakerModels, true): "Tell the people on a call apart, on this Mac"
         case (.speakerModels, false): "22 MB download, stays on this Mac; otherwise the first recording downloads them"
         case (.claude, true): "Answers use your Claude Code login"
         case (.claude, false): "Install Claude Code and sign in once in Terminal"
+        case (.anthropicKey, true): "Answers go through the Anthropic API"
+        case (.anthropicKey, false): "Answers go through the Anthropic API: add your key in Settings › Providers"
         case (.microphone, true): "Hears your side of the conversation"
         case (.microphone, false): "Allow in System Settings › Privacy & Security › Microphone"
         case (.screenAudio, true): "Hears the other people on the call"
@@ -116,12 +122,19 @@ struct SetupCheck: Identifiable {
         }
     }
 
-    static func all() -> [SetupCheck] {
-        [
-            SetupCheck(item: .whisper, ok: WhisperService.serverBinary != nil),
-            SetupCheck(item: .model, ok: WhisperService.modelInstalled),
+    /// The checks for the providers picked: whisper.cpp and its model or a Deepgram key, Claude Code or an
+    /// Anthropic key.
+    @MainActor
+    static func all(_ preferences: Preferences) -> [SetupCheck] {
+        let speech = preferences.speechProvider == .whisper
+            ? [SetupCheck(item: .whisper, ok: WhisperService.serverBinary != nil), SetupCheck(item: .model, ok: WhisperService.modelInstalled)]
+            : [SetupCheck(item: .deepgramKey, ok: preferences.savedKeys.contains(.deepgram))]
+        let claude = preferences.claudeProvider == .claudeCode
+            ? SetupCheck(item: .claude, ok: ClaudeService.findBinary() != nil)
+            : SetupCheck(item: .anthropicKey, ok: preferences.savedKeys.contains(.anthropic))
+        return speech + [
             SetupCheck(item: .speakerModels, ok: SpeakerModels.installed),
-            SetupCheck(item: .claude, ok: ClaudeService.findBinary() != nil),
+            claude,
             SetupCheck(item: .microphone, ok: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized),
             SetupCheck(item: .screenAudio, ok: CGPreflightScreenCaptureAccess()),
             SetupCheck(item: .calendar, ok: MeetingCalendar.hasAccess),
