@@ -18,9 +18,8 @@ export async function speech(out: string, voice: string, text: string): Promise<
     if (converted.code === 0) await rm(aiff, { force: true });
 }
 
-/** Writes `out` (a 16 kHz mono WAV) with `seconds` of digital silence: a call where nobody speaks. */
-export async function silence(out: string, seconds: number): Promise<string> {
-    const data = Math.round(seconds * 16_000) * 2;
+/** A 16 kHz mono 16-bit WAV header for `data` bytes of samples. */
+function wavHeader(data: number): Buffer {
     const header = Buffer.alloc(44);
     header.write('RIFF', 0);
     header.writeUInt32LE(36 + data, 4);
@@ -34,7 +33,31 @@ export async function silence(out: string, seconds: number): Promise<string> {
     header.writeUInt16LE(16, 34);
     header.write('data', 36);
     header.writeUInt32LE(data, 40);
-    await writeFile(out, Buffer.concat([header, Buffer.alloc(data)]));
+    return header;
+}
+
+/** Writes `out` (a 16 kHz mono WAV) with `seconds` of digital silence: a call where nobody speaks. */
+export async function silence(out: string, seconds: number): Promise<string> {
+    const data = Math.round(seconds * 16_000) * 2;
+    await writeFile(out, Buffer.concat([wavHeader(data), Buffer.alloc(data)]));
+    return out;
+}
+
+/**
+ * Writes `out` (a 16 kHz mono WAV) with `seconds` of any recording macOS can read (a screen recording's
+ * .mov too), from `from` seconds in.
+ */
+export async function excerpt(source: string, out: string, from: number, seconds: number): Promise<string> {
+    const whole = `${out}.whole.wav`;
+    const converted = await exec('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', source, whole]);
+    if (converted.code !== 0) fail(`afconvert couldn't read ${source}`, converted.output);
+    const wav = await readFile(whole);
+    await rm(whole, { force: true });
+    let offset = 12;
+    while (offset + 8 <= wav.length && wav.toString('ascii', offset, offset + 4) !== 'data') offset += 8 + wav.readUInt32LE(offset + 4);
+    const samples = wav.subarray(offset + 8);
+    const data = samples.subarray(Math.round(from * 16_000) * 2, Math.round((from + seconds) * 16_000) * 2);
+    await writeFile(out, Buffer.concat([wavHeader(data.length), data]));
     return out;
 }
 

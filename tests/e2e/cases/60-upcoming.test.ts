@@ -48,7 +48,11 @@ e2eCase("Upcoming lists today's and tomorrow's calls with a Meet / Zoom / Teams 
     assertEq(countLines(text, /Meetings/), 3, 'each of the three calls should show Meetings as its project');
     assertContains(text, /Cue asks whether to record it/);
 
-    const settings = cue.save('settings.txt', await cue.snapshotText(cue.path('cue-settings.png')));
+    // Settings › Calendar: what Cue does when a meeting starts, and the calendars it looks in.
+    cue.control('settings calendar');
+    let calendar = '';
+    await cue.waitFor('Settings › Calendar', 20, async () => /When a meeting starts/.test(calendar = await cue.snapshotText(cue.path('cue-settings.png'))));
+    const settings = cue.save('settings.txt', calendar);
     assertContains(settings, /When a meeting starts/);
     assertContains(settings, /^Ask/);
     assertContains(settings, /Work$/);

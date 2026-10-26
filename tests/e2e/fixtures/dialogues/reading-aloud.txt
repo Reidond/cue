@@ -1,0 +1,8 @@
+# You read the first answer aloud; the participant asks another question in a breath you take, and you
+# read on. The second question's answer must wait until you pause.
+call | Daniel   | How many hives did you study?
+pause | 4
+me   | Samantha | We studied forty eight hives on six rooftops in the city, over two summers, and counted the bees every week.
+call | Daniel   | Which rooftops?
+me   | Samantha | Each hive was weighed every morning, and the weight told us how much honey the colony brought in that day, which we then compared with the weather and with the flowers in bloom around each roof.
+pause | 10

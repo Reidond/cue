@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let dashboard = DashboardModel()
     private var panel: OverlayPanel!
     private var settingsWindow: NSWindow?
+    private var settingsTabs: NSTabViewController?
     private var dashboardWindow: NSWindow?
     private var recordingObserver: Any?
     private var cueObserver: Any?
@@ -74,17 +75,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hosting = NSHostingView(rootView: OverlayView(state: state, preferences: preferences))
         hosting.sizingOptions = []
         panel.contentView = hosting
-        if !panel.setFrameUsingName("overlay"), let screen = NSScreen.main {
+        if isSandboxed || !panel.setFrameUsingName("overlay"), let screen = NSScreen.main {
             let visible = screen.visibleFrame
             panel.setFrameOrigin(NSPoint(x: visible.maxX - 540, y: visible.maxY - 660))
         }
-        panel.setFrameAutosaveName("overlay")
+        if !isSandboxed { panel.setFrameAutosaveName("overlay") }
         if background {
             keepBehind(panel)
             activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "CUE_BACKGROUND")
         }
 
         state.openSettings = { [weak self] in self?.showSettings() }
+        state.openProviders = { [weak self] in self?.showSettings(.providers) }
         state.openDashboard = { [weak self] in self?.showDashboard() }
         state.openRecordings = { [weak self] id in self?.showDashboard(note: id) }
         state.showOverlay = { [weak self] in self?.panel.orderFrontRegardless() }
@@ -119,21 +121,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !state.cueRunning { state.startListening() } else if panel.isVisible { panel.orderOut(nil) } else { panel.orderFrontRegardless() }
     }
 
-    func showSettings() {
+    /// The Settings window, with a toolbar tab per pane; `tab` picks one, otherwise the last one shown stays.
+    func showSettings(_ tab: SettingsTab? = nil) {
         if settingsWindow == nil {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 480, height: 680),
-                styleMask: [.titled, .closable],
-                backing: .buffered, defer: false
-            )
-            window.title = "Settings"
+            let tabs = NSTabViewController()
+            tabs.tabStyle = .toolbar
+            for pane in SettingsTab.allCases {
+                let content: AnyView = switch pane {
+                case .general: AnyView(GeneralSettings(preferences: preferences))
+                case .providers: AnyView(ProviderSettings(preferences: preferences, state: state))
+                case .calendar: AnyView(CalendarSettings(preferences: preferences, calendar: state.calendar))
+                }
+                let hosting = NSHostingController(rootView: content.frame(width: pane.size.width, height: pane.size.height))
+                hosting.title = pane.title
+                hosting.preferredContentSize = pane.size
+                let item = NSTabViewItem(viewController: hosting)
+                item.label = pane.title
+                item.image = NSImage(systemSymbolName: pane.symbol, accessibilityDescription: pane.title)
+                tabs.addTabViewItem(item)
+            }
+            let window = NSWindow(contentViewController: tabs)
+            window.styleMask = [.titled, .closable]
+            window.toolbarStyle = .preference
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, calendar: state.calendar))
+            window.setContentSize(SettingsTab.general.size)
             window.center()
-            window.setFrameAutosaveName("settings")
+            if !isSandboxed { window.setFrameAutosaveName("settings") }
             if background { keepBehind(window) }
             settingsWindow = window
+            settingsTabs = tabs
         }
+        if let tab, let index = SettingsTab.allCases.firstIndex(of: tab) { settingsTabs?.selectedTabViewItemIndex = index }
         present(settingsWindow)
     }
 
@@ -156,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.delegate = self
             window.contentView = NSHostingView(rootView: DashboardView(state: state, projects: state.projects, model: dashboard))
             window.center()
-            window.setFrameAutosaveName("dashboard")
+            if !isSandboxed { window.setFrameAutosaveName("dashboard") }
             if background { keepBehind(window) }
             dashboardWindow = window
         }
@@ -342,8 +360,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// (a name suggestion on the open note), `download speakers` (Home's Download for the
     /// speaker models), `show TEXT` (the overlay's row of the question with TEXT in it), `newest`
     /// (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions
-    /// waiting for it) and `record` (the overlay's record button, or Stop Recording in its timer's
-    /// menu).
+    /// waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's
+    /// menu), `settings general|providers|calendar` (a Settings tab), `provider NAME` (a provider
+    /// picked in Settings › Providers: claudeCode, anthropicAPI, whisper or deepgram),
+    /// `key anthropic|deepgram [KEY]` (a key pasted into its field and saved; without one, Remove) and
+    /// `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes).
     private func startControl(from path: String) {
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -404,6 +425,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             state.showNewest()
         case "prepare":
             if let exchange = state.exchanges.last(where: \.waiting) { state.prepare(exchange.id) }
+        case "settings":
+            showSettings(SettingsTab(rawValue: argument))
+        case "size":
+            // The dashboard's edge dragged to make it W × H points (as small as it lets it be).
+            let numbers = argument.split(separator: " ").compactMap { Double($0) }
+            if numbers.count == 2, let window = dashboardWindow { window.setContentSize(NSSize(width: numbers[0], height: numbers[1])) }
+        case "provider":
+            if let provider = ClaudeProvider(rawValue: argument) { preferences.claudeProvider = provider }
+            if let provider = SpeechProvider(rawValue: argument) { preferences.speechProvider = provider }
+        case "key":
+            let sides = argument.split(separator: " ", maxSplits: 1).map(String.init)
+            guard let key = sides.first.flatMap(APIKey.init(rawValue:)) else { break }
+            if sides.count > 1 { try? preferences.saveKey(sides[1], for: key) } else { preferences.removeKey(key) }
         case "page":
             showDashboard()
             switch argument {

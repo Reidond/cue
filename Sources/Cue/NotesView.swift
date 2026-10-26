@@ -18,7 +18,9 @@ struct ProjectNotesView: View {
     }
 
     var body: some View {
-        HSplitView {
+        // Not an HSplitView: that takes the note's unwrapped width as its least, and in a narrow window
+        // the page would come out wider than it, cut off on both sides.
+        HStack(spacing: 0) {
             List(selection: $selection) {
                 ForEach(filtered) { file in
                     RecordingRow(file: file, processing: store.isProcessing(file.id))
@@ -37,7 +39,7 @@ struct ProjectNotesView: View {
             .scrollContentBackground(.hidden)
             .padding(.leading, 10)
             .searchable(text: $search, prompt: "Search notes")
-            .frame(minWidth: 220, idealWidth: 270, maxWidth: 380)
+            .frame(width: 280)
             .overlay {
                 if files.isEmpty {
                     ContentUnavailableView("No Notes", systemImage: "waveform",
@@ -47,6 +49,8 @@ struct ProjectNotesView: View {
                 }
             }
 
+            Divider()
+
             Group {
                 if let id = selection, let file = store.file(id), file.projectID == project.id {
                     RecordingDetail(store: store, player: state.player, file: file)
@@ -55,7 +59,7 @@ struct ProjectNotesView: View {
                                            description: Text("Summaries and transcripts are saved as Markdown in the project’s Notes folder."))
                 }
             }
-            .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {

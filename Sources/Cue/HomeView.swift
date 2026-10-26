@@ -11,7 +11,7 @@ struct HomeView: View {
     @ObservedObject var downloader: ModelDownloader
     @ObservedObject var speakers: SpeakerModels
     @ObservedObject var model: DashboardModel
-    @State private var checks = SetupCheck.all()
+    @State private var checks: [SetupCheck] = []
 
     private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -22,7 +22,8 @@ struct HomeView: View {
                     FirstProject { model.creatingProject = true }
                 }
                 if !checks.allSatisfy(\.ok) {
-                    SetupCard(checks: checks, downloader: downloader, speakers: speakers, calendar: state.calendar)
+                    SetupCard(checks: checks, downloader: downloader, speakers: speakers, calendar: state.calendar,
+                              openProviders: state.openProviders)
                 }
                 if !projects.projects.isEmpty {
                     RecentNotes(files: Array(recordings.files.prefix(8)), projects: projects) { model.show($0) }
@@ -36,9 +37,12 @@ struct HomeView: View {
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
         .navigationTitle("Home")
-        .onReceive(refresh) { _ in checks = SetupCheck.all() }
-        .onChange(of: speakers.progress == nil) { checks = SetupCheck.all() }
-        .onAppear { recordings.reload() }
+        .onReceive(refresh) { _ in checks = SetupCheck.all(state.preferences) }
+        .onChange(of: speakers.progress == nil) { checks = SetupCheck.all(state.preferences) }
+        .onAppear {
+            checks = SetupCheck.all(state.preferences)
+            recordings.reload()
+        }
     }
 }
 
@@ -73,6 +77,7 @@ private struct SetupCard: View {
     @ObservedObject var downloader: ModelDownloader
     let speakers: SpeakerModels
     let calendar: MeetingCalendar
+    let openProviders: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -87,7 +92,8 @@ private struct SetupCard: View {
                 VStack(spacing: 0) {
                     ForEach(Array(checks.enumerated()), id: \.element.id) { index, check in
                         if index > 0 { Divider() }
-                        SetupRow(check: check, downloader: downloader, speakers: speakers, calendar: calendar).padding(.vertical, 8)
+                        SetupRow(check: check, downloader: downloader, speakers: speakers, calendar: calendar,
+                                 openProviders: openProviders).padding(.vertical, 8)
                     }
                 }
                 .padding(.horizontal, 6)
@@ -101,6 +107,7 @@ struct SetupRow: View {
     @ObservedObject var downloader: ModelDownloader
     @ObservedObject var speakers: SpeakerModels
     let calendar: MeetingCalendar
+    let openProviders: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -154,6 +161,8 @@ struct SetupRow: View {
                 }
             case .claude:
                 Link("Get Claude Code", destination: URL(string: "https://claude.com/claude-code")!)
+            case .anthropicKey, .deepgramKey:
+                Button("Open Settings", action: openProviders)
             case .calendar:
                 if MeetingCalendar.systemAccess == .notDetermined {
                     Button("Allow Access", action: calendar.requestAccess)

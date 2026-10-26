@@ -55,6 +55,11 @@ struct Answer: Identifiable {
 
     /// Claude's "—": nothing to answer (even when it explains why after the dash).
     var isNotAQuestion: Bool { done && text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("—") }
+    /// The first words of a real answer have come (not "—").
+    var isUnderWay: Bool {
+        let said = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !said.hasPrefix("—") && said.contains { !"—- \n".contains($0) }
+    }
 
     /// Claude's first line, once it is complete.
     var firstLine: String? {
@@ -112,11 +117,36 @@ final class AppState: ObservableObject {
     /// Exchanges that came in while the view was held: kept out of the list until the "new questions"
     /// button (or the newest end of the list) shows them.
     @Published private(set) var unseen: Set<UUID> = []
+    /// Whether the speaker reads the answer in view aloud: they started talking after it came into view and
+    /// haven't paused for `readingPause` since. New questions meanwhile wait in the list's New group, under
+    /// the answer being read, and the newest comes into view when they pause — the text being read never
+    /// moves. Talking once they're done with it ("Thank you for the question") holds nothing back.
+    private enum Reading { case notYet, reading, done }
+    private var reading = Reading.notYet
+    private var presenterSpoke = Date.distantPast
+    private let readingPause: TimeInterval = 5
+    /// The exchanges held back while the speaker read.
+    private var heldWhileReading: Set<UUID> = []
+    /// Exchanges shown in full at some point: once another takes their place, they've been answered.
+    @Published private(set) var seen: Set<UUID> = []
+
+    /// The exchange shown in full, at the top of the list.
+    var current: Exchange? { exchanges.first { $0.id == expandedID } }
+    /// Under it, newest first: the ones not shown in full yet — still coming, ready, or waiting for
+    /// Prepare Answer.
+    var newExchanges: [Exchange] {
+        exchanges.reversed().filter { $0.id != expandedID && !unseen.contains($0.id) && !seen.contains($0.id) && !$0.isNotAQuestion }
+    }
+    /// At the bottom, newest first: the ones shown and left, and remarks that weren't questions.
+    var answeredExchanges: [Exchange] {
+        exchanges.reversed().filter { $0.id != expandedID && !unseen.contains($0.id) && (seen.contains($0.id) || $0.isNotAQuestion) }
+    }
     @Published var micLevel: Float = 0
     @Published var callLevel: Float = 0
     @Published var mic = ServiceStatus()
     @Published var call = ServiceStatus()
-    @Published var whisper = ServiceStatus()
+    /// Speech recognition, by whichever provider: whisper-server's start, or Deepgram's key check.
+    @Published var speech = ServiceStatus()
     @Published var claude = ServiceStatus()
     @Published private(set) var knowledge: KnowledgeBase?
     @Published private(set) var readingMaterials = false
@@ -126,13 +156,21 @@ final class AppState: ObservableObject {
     private var capturing = false
 
     var openSettings: () -> Void = {}
+    /// Settings on its Providers tab.
+    var openProviders: () -> Void = {}
     var openDashboard: () -> Void = {}
     var openRecordings: (_ selecting: String?) -> Void = { _ in }
     var showOverlay: () -> Void = {}
     var hideOverlay: () -> Void = {}
 
-    private var whisperService = WhisperService()
-    private var claudeService: ClaudeService?
+    private let whisperService = WhisperService()
+    private let deepgramService = DeepgramService()
+    /// The service `speech` is about: the provider's.
+    private lazy var recognizer: SpeechRecognizer = preferences.speechProvider == .deepgram ? deepgramService : whisperService
+    private var rehearsalStarted = false
+    private var claudeService: ClaudeSession?
+    /// The provider `claudeService` goes through.
+    private var claudeProvider: ClaudeProvider?
     private let micCapture = MicCapture()
     private let systemCapture = SystemAudioCapture()
     private let micSegmenter = SpeechSegmenter()
@@ -185,7 +223,7 @@ final class AppState: ObservableObject {
     var status: (text: String, kind: StatusKind) {
         if readingMaterials { return ("Reading materials…", .working) }
         if let progress = downloader.progress { return ("Downloading speech model \(Int(progress * 100))%", .working) }
-        if !whisper.ok { return (whisper.detail, whisper.detail.hasPrefix("Starting") ? .working : .problem) }
+        if !speech.ok { return (speech.detail, speech.detail.hasPrefix("Starting") ? .working : .problem) }
         if !claude.ok { return (claude.detail, claude.detail.contains("…") ? .working : .problem) }
         if !call.ok && !mic.ok { return ("No audio", .problem) }
         guard let activeProject else { return ("No project", .problem) }
@@ -228,11 +266,20 @@ final class AppState: ObservableObject {
         systemCapture.onStop = { error in
             Task { @MainActor in self.call = ServiceStatus(ok: false, detail: "Call audio stopped: \(error.localizedDescription)") }
         }
-        downloader.onFinished = { [weak self] in self?.startWhisper() }
+        downloader.onFinished = { [weak self] in if self?.preferences.speechProvider == .whisper { self?.startSpeech() } }
+        preferences.onKeyChange = { [weak self] key, saved in self?.keyChanged(key, saved: saved) }
+        log.write("🤖 Claude: \(preferences.claudeProvider.title)")
+        log.write("🗣 Speech recognition: \(preferences.speechProvider.title)")
+        let deepgramService = deepgramService
+        Task {
+            await deepgramService.setProblemHandler { problem in
+                Task { @MainActor in self.speechProblem(problem) }
+            }
+        }
 
         applyLanguage()
         rebuildKnowledge()
-        startWhisper()
+        startSpeech()
         // Listening starts with Start Cue (or a recording), not at launch.
         mic = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
         call = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
@@ -243,6 +290,7 @@ final class AppState: ObservableObject {
             Task { @MainActor in
                 self.micLevel = self.micSegmenter.level
                 self.callLevel = self.systemSegmenter.level
+                self.checkReading()
             }
         }
     }
@@ -255,6 +303,7 @@ final class AppState: ObservableObject {
         claudeService?.stop()
         judge.stop()
         whisperService.stop()
+        deepgramService.stop()
     }
 
     private func observeSettings() {
@@ -301,6 +350,23 @@ final class AppState: ObservableObject {
             .sink { [weak self] model in self?.restartClaude(model: model) }
             .store(in: &subscriptions)
 
+        // Settings › Providers: speech recognition, live and after a recording, by the provider picked there…
+        preferences.$speechProvider.removeDuplicates().dropFirst()
+            .sink { [weak self] provider in
+                self?.log.write("🗣 Speech recognition: \(provider.title)")
+                self?.startSpeech(provider: provider)
+            }
+            .store(in: &subscriptions)
+        // …and answers, the judge and summaries too.
+        preferences.$claudeProvider.removeDuplicates().dropFirst()
+            .sink { [weak self] provider in
+                guard let self else { return }
+                self.log.write("🤖 Claude: \(provider.title)")
+                self.restartClaude(provider: provider)
+                if let context = self.knowledgeInputs?.context { self.judge.configure(context, provider: provider) }
+            }
+            .store(in: &subscriptions)
+
         projects.objectWillChange
             .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &subscriptions)
@@ -316,10 +382,11 @@ final class AppState: ObservableObject {
 
     private func applyLanguage() {
         let lexicon = self.lexicon
-        let whisperService = whisperService
         let language = activeProject?.language ?? Project.defaultLanguage, prompt = activeProject?.whisperPrompt ?? ""
-        let hallucinations = lexicon.hallucinations
-        Task { await whisperService.configure(language: language, vocabularyPrompt: prompt, hallucinations: hallucinations) }
+        let terms = activeProject?.terms ?? [], hallucinations = lexicon.hallucinations
+        for recognizer in [whisperService, deepgramService] as [SpeechRecognizer] {
+            Task { await recognizer.configure(language: language, prompt: prompt, terms: terms, hallucinations: hallucinations) }
+        }
     }
 
     private static func knowledgeInputs(project: Project?, speaker: String) -> KnowledgeInputs {
@@ -346,16 +413,20 @@ final class AppState: ObservableObject {
                 let files = knowledge.documents.map { "\($0.name) — \($0.error ?? $0.summary)" }.joined(separator: "; ")
                 self.log.write("📚 Materials for \(project) (~\(knowledge.estimatedTokens / 1000)k tokens): \(files.isEmpty ? "none" : files)")
                 if changed || self.claudeService == nil { self.restartClaude(model: self.preferences.model) }
-                self.judge.configure(context)
+                self.judge.configure(context, provider: self.preferences.claudeProvider)
             }
         }
     }
 
-    func restartClaude(model: ClaudeService.Model? = nil) {
+    /// `provider` when it just changed (the preference still has the old one).
+    func restartClaude(model: ClaudeService.Model? = nil, provider: ClaudeProvider? = nil) {
         guard knowledge != nil else { return }
         claude = ServiceStatus(ok: false, detail: "Warming up…")
-        if claudeService == nil {
-            claudeService = ClaudeService(systemPromptFile: KnowledgeBase.systemPromptFile, model: preferences.model, handlers: .init(
+        let provider = provider ?? preferences.claudeProvider
+        if claudeService == nil || provider != claudeProvider {
+            claudeService?.stop()
+            claudeProvider = provider
+            claudeService = makeClaudeSession(provider, systemPromptFile: KnowledgeBase.systemPromptFile, model: preferences.model, handlers: .init(
                 onDelta: { id, text in Task { @MainActor in self.appendDelta(id, text) } },
                 onDone: { id, error in Task { @MainActor in self.finish(id, error: error) } },
                 onReady: { ready, detail in Task { @MainActor in self.claude = ServiceStatus(ok: ready, detail: detail) } }
@@ -364,17 +435,56 @@ final class AppState: ObservableObject {
         claudeService?.start(model: model ?? preferences.model)
     }
 
-    func startWhisper() {
-        whisper = ServiceStatus(ok: false, detail: "Starting speech recognition…")
-        let whisperService = whisperService
+    /// A key saved or removed in Settings › Providers: the provider that uses it starts again with it.
+    private func keyChanged(_ key: APIKey, saved: Bool) {
+        log.write("🔑 \(key.title) \(saved ? "saved in the keychain" : "removed")")
+        switch key {
+        case .anthropic where preferences.claudeProvider == .anthropicAPI:
+            restartClaude()
+            judge.restart()
+        case .deepgram where preferences.speechProvider == .deepgram:
+            startSpeech()
+        default:
+            break
+        }
+    }
+
+    /// Starts the provider's speech recognition (`provider` when it just changed): whisper-server, or a
+    /// check of the Deepgram key. The other one stops, so whisper-server doesn't hold the GPU for nothing.
+    func startSpeech(provider: SpeechProvider? = nil) {
+        let provider = provider ?? preferences.speechProvider
+        recognizer = provider == .deepgram ? deepgramService : whisperService
+        (provider == .deepgram ? whisperService as SpeechRecognizer : deepgramService).stop()
+        for segmenter in [micSegmenter, systemSegmenter] {
+            segmenter.partialFrames = Int(recognizer.partialInterval * whisperSampleRate) / 320
+        }
+        speech = ServiceStatus(ok: false, detail: "Starting speech recognition…")
+        let recognizer = recognizer
         Task {
             do {
-                try await whisperService.start()
-                whisper = ServiceStatus(ok: true, detail: "Speech recognition ready")
+                try await recognizer.start()
+                guard recognizer === self.recognizer else { return }
+                speech = ServiceStatus(ok: true, detail: "Speech recognition ready")
                 startRehearsalIfRequested()
             } catch {
-                whisper = ServiceStatus(ok: false, detail: error.localizedDescription)
+                guard recognizer === self.recognizer else { return }
+                speech = ServiceStatus(ok: false, detail: error.localizedDescription)
+                log.write("⚠︎ Speech recognition unavailable: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// A Deepgram stream failed after starting fine (a key revoked, no credit left, the connection lost), or,
+    /// with nil, one answered again after that.
+    private func speechProblem(_ problem: String?) {
+        guard preferences.speechProvider == .deepgram else { return }
+        if let problem {
+            guard speech.ok || speech.detail != problem else { return }
+            speech = ServiceStatus(ok: false, detail: problem)
+            log.write("⚠︎ Speech recognition unavailable: \(problem)")
+        } else if !speech.ok {
+            speech = ServiceStatus(ok: true, detail: "Speech recognition ready")
+            log.write("🗣 Speech recognition ready again: Deepgram")
         }
     }
 
@@ -426,7 +536,8 @@ final class AppState: ObservableObject {
 
     /// Rehearsal mode: CUE_REHEARSE_PARTICIPANT=/path/to/audio plays a recording as the call.
     private func startRehearsalIfRequested() {
-        guard let path = ProcessInfo.processInfo.environment["CUE_REHEARSE_PARTICIPANT"] else { return }
+        guard let path = ProcessInfo.processInfo.environment["CUE_REHEARSE_PARTICIPANT"], !rehearsalStarted else { return }
+        rehearsalStarted = true
         Task {
             while !claude.ok || judge.state == .starting { try? await Task.sleep(for: .milliseconds(300)) }
             do {
@@ -462,15 +573,16 @@ final class AppState: ObservableObject {
             guard let self else { return }
             switch event {
             case .onset:
+                Task { await self.recognizer.begin(channel: channel) }
                 Task { @MainActor in self.speechStarted(channel) }
             case .partial(let audio):
                 Task {
-                    guard let text = await self.whisperService.transcribePartial(audio, channel: channel), !text.isEmpty else { return }
+                    guard let text = await self.recognizer.transcribePartial(audio, channel: channel), !text.isEmpty else { return }
                     await MainActor.run { if self.partial[channel] != nil { self.partial[channel] = text } }
                 }
             case .final(let audio, let speechStarted, let speechEnded):
                 Task {
-                    let text = audio.isEmpty ? "" : await self.whisperService.transcribeFinal(audio)
+                    let text = await self.recognizer.transcribeFinal(audio, channel: channel)
                     await MainActor.run {
                         self.utteranceFinished(channel, text: text, speechStarted: speechStarted, speechEnded: speechEnded)
                     }
@@ -486,7 +598,10 @@ final class AppState: ObservableObject {
             detector.participantsSpeaking()
         case .me:
             // With speakers instead of headphones the mic also hears the call; don't mistake that for the user.
-            if !systemSegmenter.isSpeaking { detector.presenterSpeaking() }
+            guard !systemSegmenter.isSpeaking else { return }
+            detector.presenterSpeaking()
+            presenterSpoke = Date()
+            if reading == .notYet && expandedID != nil { reading = .reading }
         }
     }
 
@@ -704,8 +819,15 @@ final class AppState: ObservableObject {
         } else {
             for question in questions { log.write("❔ **Question (Auto is off):** \(question)") }
         }
-        // Asked for by the user: show it now. Noticed by Cue: it waits as a row until it's a real answer.
-        if force { expand(exchange.id) } else if holding || listScrolled { unseen.insert(exchange.id) }
+        // Asked for by the user: show it now. Noticed by Cue: it waits as a row until it's a real answer,
+        // or under the button while the view is held or the speaker reads the answer in view.
+        if force {
+            expand(exchange.id)
+        } else if holding || listScrolled {
+            unseen.insert(exchange.id)
+        } else if reading == .reading {
+            hold(exchange.id)
+        }
     }
 
     /// Prepare Answer on questions noticed with Auto off.
@@ -752,6 +874,9 @@ final class AppState: ObservableObject {
         guard let index = exchanges.firstIndex(where: { $0.id == id }) else { return }
         selected = index
         expandedID = id
+        seen.insert(id)
+        reading = .notYet
+        heldWhileReading = []
         holding = index < exchanges.count - 1
         unseen.remove(id)
         if !holding { unseen = [] }
@@ -762,13 +887,39 @@ final class AppState: ObservableObject {
         if let newest = exchanges.last { expand(newest.id) }
     }
 
-    /// Cue brings an exchange into view by itself, unless the user holds the view on another one.
+    /// Cue brings an exchange into view by itself, unless the user holds the view on another one or reads
+    /// the one in view aloud.
     private func reveal(_ index: Int) {
         let id = exchanges[index].id
         guard id != expandedID else { return }
         if holding || listScrolled { unseen.insert(id); return }
+        if reading == .reading { return hold(id) }
         selected = index
         expandedID = id
+        seen.insert(id)
+        reading = .notYet
+    }
+
+    /// Keeps a new exchange in the New group, under the answer the speaker reads aloud.
+    private func hold(_ id: UUID) {
+        guard heldWhileReading.insert(id).inserted, let exchange = exchanges.first(where: { $0.id == id }) else { return }
+        log.write("📖 Waits while you read the answer in view: \(exchange.answers.map(\.question).joined(separator: " / "))")
+    }
+
+    /// The speaker paused for `readingPause` after reading: what came in meanwhile shows, the newest
+    /// answer under way in full. Checked every tick of the level meters, which also notes that they're
+    /// still talking (their utterance isn't transcribed yet when it ends).
+    private func checkReading() {
+        guard reading == .reading else { return }
+        if micSegmenter.isSpeaking && !systemSegmenter.isSpeaking { presenterSpoke = Date(); return }
+        guard Date().timeIntervalSince(presenterSpoke) >= readingPause else { return }
+        reading = .done
+        let held = heldWhileReading
+        heldWhileReading = []
+        guard !held.isEmpty, !holding, !listScrolled else { return }
+        guard let index = exchanges.lastIndex(where: { held.contains($0.id) && $0.answers.contains(where: \.isUnderWay) }) else { return }
+        log.write("📖 Shown now that you've paused: \(exchanges[index].answers.map(\.question).joined(separator: " / "))")
+        reveal(index)
     }
 
     private func position(of answer: UUID) -> (exchange: Int, part: Int)? {
@@ -789,10 +940,8 @@ final class AppState: ObservableObject {
         if exchanges[index].answers[part].firstTokenAt == nil { exchanges[index].answers[part].firstTokenAt = Date() }
         exchanges[index].answers[part].text += text
         // The first words of a real answer (not "—") bring it into view, unless a newer one is there.
-        let said = exchanges[index].answers[part].text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let real = !said.hasPrefix("—") && said.contains { !"—- \n".contains($0) }
         let shown = exchanges.firstIndex { $0.id == expandedID }
-        if real, shown.map({ $0 < index }) ?? true { reveal(index) }
+        if exchanges[index].answers[part].isUnderWay, shown.map({ $0 < index }) ?? true { reveal(index) }
     }
 
     private func finish(_ id: UUID, error: String?) {

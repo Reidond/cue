@@ -2,7 +2,7 @@
 // missing: nothing here fakes it.
 import { accessSync, constants, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CLAUDE, REAL_SUPPORT } from './config.ts';
+import { ANTHROPIC, CLAUDE, DEEPGRAM, KEYCHAIN_ITEMS, REAL_SUPPORT } from './config.ts';
 import { exists, literal } from './files.ts';
 import { exec } from './process.ts';
 import { skip } from './results.ts';
@@ -67,6 +67,29 @@ export function needWhisperCli(): string {
 /** The real `claude` CLI (`run.ts --real-claude`). */
 export function needRealClaude(): void {
     if (CLAUDE !== 'real') skip('needs --real-claude');
+}
+
+/**
+ * A key for a real service, from the login keychain (KEYCHAIN_ITEMS); skips without one. Never print it:
+ * the harness writes it only into the sandbox's key store, which goes when the case ends.
+ */
+export async function keychainKey(service: keyof typeof KEYCHAIN_ITEMS): Promise<string> {
+    const found = await exec('security', ['find-generic-password', '-s', KEYCHAIN_ITEMS[service], '-w']);
+    const key = found.stdout.trim();
+    if (found.code !== 0 || key === '') skip(`no "${KEYCHAIN_ITEMS[service]}" in the login keychain (see AGENTS.md › Testing)`);
+    return key;
+}
+
+/** The real Anthropic API (`run.ts --real-anthropic`), with its key in the keychain. */
+export async function needRealAnthropic(): Promise<void> {
+    if (ANTHROPIC !== 'real') skip('needs --real-anthropic');
+    await keychainKey('anthropic');
+}
+
+/** The real Deepgram (`run.ts --real-deepgram`), with its key in the keychain. */
+export async function needRealDeepgram(): Promise<void> {
+    if (DEEPGRAM !== 'real') skip('needs --real-deepgram');
+    await keychainKey('deepgram');
 }
 
 let voices: Promise<string[]> | undefined;

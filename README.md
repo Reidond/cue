@@ -22,7 +22,7 @@ and answers it finds in them.
 ```
 mic ─────────┐                                   ┌─ instant: best prepared answer (offline match)
              ├─ VAD ─ whisper.cpp (local) ─ question detector ─┤
-call audio ──┘   (ScreenCaptureKit)                            └─ Claude (warm Claude Code session) ─ streamed answer
+call audio ──┘   (ScreenCaptureKit)  or Deepgram               └─ Claude (warm Claude Code session or API) ─ streamed answer
 ```
 
 - **Materials** are read natively: PDFKit for PDF, the system `unzip` plus an
@@ -31,7 +31,10 @@ call audio ──┘   (ScreenCaptureKit)                            └─ Clau
   followed by an `Answer:` line, also in speaker notes; a trailing `(Name)` after
   the question records who asked it.
 - **Speech recognition** runs on your Mac with `whisper-server` and the
-  `large-v3-turbo` model (~1 s for a 10 s phrase on Apple silicon).
+  `large-v3-turbo` model (~1 s for a 10 s phrase on Apple silicon), or, if you
+  pick it in **Settings › Providers**, in the cloud with Deepgram's Nova-3:
+  each phrase is streamed to Deepgram while it's said (only speech, never the
+  silence between), with the project's language and names and terms.
 - **Who is speaking** comes from the source: the microphone is you, system
   audio is everyone else on the call. In a recording's notes, the people on
   the call are told apart by voice afterwards, on your Mac, with
@@ -47,7 +50,10 @@ call audio ──┘   (ScreenCaptureKit)                            └─ Clau
   can't be reached, sentences ending in `?` count instead.
 - **Answers** come from one long-lived Claude Code session (`claude -p` with
   stream-json), using your Claude Code login — no API key. The session is warmed
-  up at launch, and your materials stay in Claude's prompt cache.
+  up at launch, and your materials stay in Claude's prompt cache. Or, picked in
+  **Settings › Providers**, from the Anthropic API with your API key: the same
+  conversation, with the materials cached for an hour and written into the cache
+  before the first question. The question judge and the summaries go the same way.
 - **The overlay** is a set of Liquid Glass elements following Apple's HIG:
   separate floating pieces, no glass on glass, semantic colors, standard
   controls. It floats above full-screen slides, never takes focus and is hidden
@@ -67,7 +73,9 @@ Cue opens its dashboard. On **Home**:
    (22 MB; otherwise the first recording downloads them), and allow **Microphone** and
    **Screen & System Audio Recording** when macOS asks; after granting the
    second one, quit and reopen Cue. The checklist shows what is still missing.
-   Claude Code must be installed and signed in (`claude` in Terminal once).
+   Claude Code must be installed and signed in (`claude` in Terminal once) —
+   or pick the Anthropic API and Deepgram in **Settings › Providers** and paste
+   their keys there (see [Providers](#providers)).
 2. Click **New Project** (⌘N) and name it.
 
 On the project's page:
@@ -115,9 +123,15 @@ and your notes move from `~/Documents/Cue Recordings` into its `Notes/`.
 Click any transcript line to get an answer for it, or type a question into the
 field at the bottom. Drag the top bar to move Cue.
 
-Each question stays in Cue's list, newest on top. While you have an older one
-open, or have scrolled down, the list stays where it is: new questions wait
-under a **New Question** button at the top until you click it.
+Each question stays in Cue's list: the answer in view on top, then **New** —
+questions you haven't had in full yet (still coming, ready, or waiting for
+Prepare Answer) — and **Answered** at the bottom, each newest first. While you
+have an older one open, or have scrolled down, the list stays where it is: new
+questions wait under a **New Question** button at the top until you click it.
+While you read the answer in view aloud, a new question waits in **New**, under
+it; once you pause for five seconds, the newest comes into view by itself and
+the one you read moves to **Answered**. Saying «Thank you for the question» while
+the next answer loads holds nothing back.
 
 ## Recording calls
 
@@ -132,7 +146,8 @@ note in the dashboard, where a list shows the steps it goes through next:
 2. **Improving transcript** — the live transcript is written phrase by phrase
    and gets words wrong that the rest of the call makes obvious («дотатниці»
    for «до п'ятниці»). Whisper now reads each side's whole recording again,
-   with beam search and the project's language, occasion and names and terms,
+   with beam search and the project's language, occasion and names and terms
+   (or Deepgram does, with them as keyterms, when it is the speech provider),
    and its transcript replaces the live one — each line still at the moment it
    was said. This takes about 6 minutes per hour of call on an M2 Pro, and runs
    at background priority, so a call you start meanwhile isn't slowed down.
@@ -207,7 +222,8 @@ a note is being processed, each side is also kept on its own in
 ready.
 
 Recording is local: speech recognition runs on your Mac and only the transcript
-is sent to Claude for the summary; the audio never leaves your Mac. Let people
+is sent to Claude for the summary; the audio never leaves your Mac — unless you
+pick Deepgram, which then hears the call too. Let people
 know when you record — consent rules vary by place.
 
 Tips:
@@ -218,6 +234,26 @@ Tips:
 - **Sonnet** gives noticeably more careful answers; **Haiku** is about a second
   faster to finish. Switch in Settings.
 - Each session is saved as Markdown in `~/Library/Application Support/Cue/sessions/`.
+
+### Providers
+
+**Settings › Providers** picks who does the work that isn't done on your Mac:
+
+- **Claude** — answers, the question judge and summaries: **Claude Code** (your
+  Claude plan, through `claude` signed in on this Mac) or the **Anthropic API**,
+  billed per request to your Claude Console account. The model (Sonnet or Haiku)
+  is chosen here too.
+- **Speech recognition** — the live transcript and the second pass over a
+  recorded call: **Whisper on this Mac** (private, needs a fast Mac and the
+  1.6 GB model) or **Deepgram** (Nova-3 in the cloud: fast on any Mac, but the
+  call's audio goes to Deepgram).
+
+A cloud provider needs its API key: paste it into the field under it and press
+**Save**. Keys are kept in your login keychain (as `Cue — Anthropic API key` and
+`Cue — Deepgram API key`), never in Cue's settings or logs; **Change…** replaces
+one and **Remove** deletes it. The status under each provider says whether it's
+ready, or what's wrong — a key it turned down, no key yet, no connection.
+Switching takes effect at once, without restarting Cue.
 
 ### Meetings from your calendar
 
@@ -270,8 +306,22 @@ the types; there is nothing to build or install to run them):
 node tests/e2e/run.ts                 # build, then run every case
 node tests/e2e/run.ts --no-build 1    # only cases whose name starts with 1
 node tests/e2e/run.ts --real-claude   # use the real Claude Code instead of the stand-in
+node tests/e2e/run.ts --real-anthropic --real-deepgram 7 8   # the real cloud providers
 cd tests/e2e && npm ci && npm run typecheck   # type-check the cases and the harness
 ```
+
+The cloud providers have stand-ins too, served from the case itself; the real
+ones need keys, which the runner takes from your login keychain. Add each once,
+typing the key when `security` asks for it, so that it never shows up in your
+shell history:
+
+```bash
+security add-generic-password -a "$USER" -s "Cue e2e Anthropic API key" -w
+security add-generic-password -a "$USER" -s "Cue e2e Deepgram API key" -w
+```
+
+A case hands a key only to the sandboxed Cue it runs, and removes it from the
+sandbox when it ends, even from one it keeps.
 
 `npm test` in `tests/e2e` is `node run.ts`. A run stays out of your way, so you
 can keep working while it goes: each case's Cue has `CUE_BACKGROUND=1`, which
@@ -316,15 +366,18 @@ CUE_HOME=$(mktemp -d) CUE_NO_LIVE_AUDIO=1 CUE_APPEARANCE=dark CUE_SNAPSHOT=/tmp/
   build/Cue.app/Contents/MacOS/Cue    # /tmp/cue-dashboard.png; /tmp/cue.png is captured once Start Cue shows it
 ```
 
-`CUE_HOME=dir` keeps all files and settings in `dir`, `CUE_CLAUDE_BIN` swaps in
+`CUE_HOME=dir` keeps all files and settings in `dir` (API keys too, in
+`dir/Keychain.json`, instead of the keychain), `CUE_CLAUDE_BIN` swaps in
 another `claude` and `CUE_WHISPER_CLI` another `whisper-cli` for the second
-pass, `CUE_SPEAKER_MODELS=dir` keeps the speaker models in `dir`,
+pass, `CUE_ANTHROPIC_URL` and `CUE_DEEPGRAM_URL` point Cue at other servers for
+the Anthropic API and Deepgram, `CUE_SPEAKER_MODELS=dir` keeps the speaker models in `dir`,
 `CUE_PROJECT=name` picks the project at launch, and
 `CUE_CONTROL=file` runs each line appended to the file as a click would
 (`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
 `ask TEXT`, `timestamp 00:00:12`, `assign EVENT | PROJECT`,
 `notification record|dismiss`, `rename NAME | NEW`, `apply LABEL`,
-`download speakers`, `show TEXT`, `newest`, `prepare`, `record`; see `AGENTS.md`) and keeps notifications in the
+`download speakers`, `show TEXT`, `newest`, `prepare`, `record`, `settings providers`,
+`provider deepgram`, `key anthropic KEY`, `size 820 700`; see `AGENTS.md`) and keeps notifications in the
 session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` reads the
 calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs using the
 microphone from a text file, both again on every check; `CUE_MEETING_TICK` and

@@ -236,7 +236,8 @@ final class RecordingStore: ObservableObject {
     private let projects: ProjectStore
     private let speakerModels: SpeakerModels
     private let log: SessionLog
-    private var summarizers: [String: Process] = [:]
+    /// What cancels each summary being written.
+    private var summarizers: [String: () -> Void] = [:]
     private var secondPasses: [String: SecondPassProcess] = [:]
     /// Second passes run one at a time: each loads the 1.6 GB speech model.
     private var secondPassRunning = false
@@ -403,7 +404,8 @@ final class RecordingStore: ObservableObject {
         defer { secondPasses[id] = nil }
         let started = Date()
         let job = SecondPass.Job(folder: file.workingAudio, startedAt: live.startedAt, endedAt: live.endedAt,
-                                 language: language, prompt: project.whisperPrompt, lexicon: project.lexicon)
+                                 language: language, prompt: project.whisperPrompt, terms: project.terms,
+                                 lexicon: project.lexicon, provider: preferences.speechProvider)
         do {
             let result = try await SecondPass.run(job, child: child) { [weak self] done in
                 Task { @MainActor in
@@ -557,7 +559,8 @@ final class RecordingStore: ObservableObject {
                                              unnamed: people.dropFirst().filter(lexicon.isParticipantLabel),
                                              language: lexicon.name, occasion: project?.occasion ?? "",
                                              namesAndTerms: project?.vocabulary ?? "", meeting: meeting)
-        summarizers[id] = Summarizer.run(system: prompt, transcript: text, model: preferences.model, onText: { [weak self] partial in
+        summarizers[id] = Summarizer.run(system: prompt, transcript: text, model: preferences.model,
+                                         provider: preferences.claudeProvider, onText: { [weak self] partial in
             Task { @MainActor in if self?.summarizing.contains(id) == true { self?.liveSummary[id] = partial } }
         }, completion: { [weak self] result in
             Task { @MainActor in self?.finishSummary(id, result, completion: completion) }
@@ -678,7 +681,7 @@ final class RecordingStore: ObservableObject {
     /// Moves the note and its audio to the Trash; working audio, if it is still being processed, is deleted.
     func moveToTrash(_ id: String) {
         guard let file = file(id) else { return }
-        summarizers[id]?.terminate()
+        summarizers[id]?()
         secondPasses[id]?.terminate()
         progress[id] = nil
         try? FileManager.default.removeItem(at: file.workingAudio)
@@ -688,7 +691,7 @@ final class RecordingStore: ObservableObject {
     }
 
     func cancelAll() {
-        summarizers.values.forEach { $0.terminate() }
+        summarizers.values.forEach { $0() }
         secondPasses.values.forEach { $0.terminate() }
     }
 
@@ -873,11 +876,14 @@ enum Summarizer {
         }
     }
 
-    /// Streams the growing summary through `onText`; returns the process so it can be cancelled.
+    /// Streams the growing summary through `onText`; returns what cancels it.
     @discardableResult
-    static func run(system: String, transcript: String, model: ClaudeService.Model,
+    static func run(system: String, transcript: String, model: ClaudeService.Model, provider: ClaudeProvider,
                     onText: @escaping (String) -> Void,
-                    completion: @escaping (Result<String, Error>) -> Void) -> Process? {
+                    completion: @escaping (Result<String, Error>) -> Void) -> (() -> Void)? {
+        if provider == .anthropicAPI {
+            return runOverAPI(system: system, transcript: transcript, model: model, onText: onText, completion: completion)
+        }
         guard let binary = ClaudeService.findBinary() else {
             completion(.failure(ServiceError("Claude Code not found")))
             return nil
@@ -942,6 +948,34 @@ enum Summarizer {
                 completion(.failure(ServiceError(process.terminationReason == .uncaughtSignal ? "Summary cancelled" : "Claude stopped before finishing")))
             }
         }
-        return process
+        return process.terminate
+    }
+
+    /// The same over the Anthropic API: one request with the transcript as its message. Claude may think
+    /// first (the default), as nobody waits on the first word here.
+    private static func runOverAPI(system: String, transcript: String, model: ClaudeService.Model,
+                                   onText: @escaping (String) -> Void,
+                                   completion: @escaping (Result<String, Error>) -> Void) -> (() -> Void)? {
+        guard let key = APIKey.anthropic.value else {
+            completion(.failure(ServiceError("No Anthropic API key — add one in Settings › Providers")))
+            return nil
+        }
+        let body: [String: Any] = [
+            "model": model.apiID, "max_tokens": 16000, "system": system,
+            "messages": [["role": "user", "content": "Transcript:\n\n" + transcript]],
+        ]
+        let task = Task {
+            var text = ""
+            do {
+                let summary = try await AnthropicAPI.stream(body, key: key) { piece in
+                    text += piece
+                    onText(text)
+                }
+                completion(.success(summary))
+            } catch {
+                completion(.failure(Task.isCancelled ? ServiceError("Summary cancelled") : error))
+            }
+        }
+        return task.cancel
     }
 }

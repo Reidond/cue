@@ -13,6 +13,10 @@ let appSupport: URL = {
     return url
 }()
 
+/// Under CUE_HOME: windows don't remember where they were either, as AppKit keeps that in the
+/// standard defaults (the user's own settings), whatever domain Cue's own settings are in.
+let isSandboxed = sandbox != nil
+
 /// The user's Documents folder; `CUE_HOME/Documents` under test.
 let documentsFolder: URL = sandbox?.appendingPathComponent("Documents")
     ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]

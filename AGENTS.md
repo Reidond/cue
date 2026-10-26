@@ -26,6 +26,23 @@ This rule is strict and has no exceptions.
     sentences ending in "?", or replies as `FAKE_CLAUDE_JUDGEMENTS` says, and
     `FAKE_CLAUDE_JUDGE_FAILS=1` makes it fail, `FAKE_CLAUDE_JUDGE_DELAY` slow). Cases that judge Claude's actual writing run against the
     real CLI with `node tests/e2e/run.ts --real-claude`;
+  - the paid cloud providers of Settings › Providers: `harness/fake-providers.ts`
+    serves the Anthropic Messages API (replying as the fake claude does;
+    `FAKE_ANTHROPIC_OVERLOADED=N` answers the judge's first N requests with a 529,
+    `FAKE_ANTHROPIC_CUT=N` breaks off the first N answers partway) and
+    Deepgram (a live WebSocket stream per utterance, answered with the next line
+    of `FAKE_DEEPGRAM_LIVE` or "Utterance N.", `FAKE_DEEPGRAM_DROP=N` dropping the
+    Nth; a recorded file, answered with one utterance per stretch of speech) from
+    the case's own process, through
+    `CUE_ANTHROPIC_URL` and `CUE_DEEPGRAM_URL`, and takes only the keys in
+    `FAKE_KEYS`. `--real-anthropic` and `--real-deepgram` use the real services
+    instead, with keys the runner reads from the login keychain (items
+    `Cue e2e Anthropic API key` and `Cue e2e Deepgram API key`, added with
+    `security add-generic-password -a "$USER" -s "…" -w`): never put a real key
+    in a case, a fixture, the control file or the chat. A recording of a real
+    call (someone's conversation) never goes into the repository either: case 84
+    reads one from `E2E_REAL_CALL=path` (any recording macOS can read, a screen
+    recording's `.mov` too) and skips without it;
   - system sources that need the user's permission or a live person (the
     microphone, call audio, the calendar database, which apps use the
     microphone, the answer to a notification): an environment hook feeds the
@@ -60,6 +77,7 @@ itself: no build step, no transpiler, no runtime packages.
 node tests/e2e/run.ts                  # build the app, then run every case
 node tests/e2e/run.ts --no-build 4 5   # the existing build; cases whose name starts with 4 or 5
 node tests/e2e/run.ts --real-claude 45 # the real claude CLI instead of the stand-in
+node tests/e2e/run.ts --real-anthropic --real-deepgram 7 8   # the real cloud providers, keys from the keychain
 node tests/e2e/run.ts --keep           # keep every sandbox (a failed case always keeps its own)
 cd tests/e2e && npm ci && npm run typecheck   # tsc --noEmit; run it before you commit
 ```
@@ -79,7 +97,7 @@ windows stay behind all others, where snapshots still capture them.
 Each case is a TypeScript file, `tests/e2e/cases/NN-name.test.ts`, numbered
 by feature area (`0x` CLI and launch, `1x` prompter and recording, `2x`
 projects and dashboard, `3x` call audio, `4x` second-pass transcript, `5x`
-speakers, `6x` calendar). It declares one test, whose title says the
+speakers, `6x` calendar, `7x` the Anthropic API and Settings › Providers, `8x` Deepgram). It declares one test, whose title says the
 behaviour it checks:
 
 ```ts
@@ -109,7 +127,10 @@ anything that runs a process or waits returns a promise — await it. From
   the checkout's e2e cache, `CUE_SPEAKER_MODELS`); the calendar and the apps
   using the microphone are read from the case's own files, never from the
   Mac. `cue.path(…)` is a path in the case's folder, `cue.save(name, text)`
-  writes a file there, `cue.project(name, settings)` makes a project by hand;
+  writes a file there, `cue.project(name, settings)` makes a project by hand,
+  `cue.apiKey(service, key?)` saves a provider's key where Cue keeps it under
+  `CUE_HOME` (`cue.keysFile`): the stand-in's, the one given, or with
+  `--real-…` the real one from the keychain (removed when the case ends);
 - driving Cue: `cue.defaults(key, value)` (typed by the value: string, bool,
   number or array), `cue.launch({ VAR: 'value' })`, `cue.stop()`,
   `cue.alive()`, `cue.pid`, `cue.cli(…args)` (command-line modes),
@@ -122,14 +143,17 @@ anything that runs a process or waits returns a promise — await it. From
 - waiting and reading what Cue did: `cue.waitFor(what, seconds, check)`,
   `cue.waitLog(regex, seconds)`, `cue.sessionLog()`, `cue.logCount(regex)`,
   `cue.readyNotes()`, `cue.findNotes()`, `cue.claudeRequests(kind)` (what Cue
-  sent the fake claude), `cue.dashboardPage(page, regex)` and
+  sent the fake claude, or the Anthropic API's stand-in), `cue.serviceRequests(kind)`
+  (how Cue called the cloud stand-ins: model, key, caching, Deepgram's query,
+  keyterms and audio), `cue.dashboardPage(page, regex)` and
   `cue.dashboardShows(regex)` (show a dashboard page and read its snapshot
   into `cue.page`), `cue.snapshotText(png)`; `summaryOf(notes)` (a note's
   summary, without the transcript), `lines`, `countLines` and `matches` (as
   `grep`, `grep -c` and `grep -o` would), `findFiles`, `listDir`;
 - audio and screens: `speech(out, voice, text)` and `dialogue(script, out)`
   (multi-voice calls built with `say`: `wav(side)` per side plus `timeline`),
-  `silence(out, seconds)` (a call where nobody speaks), `ocr(png)`,
+  `silence(out, seconds)` (a call where nobody speaks), `excerpt(recording, out, from,
+  seconds)` (a stretch of any recording, as 16 kHz WAV), `ocr(png)`,
   `appWindows(cue.pid)` (whether Cue is the active app, has a Dock icon, and
   its windows on screen with their levels), `afinfo(file)`,
   `audioLength(file)`, `audioSync(audio, timeline, …sides)` (each line of a dialogue where its timeline puts it,
@@ -140,7 +164,8 @@ anything that runs a process or waits returns a promise — await it. From
   matched line by line, ignoring case, as `grep -i -E` would), `assertEq`,
   `assertBetween`, `fail(message, …dumps)`, `skip(reason)`, and
   `needWhisper`, `needWhisperCli`, `needWindowSnapshots`,
-  `needOverlaySnapshots`, `needRealClaude`, `needVoice`, `needReachable`.
+  `needOverlaySnapshots`, `needRealClaude`, `needRealAnthropic`,
+  `needRealDeepgram`, `needVoice`, `needReachable`.
 
 Look at the existing cases before writing a new one, and keep each case
 focused on one user-visible behaviour. Write only TypeScript that Node can
@@ -154,10 +179,12 @@ code paths and document new ones here and in `README.md` › Testing.
 
 | Variable | Effect |
 |---|---|
-| `CUE_HOME=dir` | All files under `dir`, settings in the `com.andriishafar.cue.e2e` domain (`Sources/Cue/Storage.swift`). |
+| `CUE_HOME=dir` | All files under `dir`, settings in the `com.andriishafar.cue.e2e` domain (`Sources/Cue/Storage.swift`), API keys in `dir/Keychain.json` instead of the login keychain (`Sources/Cue/Providers.swift`); windows don't remember their frames (AppKit would keep them in the user's own settings). |
 | `CUE_DEFAULTS_DOMAIN=name` | With `CUE_HOME`, keep settings in this defaults domain. |
 | `CUE_WHISPER_PORT=n` | Run (or reuse) whisper-server on this port instead of 8178. |
 | `CUE_CLAUDE_BIN=path` | Use this binary instead of `claude`. |
+| `CUE_ANTHROPIC_URL=url` | Send Anthropic API requests (`ClaudeProvider.anthropicAPI`) here instead of `https://api.anthropic.com`. |
+| `CUE_DEEPGRAM_URL=url` | Send Deepgram requests (`SpeechProvider.deepgram`: the key check, live streams over `ws://`, recorded files) here instead of `https://api.deepgram.com`. |
 | `CUE_WHISPER_CLI=path` | Run this binary for the second pass over a recording instead of `whisper-cli` (a missing or failing one: the live transcript is kept). |
 | `CUE_SPEAKER_MODELS=dir` | Keep the speaker models (FluidAudio's `speaker-diarization/` folder) in `dir` instead of `Application Support/Cue/models` (an empty folder: Home offers the download; a file in the way: Finding speakers fails and the transcript is kept). |
 | `CUE_NO_LIVE_AUDIO=1` | Don't open the microphone or call audio. |
@@ -167,7 +194,7 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_SNAPSHOT_METHOD=m` | How `CUE_SNAPSHOT` takes them: `desktop` (the default: each window over the desktop picture alone, so its glass refracts real pixels yet no other window covers it or shows through), `window` (the window alone: the overlay's glass over nothing), `display` (what's on screen behind the window now, other apps included, minus whatever is in front of it) or `offscreen` (the fallback, forced). |
 | `CUE_APPEARANCE=light\|dark` | Use this appearance instead of the system's. |
 | `CUE_PROJECT=name` | Make this project active at launch, creating it if there is none by that name. |
-| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `download speakers` (Download on Home's Speaker models row), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
+| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `download speakers` (Download on Home's Speaker models row), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|providers\|calendar` (Settings on that tab), `provider NAME` (a provider picked in Settings › Providers: `claudeCode`, `anthropicAPI`, `whisper`, `deepgram`), `key anthropic\|deepgram [KEY]` (a key pasted into its field and saved; without one, Remove), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
 | `CUE_CALENDAR_EVENTS=file.json` | Read the calendar from this file instead of EventKit (no permission asked), again on every check: a JSON array of `{title, start, end}` (ISO 8601) with optional `id`, `series` (shared by a recurring event's occurrences), `calendar` (name), `url`, `location`, `notes`, `attendees` (names), `recurring`. |
 | `CUE_MIC_APPS=file` | The bundle IDs using the microphone right now, one per line, read on every check instead of Core Audio's process list. |
 | `CUE_MEETING_TICK=s` / `CUE_MIC_RELEASE=s` | Check for calls every `s` seconds instead of 5; stop a call's recording once the call app has been off the microphone for `s` seconds instead of 60. |
@@ -202,7 +229,12 @@ or `⚠︎ Couldn't improve the transcript: …`, `👥 Finding speakers…`,
 `📝 Notes ready: …`, `📅 Recording “Title” into Project`, `🔔 Record “Title”?`
 for every notification, `⚠︎ Nothing was recorded: …` for every alert,
 `🧐 Question judge ready: Claude Haiku` or
-`⚠︎ Question judge unavailable (…) — going by question marks`, and so
+`⚠︎ Question judge unavailable (…) — going by question marks`,
+`🤖 Claude: PROVIDER` and `🗣 Speech recognition: PROVIDER` at launch and on
+every change, `⚠︎ Speech recognition unavailable: …` and
+`🗣 Speech recognition ready again: Deepgram`, `📖 Waits while you read the answer in view: …`
+and `📖 Shown now that you've paused: …`,
+`🔑 Anthropic API key saved in the keychain` or `… removed` — never a key — and so
 on), and never rename existing lines without
 updating the cases.
 

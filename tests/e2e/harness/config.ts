@@ -23,6 +23,15 @@ export const E2E_CACHE = join(E2E_WORK, 'cache');
 
 /** Which `claude` Cue talks to: the stand-in, or the real CLI (`run.ts --real-claude`). */
 export const CLAUDE: 'fake' | 'real' = process.env['E2E_CLAUDE'] === 'real' ? 'real' : 'fake';
+/** Which Anthropic API Cue talks to: the stand-in (harness/fake-providers.ts), or the real one (`--real-anthropic`). */
+export const ANTHROPIC: 'fake' | 'real' = process.env['E2E_ANTHROPIC'] === 'real' ? 'real' : 'fake';
+/** Which Deepgram Cue talks to: the stand-in, or the real one (`--real-deepgram`). */
+export const DEEPGRAM: 'fake' | 'real' = process.env['E2E_DEEPGRAM'] === 'real' ? 'real' : 'fake';
+/**
+ * Where the real services' keys are, for `--real-anthropic` and `--real-deepgram`: generic passwords in the
+ * login keychain, which the harness reads with `security` and hands only to the sandboxed Cue.
+ */
+export const KEYCHAIN_ITEMS = { anthropic: 'Cue e2e Anthropic API key', deepgram: 'Cue e2e Deepgram API key' } as const;
 /** `run.ts --keep`: keep every case's sandbox, not only the failed ones. */
 export const KEEP = process.env['E2E_KEEP'] === '1';
 

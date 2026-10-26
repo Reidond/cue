@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // Runs Cue's end-to-end cases against the built app.
 //
-//   node tests/e2e/run.ts [--no-build] [--real-claude] [--keep] [PREFIX…]
+//   node tests/e2e/run.ts [--no-build] [--real-claude] [--real-anthropic] [--real-deepgram] [--keep] [PREFIX…]
 //
-//   --no-build     use the existing build/Cue.app
-//   --real-claude  use the real `claude` CLI instead of tools/fake-claude.ts
-//   --keep         keep every case's sandbox (failed cases are always kept)
-//   PREFIX…        run only cases whose file name starts with one of these
+//   --no-build        use the existing build/Cue.app
+//   --real-claude     use the real `claude` CLI instead of tools/fake-claude.ts
+//   --real-anthropic  use the real Anthropic API (its key from the keychain) instead of the stand-in
+//   --real-deepgram   use the real Deepgram (its key from the keychain) instead of the stand-in
+//   --keep            keep every case's sandbox (failed cases are always kept)
+//   PREFIX…           run only cases whose file name starts with one of these
 //
 // Exit status: 0 when nothing failed (skips are fine), 1 otherwise.
 import { spawnSync } from 'node:child_process';
@@ -20,7 +22,7 @@ const E2E = import.meta.dirname;
 const ROOT = resolve(E2E, '..', '..');
 
 function usage(): string {
-    return readFileSync(import.meta.filename, 'utf8').split('\n').slice(1, 11)
+    return readFileSync(import.meta.filename, 'utf8').split('\n').slice(1, 13)
         .map((line) => line.replace(/^\/\/ ?/, '')).join('\n');
 }
 
@@ -37,11 +39,13 @@ function modified(path: string): number {
     return statSync(path).mtimeMs;
 }
 
-let build = true, claude = 'fake', keep = false;
+let build = true, claude = 'fake', anthropic = 'fake', deepgram = 'fake', keep = false;
 const prefixes: string[] = [];
 for (const arg of process.argv.slice(2)) {
     if (arg === '--no-build') build = false;
     else if (arg === '--real-claude') claude = 'real';
+    else if (arg === '--real-anthropic') anthropic = 'real';
+    else if (arg === '--real-deepgram') deepgram = 'real';
     else if (arg === '--keep') keep = true;
     else if (arg === '-h' || arg === '--help') {
         console.log(usage());
@@ -97,7 +101,9 @@ if (cases.length === 0) {
 }
 
 // What every case reads (see harness/config.ts).
-Object.assign(process.env, { CUE_APP: app, E2E_WORK: work, E2E_CLAUDE: claude, E2E_KEEP: keep ? '1' : '0' });
+Object.assign(process.env, {
+    CUE_APP: app, E2E_WORK: work, E2E_CLAUDE: claude, E2E_ANTHROPIC: anthropic, E2E_DEEPGRAM: deepgram, E2E_KEEP: keep ? '1' : '0',
+});
 
 // What this machine can do that the cases about to run depend on, probed once (harness/capabilities.ts):
 // a case that needs what's missing skips with the reason.
@@ -174,7 +180,7 @@ function finish(file: string, seconds: number, outcome: Outcome): void {
     }
 }
 
-console.log(`Running ${cases.length} case(s), Claude: ${claude}`);
+console.log(`Running ${cases.length} case(s), Claude: ${claude}, Anthropic API: ${anthropic}, Deepgram: ${deepgram}`);
 const done = new Set<string>();
 for await (const event of run({ files, concurrency: 1, signal: stop.signal })) {
     if (event.type !== 'test:stdout' && event.type !== 'test:stderr' && event.type !== 'test:pass'
