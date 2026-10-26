@@ -161,7 +161,7 @@ final class MeetingMonitor: ObservableObject {
         case .nothing:
             break
         case .record:
-            record(call, heard: true)
+            record(call, heard: true, by: .callNoticed)
         case .ask:
             asking.append(call)
             let app = call.app.map { "\($0.name) is using the microphone. " } ?? ""
@@ -188,7 +188,7 @@ final class MeetingMonitor: ObservableObject {
         settled.insert(key)
         if record {
             guard state.recorder.startedAt == nil else { return }
-            self.record(call, heard: true)
+            self.record(call, heard: true, by: .notification)
         } else {
             state.log.write("🔔 Not now: “\(call.title)”")
         }
@@ -209,18 +209,18 @@ final class MeetingMonitor: ObservableObject {
     /// Records an event in progress from the Upcoming page.
     func record(_ event: CalendarEvent) {
         guard state.recorder.startedAt == nil else { return }
-        record(Call(key: "event:\(event.id)", title: event.title, event: event, app: nil), heard: false)
+        record(Call(key: "event:\(event.id)", title: event.title, event: event, app: nil), heard: false, by: .upcoming)
     }
 
     /// `heard` when a call app is on the microphone already; otherwise the recording only stops by
     /// itself after one has been and gone.
-    private func record(_ call: Call, heard: Bool) {
+    private func record(_ call: Call, heard: Bool, by trigger: AppState.RecordingTrigger) {
         settled.insert(call.key)
         let pending = asking
         pending.forEach(withdraw)
         guard let project = project(for: call.event) else { return }
         state.log.write("📅 Recording “\(call.title)” into \(project.name)")
-        state.startRecording(into: project, meeting: call.event.map { MeetingDetails(title: $0.title, attendees: $0.attendees) })
+        state.startRecording(into: project, meeting: call.event.map { MeetingDetails(title: $0.title, attendees: $0.attendees) }, by: trigger)
         recording = call
         recordingStarted = state.recorder.startedAt
         heardAt = heard ? Date() : nil
@@ -231,7 +231,7 @@ final class MeetingMonitor: ObservableObject {
         recording = nil
         heardAt = nil
         heardApp = nil
-        state.stopRecording(automatically: true) { [weak self] id in
+        state.stopRecording(automatically: true, by: .callEnded) { [weak self] id in
             guard let self else { return }
             guard let id else { return self.notifier.nothingRecorded(title: call.title) }
             if self.state.recordings.isProcessing(id) {
