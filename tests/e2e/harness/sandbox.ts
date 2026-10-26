@@ -36,7 +36,7 @@ export interface CalendarEvent {
 }
 
 /** What Cue sent the fake claude, by kind (see tools/fake-claude.ts). */
-export type ClaudeRequest = 'answer-system' | 'ask' | 'summary-system' | 'summary-input';
+export type ClaudeRequest = 'answer-system' | 'ask' | 'judge-system' | 'judge' | 'summary-system' | 'summary-input';
 
 type DefaultsValue = string | boolean | number | readonly string[];
 

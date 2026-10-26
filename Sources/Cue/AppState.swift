@@ -139,6 +139,7 @@ final class AppState: ObservableObject {
     private let systemSegmenter = SpeechSegmenter()
     private let audioRecorder = AudioRecorder()
     private let detector = QuestionDetector()
+    private let judge = QuestionJudge()
     let log: SessionLog
     private var meterTimer: Timer?
     private var subscriptions: Set<AnyCancellable> = []
@@ -202,6 +203,18 @@ final class AppState: ObservableObject {
             guard let self else { return }
             self.ask(questions, request: self.preferences.autoAnswer)
         }
+        // The judge decides what is a question for the speaker; the detector, when it was asked.
+        detector.judge = { [weak self] speech, verdict in
+            guard let self else { return verdict(nil) }
+            self.judge.judge(self.judgeMessage(speech), verdict: verdict)
+        }
+        judge.onState = { [weak self] state in
+            switch state {
+            case .ready: self?.log.write("🧐 Question judge ready: Claude Haiku")
+            case .unavailable(let detail): self?.log.write("⚠︎ Question judge unavailable (\(detail)) — going by question marks")
+            case .starting: break
+            }
+        }
         wire(micSegmenter, channel: .me)
         wire(systemSegmenter, channel: .others)
         micCapture.onSamples = { [micSegmenter, audioRecorder] samples, time in
@@ -240,6 +253,7 @@ final class AppState: ObservableObject {
         micCapture.stop()
         systemCapture.stop()
         claudeService?.stop()
+        judge.stop()
         whisperService.stop()
     }
 
@@ -302,8 +316,6 @@ final class AppState: ObservableObject {
 
     private func applyLanguage() {
         let lexicon = self.lexicon
-        detector.cues = lexicon.questionCues
-        detector.requestCues = lexicon.requestCues ?? []
         let whisperService = whisperService
         let language = activeProject?.language ?? Project.defaultLanguage, prompt = activeProject?.whisperPrompt ?? ""
         let hallucinations = lexicon.hallucinations
@@ -334,6 +346,7 @@ final class AppState: ObservableObject {
                 let files = knowledge.documents.map { "\($0.name) — \($0.error ?? $0.summary)" }.joined(separator: "; ")
                 self.log.write("📚 Materials for \(project) (~\(knowledge.estimatedTokens / 1000)k tokens): \(files.isEmpty ? "none" : files)")
                 if changed || self.claudeService == nil { self.restartClaude(model: self.preferences.model) }
+                self.judge.configure(context)
             }
         }
     }
@@ -415,7 +428,7 @@ final class AppState: ObservableObject {
     private func startRehearsalIfRequested() {
         guard let path = ProcessInfo.processInfo.environment["CUE_REHEARSE_PARTICIPANT"] else { return }
         Task {
-            while !claude.ok { try? await Task.sleep(for: .milliseconds(300)) }
+            while !claude.ok || judge.state == .starting { try? await Task.sleep(for: .milliseconds(300)) }
             do {
                 // CUE_REHEARSE_RECORD=1 also records the rehearsal and writes its notes.
                 let record = ProcessInfo.processInfo.environment["CUE_REHEARSE_RECORD"] == "1"
@@ -488,8 +501,9 @@ final class AppState: ObservableObject {
         if utterances.count > 300 { utterances.removeFirst(utterances.count - 300) }
         recorder.add(utterance)
         log.write("**[\(promptLabel(channel))]** \(text)", at: speechEnded)
-        if channel == .others || preferences.micQuestions {
-            detector.add(text, speechEnded: speechEnded)
+        // Questions are only looked for while Cue runs, as only then the overlay shows them.
+        if cueRunning, channel == .others || preferences.micQuestions {
+            detector.add(text, from: judgeLabel(channel), speechStarted: speechStarted, speechEnded: speechEnded)
         }
     }
 
@@ -542,7 +556,7 @@ final class AppState: ObservableObject {
         guard cueRunning else { return }
         cueRunning = false
         hideOverlay()
-        _ = detector.takeBuffer()
+        _ = detector.take()
         log.write("⏹ Cue stopped")
         updateCapture()
     }
@@ -639,14 +653,34 @@ final class AppState: ObservableObject {
     /// Manual trigger: whatever the participants are saying right now, else their last line. Its
     /// questions are answered each on its own, or all of it when it holds none.
     func answerNow() {
-        var speech = detector.takeBuffer() ?? ""
-        if let live = partial[.others], !live.isEmpty { speech += (speech.isEmpty ? "" : " ") + live }
+        let taken = detector.take()
+        let live = partial[.others] ?? ""
+        var speech = taken?.speech ?? ""
+        if !live.isEmpty { speech += (speech.isEmpty ? "" : " ") + live }
         if speech.isEmpty {
             speech = utterances.last(where: { $0.channel == .others })?.text ?? utterances.last?.text ?? ""
         }
         guard !speech.isEmpty else { return }
-        let questions = detector.questions(in: speech)
+        // The judge hasn't heard what's still being said.
+        let questions = live.isEmpty ? taken?.questions ?? [] : []
         ask(questions.isEmpty ? [speech] : questions, force: true)
+    }
+
+    /// Who said a line, for the judge. Listening for questions from the room, the microphone hears
+    /// the people around the speaker too, so it can't be labelled as the speaker.
+    private func judgeLabel(_ channel: Channel) -> String {
+        channel == .me && preferences.micQuestions ? "Room" : promptLabel(channel)
+    }
+
+    /// What the judge reads: the last two minutes for context, then what was just said.
+    private func judgeMessage(_ speech: String) -> String {
+        let said = Set(detector.buffer.map(\.started))
+        let context = utterances
+            .filter { Date().timeIntervalSince($0.time) < 120 && !said.contains($0.started) }
+            .suffix(10)
+            .map { "[\(judgeLabel($0.channel))] \($0.text)" }
+            .joined(separator: "\n")
+        return (context.isEmpty ? "" : "Said earlier (context):\n\(context.suffix(2000))\n\n") + "Just said:\n\(speech)"
     }
 
     func ask(_ question: String, force: Bool = false) {

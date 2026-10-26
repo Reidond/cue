@@ -1,0 +1,9 @@
+# A seminar heard through the call, as when the speaker presents from another device: the talk (full
+# of «що», «як», «коли», and a rhetorical question it answers itself), then a participant's two
+# questions in one go. Only those two are for the speaker.
+call | Lesya | Сьогодні я розповім, як ми оцінюємо безпеку туристичних подорожей. Ми побачили, що коли туристи почуваються безпечно, вони повертаються частіше.
+pause | 3
+call | Lesya | Кому це корисно? Туристам, щоб спланувати подорож, турфірмам, щоб покращити послуги, і органам влади, щоб краще розподіляти ресурси в регіонах протягом усього туристичного сезону.
+pause | 4
+call | Lesya | Дякую за доповідь. У мене два питання. Скільки респондентів брали участь в опитуванні? І які області ви досліджували?
+pause | 5

@@ -37,13 +37,14 @@ call audio ──┘   (ScreenCaptureKit)                            └─ Clau
   the call are told apart by voice afterwards, on your Mac, with
   [FluidAudio](https://github.com/FluidInference/FluidAudio)'s offline
   speaker diarization.
-- **Question detection** fires once the participants pause, or as soon as you
-  start talking, after they asked something: a sentence ending in `?` that is
-  more than a tag ("Right?"), or one opening with a request ("Could you
-  explain…"). Talk without a question, and a question the speaker answers at
-  length themselves, gets no answer. Several questions asked in one go are
-  answered each on its own and shown together. Cues per language live in
-  `Resources/lexicons/`.
+- **Question detection**: a second, small Claude Code session (Haiku, without
+  your materials, so it answers in about a second) reads what the participants
+  said each time a line is transcribed and lists the questions in it that are
+  for you — not the talk itself, a rhetorical question it answers, small talk or
+  remarks about the call. Cue then answers them once the participants pause, or
+  as soon as you start talking; several asked in one go are answered each on
+  its own and shown together. Its prompt is `Resources/judge.md`. If the judge
+  can't be reached, sentences ending in `?` count instead.
 - **Answers** come from one long-lived Claude Code session (`claude -p` with
   stream-json), using your Claude Code login — no API key. The session is warmed
   up at launch, and your materials stay in Claude's prompt cache.
