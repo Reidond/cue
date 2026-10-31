@@ -673,7 +673,9 @@ final class AppState: ObservableObject {
 
     /// A rehearsal runs once the person has signed in.
     func startListeningOnceSignedIn() {
-        api.$phase.filter { $0 == .signedIn }.first().sink { [weak self] _ in self?.startListening() }.store(in: &subscriptions)
+        // `$phase` publishes before the value is set (willSet), so hop to the next turn of the run loop: by then `isSignedIn` holds.
+        api.$phase.filter { $0 == .signedIn }.first().receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.startListening() }.store(in: &subscriptions)
     }
 
     /// Shows the overlay and listens, with the current project (a rehearsal, ⌃⌥H).
