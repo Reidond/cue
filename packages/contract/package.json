@@ -1,0 +1,12 @@
+{
+  "name": "@cue/contract",
+  "private": true,
+  "type": "module",
+  "description": "The Cue API's requests and responses as TypeBox schemas; the Swift Codable types and the Windows client follow it.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "~0.34.52"
+  }
+}
