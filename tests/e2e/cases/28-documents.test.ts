@@ -37,7 +37,8 @@ e2eCase(
 
         // The project's page and its prepared answers.
         const text = cue.page;
-        await cue.dashboardPage('Bee talk', /2 prepared answers/);
+        // The page lists the files as the account reports them, one after the other: wait for the last.
+        await cue.dashboardPage('Bee talk', /summary\.pdf/);
         assertContains(text, /prepared\.docx/);
         assertContains(text, /summary\.pdf/);
         assertContains(text, /2 files/);

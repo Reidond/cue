@@ -285,6 +285,10 @@ final class LiveCall {
             let waiting = pending
             pending = []
             for command in waiting { write(command) }
+            // `ready` says how far the call's events have got; it is not one of them, and the statuses sent after it on a first connection
+            // carry older numbers than its own.
+            onEvent(event)
+            return
         } else if event.seq <= lastSeq {
             return  // replayed: seen already
         }
