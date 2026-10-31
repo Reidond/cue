@@ -56,7 +56,10 @@ the only way to use the app. Work on it in a Boat sandbox like everything else (
 - Secrets and endpoints are in `apps/api/cloudflare.config.ts`. Under `cf dev` the secrets are text bindings read from the environment
   (`BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, …) with throwaway defaults, so there is no `.dev.vars` to keep apart; `IDP_URL` repoints both
   identity providers at a stand-in, `PUBLIC_URL` is the issuer, `ACCESS_TOKEN_SECONDS` the access token's life (900), `PORT` and
-  `CUE_STATE_DIR` the dev server's port and persisted state. Nothing is deployed from here: `pnpm --filter api deploy:dry` only.
+  `CUE_STATE_DIR` the dev server's port and persisted state. Nothing is deployed from here: `pnpm --filter api deploy:dry` only (`docs/deploy.md` is the owner's checklist; `.github/workflows/deploy.yml`
+  deploys on pushes to `main`). The backend's production address is kept in `apps/api/production-url.txt`: the Worker's issuer (`PUBLIC_URL` outside `cf dev`) and, stamped into `Info.plist` by
+  `apps/mac/scripts/build.sh`, the Mac app's default (`CUE_API_URL` overrides it). In a deploy the `AI` binding is always on, `ADMIN_EMAILS` comes from the environment `cf deploy` runs in, and
+  `scripts/migrate-remote.ts` applies the migrations to the deployed D1 (found by name; `--if-exists` for the run before the first deploy).
 - The owner's script: `pnpm --filter api invite EMAIL` (invite), `… EMAIL --disable` (disable: banned, tokens revoked, on the KV
   denylist so access tokens stop working at once), `… --list`. It works on the local database (`pnpm --filter api migrate` first); with
   `--remote` it goes through `cf d1 raw` and `cf kv keys` to the deployed one, finding it by name (`CUE_D1_ID` / `CUE_KV_ID` name them
@@ -519,6 +522,9 @@ updating the cases.
   command-line modes, the dashboard and the speech cases. **Run the
   whole suite on an authorized remote Mac before merging** and put its summary
   in the PR. Keep CI green; never fake what's missing.
+- `.github/workflows/deploy.yml` runs on pushes to `main` that touch `apps/api`, `apps/admin`, `packages/contract` or their build (and on demand), never on a fork: `vp check`, the remote
+  migrations, `cf deploy`, the migrations again, a check that the Worker answers. It needs the secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` and the variable `ADMIN_EMAILS`. Do not
+  run it, or `cf deploy` without `--dry-run`, from here.
 - `.github/workflows/release.yml` runs on every push to `main`: it builds
   `Cue.app`, zips it and publishes a GitHub release `v<version>.<patch>`
   (`<version>` is `CFBundleShortVersionString` in `apps/mac/Resources/Info.plist`,
