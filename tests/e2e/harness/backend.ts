@@ -296,6 +296,15 @@ export class Backend {
         return new AdminClient(this.url, result.cookie);
     }
 
+    /** The owner (an `adminEmails` address) changes `email`'s monthly limit in the admin, or puts them back on the default (`null`). */
+    async setLimit(owner: string, email: string, usd: number | null): Promise<void> {
+        const row = (await this.rows(`SELECT id FROM user WHERE email = '${email.replaceAll("'", "''")}'`))[0];
+        if (!row) return fail(`${email} is not a user`);
+        const admin = await this.adminAs(owner);
+        const result = await admin.call('PATCH', `/users/${String(row['id'])}/limit`, { monthlyUsd: usd });
+        if (result.status !== 200) fail('changing the limit failed', JSON.stringify(result));
+    }
+
     /** Spend the admin should show: priced calls of `email`, as PR 7 will record them (`usage` table); `at` is the time of each, default now. */
     async seedUsage(
         email: string,
