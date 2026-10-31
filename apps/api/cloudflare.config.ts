@@ -79,7 +79,10 @@ export default defineConfig(({ mode }) => ({
             // Per user: 10 requests a second on average for everything (a sign-in's import of a library of notes is hundreds), 30 a minute for
             // what costs money. Namespace ids only have to differ within the account.
             RATE_LIMIT: bindings.rateLimit({ namespace: '4101', simple: { limit: rate('RATE_LIMIT_REQUESTS', 600), period: ratePeriod } }),
-            RATE_LIMIT_COSTLY: bindings.rateLimit({ namespace: '4102', simple: { limit: rate('RATE_LIMIT_COSTLY_REQUESTS', 30), period: 60 } }),
+            RATE_LIMIT_COSTLY: bindings.rateLimit({
+                namespace: '4102',
+                simple: { limit: rate('RATE_LIMIT_COSTLY_REQUESTS', 30), period: 60 },
+            }),
             // The files people add to their projects (the originals; their text is in D1).
             MATERIALS: bindings.r2({ name: 'cue-materials' }),
             // Workers AI `toMarkdown` reads PDF and Word files. Workers AI always runs on Cloudflare, even under `cf dev`, where its binding
