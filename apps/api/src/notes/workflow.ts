@@ -2,8 +2,9 @@ import { env, WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from '
 import { NonRetryableError } from 'cloudflare:workflows';
 import { describe, send, stream } from '../call/anthropic.ts';
 import { lexiconFor } from '../call/lexicon.ts';
-import { ANSWER_MODEL, FILE_SPEECH_MICROS_PER_SECOND, noThinking, tokenUsage, type UsageRow } from '../call/models.ts';
-import { recordUsage } from '../usage.ts';
+import { ANSWER_MODEL, noThinking, type Tokens, type UsageRow } from '../call/models.ts';
+import { speechUsage, tokenUsage } from '../pricing.ts';
+import { limitState, recordUsage } from '../usage.ts';
 import { participantsOf, turnsFor, userLabel } from './compose.ts';
 import { transcribe } from './deepgram.ts';
 import { janitor } from './janitor.ts';
@@ -64,6 +65,14 @@ const TEXT: Record<StepId, StepText> = {
     summary: { start: '✍️ Writing summary…', failed: (why) => `⚠︎ Summary failed: ${why}`, kept: '' },
 };
 
+/** What a step did not do when the month's allowance was used up (the session log's `⚠︎ Cue plan limit reached: …`). */
+const LIMITED: Record<StepId, string> = {
+    transcript: "the transcript wasn't improved — the live transcript is kept",
+    speakers: "the speakers weren't told apart — the transcript is kept as it was",
+    names: "no names were suggested",
+    summary: "the summary wasn't written — the transcript is kept",
+};
+
 /**
  * The notes pipeline: transcribe each side of the recording again, tell the voices on the call side apart, suggest names for them, write the
  * summary, store the note. Each step is retried on its own, and one that fails for good never stops the others: the note keeps what it had
@@ -76,9 +85,18 @@ export class NotesWorkflow extends WorkflowEntrypoint<Env, NotesParams> {
         const db = this.env.DB;
         const config = { retries: { limit: 3, delay: retryDelay(), backoff: 'constant' }, timeout: '10 minutes' } as const;
 
-        const guarded = async (id: StepId, work: (note: NoteRow) => Promise<string | null>) => {
+        // `costs`: whether the step spends money for this note; one that does not run once the person's month is used up is marked failed with
+        // the limit as the reason (the recording and the live transcript were saved before: they are not touched).
+        const guarded = async (id: StepId, work: (note: NoteRow) => Promise<string | null>, costs: (note: NoteRow) => boolean = () => true) => {
             const note = await loadNote(db, noteId);
             if (!parse<{ id: StepId }[]>(note.steps, []).some((candidate) => candidate.id === id)) return;
+            if (costs(note) && (await step.do(`${id} limit`, async () => (await limitState(db, note.user_id)).over))) {
+                await step.do(`${id} limited`, async () => {
+                    const kept = TEXT[id].kept;
+                    await setStep(db, noteId, id, 'failed', `Cue plan limit reached. ${kept}`.trim(), `⚠︎ Cue plan limit reached: ${LIMITED[id]}`);
+                });
+                return;
+            }
             try {
                 await step.do(id, config, async (context) => {
                     // A retry says nothing new: the line is written once.
@@ -97,7 +115,12 @@ export class NotesWorkflow extends WorkflowEntrypoint<Env, NotesParams> {
         };
 
         await guarded('transcript', (note) => improveTranscript(db, note));
-        await guarded('speakers', (note) => findSpeakers(db, note));
+        await guarded(
+            'speakers',
+            (note) => findSpeakers(db, note),
+            // The voices come from the second pass; without it the call side is read again, which costs.
+            (note) => voicesOf(note) === null && linesOf(note).some((line) => line.channel === 'others'),
+        );
         await guarded('names', (note) => suggestNames(db, note));
         await guarded('summary', (note) => writeSummary(db, note));
         await step.do('store', config, async () => {
@@ -133,14 +156,7 @@ const usage = (note: NoteRow, db: D1Database, rows: UsageRow[]) => recordUsage(d
 const speechRows = (seconds: Record<string, number>): UsageRow[] =>
     Object.entries(seconds)
         .filter(([, value]) => value > 0)
-        .map(([side, value]) => [
-            'note_transcript',
-            'deepgram',
-            `nova-3:${side}`,
-            value,
-            'audio_seconds',
-            Math.round(value * FILE_SPEECH_MICROS_PER_SECOND),
-        ]);
+        .map(([side, value]) => speechUsage('note_transcript', 'recorded', `nova-3:${side}`, value));
 
 async function audioOf(note: NoteRow, side: 'me' | 'others'): Promise<R2ObjectBody> {
     const key = parse<AudioKeys>(note.audio, {})[side];
@@ -155,11 +171,13 @@ async function improveTranscript(db: D1Database, note: NoteRow): Promise<string 
     const { namesAndTerms } = await project(db, note);
     const language = note.spoken_language ?? note.language;
     const options = { language, namesAndTerms };
-    const [me, others] = await Promise.all([
-        audioOf(note, 'me').then((audio) => transcribe(audio, 'me', options)),
-        audioOf(note, 'others').then((audio) => transcribe(audio, 'others', options)),
-    ]);
-    await usage(note, db, speechRows({ me: me.seconds, others: others.seconds }));
+    // Each side's audio is billed as soon as Deepgram has read it, so one side failing does not lose the other's usage.
+    const side = async (which: 'me' | 'others') => {
+        const read = await transcribe(await audioOf(note, which), which, options);
+        await usage(note, db, speechRows({ [which]: read.seconds }));
+        return read;
+    };
+    const [me, others] = await Promise.all([side('me'), side('others')]);
     const lines = withoutEchoes([...me.lines, ...others.lines], lexiconFor(language).stopWords).toSorted((a, b) => a.start - b.start);
     if (lines.length === 0) throw new NonRetryableError('Deepgram found no speech in the call’s audio');
     const lost = sideLost(linesOf(note), lines);
@@ -285,7 +303,7 @@ async function writeSummary(db: D1Database, note: NoteRow): Promise<string | nul
             () => {},
         );
     } catch (error) {
-        const tokens = (error as { tokens?: import('../call/models.ts').Tokens }).tokens;
+        const tokens = (error as { tokens?: Tokens }).tokens;
         if (tokens) await usage(note, db, tokenUsage('notes_summary', ANSWER_MODEL, tokens));
         throw new Error(describe(error));
     }

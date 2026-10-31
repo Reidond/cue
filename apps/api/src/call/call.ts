@@ -3,14 +3,15 @@ import { Value } from '@sinclair/typebox/value';
 import { DurableObject, env } from 'cloudflare:workers';
 import { preparedIn } from '../materials/read.ts';
 import { termsOf } from '../projects.ts';
-import { recordUsage } from '../usage.ts';
+import { limitState, recordUsage } from '../usage.ts';
 import { describe } from './anthropic.ts';
 import { QuestionDetector } from './detector.ts';
 import { SpeechStream } from './deepgram.ts';
 import { QuestionJudge } from './judge.ts';
 import { answerPrompt, firstSentence, isEcho, judgePrompt, Matcher, type PreparedAnswer } from './knowledge.ts';
 import { lexiconFor, type CallLexicon } from './lexicon.ts';
-import { ANSWER_MODEL, noTokens, SPEECH_MICROS_PER_SECOND, SPEECH_MODEL, type Tokens, tokenUsage, type UsageRow } from './models.ts';
+import { speechUsage, tokenUsage } from '../pricing.ts';
+import { ANSWER_MODEL, noTokens, SPEECH_MODEL, type Tokens, type UsageRow } from './models.ts';
 import { ClaudeSession, type SessionState } from './session.ts';
 
 // One Call per call id: everything a live call needs on the server. It holds a Deepgram live stream per channel, spots questions on each
@@ -100,6 +101,11 @@ export class Call extends DurableObject<Env> {
     #tokens = new Map<string, Tokens>();
     #billedSeconds: Partial<Record<Channel, number>> = {};
 
+    // The month's allowance: the sentence that says it is used up (null while it is not), when it was last looked at, and the event that told clients.
+    #limited: string | null = null;
+    #limitCheckedAt = 0;
+    #limitEvent: CallEvent | undefined;
+
     // MARK: RPC
 
     /** Starts the call: reads the project, builds Claude's prompt, warms the caches. */
@@ -187,6 +193,7 @@ export class Call extends DurableObject<Env> {
         } else {
             for (const event of this.#log) if (event.seq > after) socket.send(JSON.stringify(event));
         }
+        if (this.#limitEvent && after === undefined) socket.send(JSON.stringify(this.#limitEvent));
         if (meta.ended) {
             socket.close(1000, 'ended');
             return;
@@ -453,6 +460,8 @@ export class Call extends DurableObject<Env> {
 
     /** What the judge reads: the last two minutes for context, then what was just said. */
     async #judgeSpeech(speech: string): Promise<string[] | null> {
+        // Over the limit nothing is listened for (and nothing is answered); the allowance is looked at again now and then, in case it was raised.
+        if (!(await this.#withinLimit(30_000))) return [];
         const said = new Set(this.#detector.buffer.map((line) => line.started));
         const now = Date.now();
         const context = this.#lines
@@ -482,6 +491,8 @@ export class Call extends DurableObject<Env> {
      */
     #ask(texts: string[], options: { force: boolean; request: boolean; tap?: (event: CallEvent) => void }): void {
         if (!this.#answers || this.#meta?.ended) return;
+        // A question noticed on its own is not even listed once the allowance is used up; one the person asked for is, and says why it has no answer.
+        if (this.#limited !== null && !options.force) return;
         const exchange: Exchange = {
             id: crypto.randomUUID(),
             forced: options.force,
@@ -521,31 +532,41 @@ export class Call extends DurableObject<Env> {
         if (options.request) this.#send(exchange);
     }
 
-    /** Sends an exchange's questions that are still waiting to Claude, each as its own request. */
+    /** Sends an exchange's questions that are still waiting to Claude, each as its own request (if the month's allowance has room for them). */
     #send(exchange: Exchange): void {
         const answers = this.#answers;
         if (!answers) return;
-        const all = exchange.questions;
-        for (const question of all) {
-            if (question.requested) continue;
+        const waiting = exchange.questions.filter((question) => !question.requested);
+        if (waiting.length === 0) return;
+        for (const question of waiting) {
             question.requested = true;
             question.askedAt = Date.now();
-            const others = all.filter((other) => other !== question).map((other) => `«${other.text}»`);
-            const message = this.#messageFor(question.text, others, exchange.forced);
-            answers
-                .ask(
-                    message,
-                    (piece) => this.#emitFor(exchange, { type: 'answer.delta', questionId: question.id, text: piece }),
-                    this.#abort.signal,
-                )
-                .then(
-                    () => {
-                        void this.ctx.storage.put('history', [...answers.history]);
-                        this.#emitFor(exchange, { type: 'answer.done', questionId: question.id, error: null });
-                    },
-                    (error: unknown) => this.#emitFor(exchange, { type: 'answer.done', questionId: question.id, error: describe(error) }),
-                );
         }
+        void this.#withinLimit(0).then((allowed) => {
+            for (const question of waiting) {
+                if (allowed) this.#answer(exchange, question, answers);
+                else this.#emitFor(exchange, { type: 'answer.done', questionId: question.id, error: this.#limited });
+            }
+        });
+    }
+
+    /** One question to Claude. An answer under way when the allowance runs out is finished: the limit stops the next one. */
+    #answer(exchange: Exchange, question: Question, answers: ClaudeSession): void {
+        const others = exchange.questions.filter((other) => other !== question).map((other) => `«${other.text}»`);
+        const message = this.#messageFor(question.text, others, exchange.forced);
+        answers
+            .ask(
+                message,
+                (piece) => this.#emitFor(exchange, { type: 'answer.delta', questionId: question.id, text: piece }),
+                this.#abort.signal,
+            )
+            .then(
+                () => {
+                    void this.ctx.storage.put('history', [...answers.history]);
+                    this.#emitFor(exchange, { type: 'answer.done', questionId: question.id, error: null });
+                },
+                (error: unknown) => this.#emitFor(exchange, { type: 'answer.done', questionId: question.id, error: describe(error) }),
+            );
     }
 
     #messageFor(question: string, others: string[], force: boolean): string {
@@ -578,6 +599,34 @@ export class Call extends DurableObject<Env> {
         this.#tokens.set(key, total);
     }
 
+    /**
+     * Whether this month's allowance still has room. What the call has used so far is written first, so the figure is the call's own too.
+     * Looked at again when it is older than `maxAge` milliseconds; the first time it runs out the client is told once (an `error` event
+     * `limit_reached`), and again when it comes back after the owner raised the limit (the answers just flow).
+     */
+    async #withinLimit(maxAge: number): Promise<boolean> {
+        const meta = this.#meta;
+        if (!meta) return false;
+        if (Date.now() - this.#limitCheckedAt <= maxAge) return this.#limited === null;
+        this.#limitCheckedAt = Date.now();
+        await this.#flushUsage().catch((error: unknown) => console.error('usage', error));
+        const state = await limitState(env.DB, meta.userId).catch((error: unknown) => {
+            console.error('limit', error);
+            return null;
+        });
+        // The allowance cannot be read: the call goes on (the figure is looked at again next time).
+        if (!state?.over) {
+            this.#limited = null;
+            this.#limitEvent = undefined;
+            return true;
+        }
+        if (this.#limited === null) {
+            this.#limitEvent = this.#emit({ type: 'error', code: 'limit_reached', message: state.message, fatal: false });
+        }
+        this.#limited = state.message;
+        return false;
+    }
+
     /** Writes what the call used since the last time to the `usage` table: tokens per model, audio seconds. */
     async #flushUsage(): Promise<void> {
         const meta = this.#meta;
@@ -592,15 +641,7 @@ export class Call extends DurableObject<Env> {
             const total = this.#streams[channel]?.seconds ?? 0;
             const delta = total - (this.#billedSeconds[channel] ?? 0);
             this.#billedSeconds[channel] = total;
-            if (delta > 0)
-                rows.push([
-                    'live_transcript',
-                    'deepgram',
-                    SPEECH_MODEL,
-                    Math.round(delta * 1000) / 1000,
-                    'audio_seconds',
-                    Math.round(delta * SPEECH_MICROS_PER_SECOND),
-                ]);
+            if (delta > 0) rows.push(speechUsage('live_transcript', 'live', SPEECH_MODEL, delta));
         }
         await recordUsage(env.DB, meta.userId, rows);
     }
@@ -616,6 +657,8 @@ export class Call extends DurableObject<Env> {
         this.#answers?.keepWarm(refresh);
         this.#judge?.keepWarm(refresh);
         await this.#flushUsage().catch((error: unknown) => console.error('usage', error));
+        // The allowance is looked at on every tick, so a call nobody asks anything of hears of it too.
+        await this.#withinLimit(0);
         if (this.#sockets.size === 0 && Date.now() - this.#lastClientAt > seconds('CALL_GRACE_SECONDS', 120)) {
             await this.#finish();
             return;

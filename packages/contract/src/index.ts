@@ -69,8 +69,14 @@ export const Me = Type.Object({
     }),
     usage: Type.Object({
         month: Type.String({ description: 'UTC month, YYYY-MM' }),
-        usd: Type.Number(),
+        usd: Type.Number({ description: 'What this month has cost so far, in US dollars' }),
         audioSeconds: Type.Number(),
+        limitReached: Type.Boolean({ description: 'usd has reached the limit: nothing that costs money starts until the month turns or the limit is raised' }),
+        byFeature: Type.Array(Type.Object({ feature: Type.String(), usd: Type.Number() }), {
+            description: 'usd by feature (answer, question_judge, live_transcript, note_transcript, note_names, notes_summary, material_text), dearest first',
+        }),
+        periodStart: Type.Number({ description: 'Start of the billing period (the UTC month), milliseconds since the epoch' }),
+        periodEnd: Type.Number({ description: 'When it starts over: the next period\'s start, milliseconds since the epoch' }),
     }),
 });
 export type Me = Static<typeof Me>;

@@ -15,7 +15,8 @@ import { Elysia } from 'elysia';
 import { ApiError } from '../errors.ts';
 import { extensionOf, extract, isSupported, preparedIn, summaryOf } from '../materials/read.ts';
 import { findProject, type ProjectRow, projectPrefix } from '../projects.ts';
-import { TOMARKDOWN_MICROS_PER_FILE } from '../usage.ts';
+import { mustBeWithinLimit } from '../limits.ts';
+import { markdownUsage } from '../pricing.ts';
 import { authed } from './authed.ts';
 
 interface MaterialRow {
@@ -73,6 +74,8 @@ export const materials = new Elysia({ name: 'materials' })
     .post(
         '/projects/:id/materials',
         async ({ userId, params, query, request, status }) => {
+            // Only the allowance: a library of files is uploaded in one go at the first sign-in, which the stricter rate must not stop.
+            await mustBeWithinLimit(userId);
             const project = await mustFindProject(userId, params.id);
             const name = query.name.split(/[/\\]/).at(-1)!.trim();
             if (name === '' || !isSupported(name)) {
@@ -152,10 +155,11 @@ export const materials = new Elysia({ name: 'materials' })
             ];
             // Workers AI read it: one file of usage, priced by the table (PDFs and Office files are free, images are not).
             if (read?.markdown) {
+                const [feature, provider, model, units, unit, cost] = markdownUsage();
                 statements.push(
                     env.DB.prepare(
-                        `INSERT INTO usage (user_id, feature, provider, model, units, unit, cost_micros) VALUES (?, 'material_text', 'cloudflare', 'workers-ai-tomarkdown', 1, 'files', ?)`,
-                    ).bind(userId, TOMARKDOWN_MICROS_PER_FILE),
+                        'INSERT INTO usage (user_id, feature, provider, model, units, unit, cost_micros) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    ).bind(userId, feature, provider, model, units, unit, cost),
                 );
             }
             await env.DB.batch(statements);
@@ -166,7 +170,7 @@ export const materials = new Elysia({ name: 'materials' })
             parse: () => true,
             params: ProjectId,
             query: UploadQuery,
-            response: { 200: Material, 201: Material, 400: ApiErrorBody, ...errors, 502: ApiErrorBody },
+            response: { 200: Material, 201: Material, 400: ApiErrorBody, ...errors, 402: ApiErrorBody, 429: ApiErrorBody, 502: ApiErrorBody },
             detail: { summary: 'Adds a file to a project: the body is the file, its type the Content-Type, ?name= its name' },
         },
     )

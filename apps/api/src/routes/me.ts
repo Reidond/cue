@@ -2,16 +2,14 @@ import { ApiError as ApiErrorBody, Me } from '@cue/contract';
 import { env } from 'cloudflare:workers';
 import { Elysia } from 'elysia';
 import { adminEmails } from '../auth.ts';
-import { authFor } from '../context.ts';
 import { ApiError } from '../errors.ts';
-import { authenticate } from '../token.ts';
 import { accountUsage, monthOf } from '../usage.ts';
+import { authed } from './authed.ts';
 
 /** The signed-in account. */
-export const me = new Elysia({ name: 'me' }).get(
+export const me = new Elysia({ name: 'me' }).use(authed).get(
     '/me',
-    async ({ request }) => {
-        const { userId } = await authenticate(request, authFor, env.PUBLIC_URL, env.DENYLIST);
+    async ({ userId }) => {
         const user = await env.DB.prepare('SELECT id, email, name, role FROM user WHERE id = ?').bind(userId).first<{
             id: string;
             email: string;
@@ -30,8 +28,16 @@ export const me = new Elysia({ name: 'me' }).get(
             },
             plan: { id: 'cue' as const, name: 'Cue' },
             limits: { monthlyUsd: usage.limitUsd },
-            usage: { month, usd: usage.usd, audioSeconds: usage.audioSeconds },
+            usage: {
+                month,
+                usd: usage.usd,
+                audioSeconds: usage.audioSeconds,
+                limitReached: usage.usd >= usage.limitUsd,
+                byFeature: usage.byFeature,
+                periodStart: usage.periodStart,
+                periodEnd: usage.periodEnd,
+            },
         };
     },
-    { response: { 200: Me, 401: ApiErrorBody }, detail: { summary: 'The signed-in account, its plan, limits and usage this month' } },
+    { response: { 200: Me, 401: ApiErrorBody, 429: ApiErrorBody }, detail: { summary: 'The signed-in account, its plan, limits and usage this month' } },
 );

@@ -20,6 +20,14 @@ const endpoints = {
 const secret = (mode: string | undefined, name: string) =>
     mode === 'development' ? bindings.text(process.env[name] ?? `dev-${name}-0123456789abcdef0123456789abcdef`) : bindings.secret();
 
+// Rate Limiting bindings count requests per user (src/limits.ts): every /v1 request against RATE_LIMIT, a request that starts paid work (a call,
+// a question, a material) also against RATE_LIMIT_COSTLY. A period is 10 or 60 seconds. A case lowers them to see `rate_limited`.
+const rate = (name: string, fallback: number) => {
+    const value = Number(process.env[name]);
+    return Number.isInteger(value) && value > 0 ? value : fallback;
+};
+const ratePeriod = process.env.RATE_LIMIT_PERIOD === '10' ? 10 : 60;
+
 // The development mode gives the database and the denylist fixed ids (dev-ids.ts); real deploys omit them, so `cf deploy` provisions both.
 export default defineConfig(({ mode }) => ({
     worker: {
@@ -68,6 +76,10 @@ export default defineConfig(({ mode }) => ({
             DB: bindings.d1(mode === 'development' ? { name: 'cue', id: DEV_DB_ID } : { name: 'cue' }),
             // User ids of disabled users: their access tokens (valid for up to 15 minutes) stop working at once.
             DENYLIST: bindings.kv(mode === 'development' ? { id: DEV_KV_ID } : {}),
+            // Per user: 10 requests a second on average for everything (a sign-in's import of a library of notes is hundreds), 30 a minute for
+            // what costs money. Namespace ids only have to differ within the account.
+            RATE_LIMIT: bindings.rateLimit({ namespace: '4101', simple: { limit: rate('RATE_LIMIT_REQUESTS', 600), period: ratePeriod } }),
+            RATE_LIMIT_COSTLY: bindings.rateLimit({ namespace: '4102', simple: { limit: rate('RATE_LIMIT_COSTLY_REQUESTS', 30), period: 60 } }),
             // The files people add to their projects (the originals; their text is in D1).
             MATERIALS: bindings.r2({ name: 'cue-materials' }),
             // Workers AI `toMarkdown` reads PDF and Word files. Workers AI always runs on Cloudflare, even under `cf dev`, where its binding

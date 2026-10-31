@@ -5,6 +5,7 @@ import { Elysia } from 'elysia';
 import { callOf } from '../call/stub.ts';
 import { authFor } from '../context.ts';
 import { ApiError } from '../errors.ts';
+import { limitRate, mayStartCostlyWork } from '../limits.ts';
 import { findProject } from '../projects.ts';
 import { planPaused } from '../settings.ts';
 import { authenticate } from '../token.ts';
@@ -30,6 +31,7 @@ async function live(request: Request): Promise<Response> {
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket')
         throw new ApiError('bad_request', 'This is a WebSocket: connect with an upgrade.');
     const { userId } = await authenticate(request, authFor, env.PUBLIC_URL, env.DENYLIST);
+    await limitRate(userId);
     if (await planPaused(env.DB)) throw new ApiError('plan_paused', 'Cue is paused for now. Try again later.', true);
     const params = new URL(request.url).searchParams;
     const query = { call: params.get('call') ?? '', ...(params.has('after') ? { after: Number(params.get('after')) } : {}) };
@@ -48,6 +50,16 @@ export const calls = new Elysia({ name: 'calls', prefix: '/calls' })
             if (!project) throw new ApiError('not_found', 'That project does not exist.');
             const callId = crypto.randomUUID();
             const startedAt = Date.now();
+            // A call only for a recording's notes is a row that is over already: no Durable Object, nothing that costs, so no limit to ask.
+            if (body.notesOnly) {
+                await env.DB.prepare(
+                    "INSERT INTO call (id, user_id, project_id, event_id, event_title, started_at, ended_at, transcript) VALUES (?, ?, ?, ?, ?, ?, ?, '[]')",
+                )
+                    .bind(callId, userId, project.id, body.eventId ?? null, body.eventTitle ?? null, startedAt, startedAt)
+                    .run();
+                return status(201, { callId, projectId: project.id, startedAt });
+            }
+            await mayStartCostlyWork(userId);
             await env.DB.prepare('INSERT INTO call (id, user_id, project_id, event_id, event_title, started_at) VALUES (?, ?, ?, ?, ?, ?)')
                 .bind(callId, userId, project.id, body.eventId ?? null, body.eventTitle ?? null, startedAt)
                 .run();
@@ -65,13 +77,14 @@ export const calls = new Elysia({ name: 'calls', prefix: '/calls' })
         },
         {
             body: NewCall,
-            response: { 201: Call, 400: ApiErrorBody, 401: ApiErrorBody, 404: ApiErrorBody },
+            response: { 201: Call, 400: ApiErrorBody, 401: ApiErrorBody, 402: ApiErrorBody, 404: ApiErrorBody, 429: ApiErrorBody },
             detail: { summary: 'Starts a live call for a project' },
         },
     )
     .post(
         '/:id/questions',
         async ({ userId, params, body }) => {
+            await mayStartCostlyWork(userId);
             await mustFind(userId, params.id);
             const events = await callOf(params.id).ask(body.text);
             return new Response(events, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' } });
@@ -79,7 +92,7 @@ export const calls = new Elysia({ name: 'calls', prefix: '/calls' })
         {
             params: CallId,
             body: AskBody,
-            response: { 401: ApiErrorBody, 404: ApiErrorBody },
+            response: { 401: ApiErrorBody, 402: ApiErrorBody, 404: ApiErrorBody, 429: ApiErrorBody },
             detail: {
                 summary: 'The Ask field: answers a question now (server-sent events: question, prepared, answer.delta, answer.done)',
             },

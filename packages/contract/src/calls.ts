@@ -24,6 +24,12 @@ export const NewCall = Type.Object({
         Type.String({ description: "The calendar event the call is for, if any (kept with the call; PR 6's notes use it)" }),
     ),
     eventTitle: Type.Optional(Type.String()),
+    notesOnly: Type.Optional(
+        Type.Boolean({
+            description:
+                'A call made only to hang a recording and its notes on (no live path: nothing listens, answers or warms up): it starts already ended, and the monthly limit does not stop it',
+        }),
+    ),
     ...{
         speaker: Type.Optional(Type.String({ description: 'The name the speaker goes by (empty: "the speaker")' })),
         auto: Type.Optional(

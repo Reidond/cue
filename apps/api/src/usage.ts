@@ -13,10 +13,10 @@ export function monthRange(month: string): { from: number; to: number } {
     return { from: Date.UTC(year, number - 1, 1) / 1000, to: Date.UTC(year, number, 1) / 1000 };
 }
 
-/** What one person may spend in a month, and has: their own limit or the default. */
+/** What one person may spend in a month, and has: their own limit or the default, the month's spend, and where it went. */
 export async function accountUsage(db: D1Database, userId: string, month: string) {
     const { from, to } = monthRange(month);
-    const [settings, limit, spent] = await db.batch([
+    const [settings, limit, spent, features] = await db.batch([
         db.prepare("SELECT value FROM setting WHERE key = 'default_monthly_limit_usd'"),
         db.prepare('SELECT monthly_usd FROM user_limit WHERE user_id = ?').bind(userId),
         db
@@ -24,6 +24,11 @@ export async function accountUsage(db: D1Database, userId: string, month: string
                 `SELECT COALESCE(SUM(cost_micros), 0) AS micros,
 COALESCE(SUM(CASE WHEN unit = 'audio_seconds' THEN units ELSE 0 END), 0) AS audio_seconds
 FROM usage WHERE user_id = ? AND created_at >= ? AND created_at < ?`,
+            )
+            .bind(userId, from, to),
+        db
+            .prepare(
+                'SELECT feature, SUM(cost_micros) AS micros FROM usage WHERE user_id = ? AND created_at >= ? AND created_at < ? GROUP BY feature ORDER BY micros DESC, feature',
             )
             .bind(userId, from, to),
     ]);
@@ -34,6 +39,24 @@ FROM usage WHERE user_id = ? AND created_at >= ? AND created_at < ?`,
         limitUsd: own ?? (Number.isFinite(stored) ? stored : DEFAULTS.defaultMonthlyLimitUsd),
         usd: row.micros / 1e6,
         audioSeconds: row.audio_seconds,
+        byFeature: ((features?.results ?? []) as { feature: string; micros: number }[]).map((feature) => ({ feature: feature.feature, usd: feature.micros / 1e6 })),
+        periodStart: from * 1000,
+        periodEnd: to * 1000,
+    };
+}
+
+const dollars = (usd: number) => `$${usd.toFixed(2)}`;
+
+/** Whether a person has used up this month's allowance, and the sentence that says so (shown by the app as it is). */
+export async function limitState(db: D1Database, userId: string, now: Date = new Date()) {
+    const usage = await accountUsage(db, userId, monthOf(now));
+    const over = usage.usd >= usage.limitUsd;
+    const renews = new Date(usage.periodEnd).toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' });
+    return {
+        over,
+        usd: usage.usd,
+        limitUsd: usage.limitUsd,
+        message: `You've used ${dollars(usage.usd)} of your ${dollars(usage.limitUsd)} Cue plan for this month. It starts over on ${renews} (UTC).`,
     };
 }
 
@@ -46,9 +69,6 @@ export function daysOf(month: string): string[] {
 /** `spent` (by day, in millionths of a dollar) laid over every day of the month. */
 export const fillDays = (month: string, spent: Map<string, number>) =>
     daysOf(month).map((date) => ({ date, usd: (spent.get(date) ?? 0) / 1e6 }));
-
-/** What reading one file with Workers AI `toMarkdown` costs, in millionths of a dollar: PDFs and Office files are free (images are not, and are not accepted). */
-export const TOMARKDOWN_MICROS_PER_FILE = 0;
 
 /** Records what a person used: one `usage` row each. */
 export async function recordUsage(db: D1Database, userId: string, rows: UsageRow[]): Promise<void> {
