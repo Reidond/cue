@@ -3,7 +3,7 @@ import { Toggle } from '@base-ui/react/toggle';
 import type { AdminUser } from '@cue/contract';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, SearchIcon } from '../components/icons.tsx';
 import { Badge, EmptyState, ErrorState, Meter, Skeleton } from '../components/ui.tsx';
 import { ago, fullTime, usd } from '../lib/format.ts';
@@ -53,6 +53,9 @@ function UsersPage() {
     const users = useQuery(usersQuery(filters));
     const [text, setText] = useState(search.q ?? '');
     const timer = useRef<number | undefined>(undefined);
+
+    // A search still waiting to reach the URL must not follow the person to another page.
+    useEffect(() => () => window.clearTimeout(timer.current), []);
 
     // Typing moves the URL a moment after the last key, so each letter isn't a request.
     function onSearch(value: string) {

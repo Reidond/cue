@@ -23,6 +23,14 @@ export default defineConfig({
         tabWidth: 4,
         printWidth: 140,
         // TypeScript only: Markdown, YAML and JSON are written by hand and read as they are.
-        ignorePatterns: ['**/node_modules/**', 'apps/mac/**', 'apps/admin/src/routeTree.gen.ts', '**/*.md', '**/*.json', '**/*.yaml', '**/*.yml'],
+        ignorePatterns: [
+            '**/node_modules/**',
+            'apps/mac/**',
+            'apps/admin/src/routeTree.gen.ts',
+            '**/*.md',
+            '**/*.json',
+            '**/*.yaml',
+            '**/*.yml',
+        ],
     },
 });

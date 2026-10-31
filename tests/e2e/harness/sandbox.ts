@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { Backend, type BackendOptions } from './backend.ts';
+import { closeBrowser } from './browser.ts';
 import { ANTHROPIC, CLAUDE, CUE_BIN, DEEPGRAM, E2E_CACHE, E2E_WORK, FAKE_CLAUDE, KEEP, REAL_SUPPORT } from './config.ts';
 import { FAKE_KEYS, startFakeProviders, type AnthropicRequest, type DeepgramRequest, type FakeProviders } from './fake-providers.ts';
 import {
@@ -177,6 +178,7 @@ export class Cue {
     close(succeeded: boolean): Promise<void> {
         this.#closing ??= (async () => {
             await this.stop();
+            await closeBrowser(succeeded);
             await (await this.#backend?.catch(() => undefined))?.stop();
             await this.#providers?.close();
             // A real key never stays behind, not even in a kept sandbox.

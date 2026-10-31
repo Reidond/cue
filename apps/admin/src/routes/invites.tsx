@@ -69,6 +69,8 @@ function InviteForm() {
 
     return (
         <form
+            // The server says what is wrong with an address, in the same words wherever it was typed.
+            noValidate
             onSubmit={(event) => {
                 event.preventDefault();
                 const address = email.trim();

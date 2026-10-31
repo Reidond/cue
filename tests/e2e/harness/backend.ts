@@ -243,12 +243,13 @@ export class AdminClient {
         this.#cookie = cookie;
     }
 
-    async call(method: string, path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
+    /** `origin` is the page the request comes from (the admin's own, unless a case plays another site). */
+    async call(method: string, path: string, body?: unknown, origin = this.#base): Promise<{ status: number; body: unknown }> {
         const response = await fetch(new URL(`/admin/v1${path}`, this.#base), {
             method,
             headers: {
                 cookie: this.#cookie,
-                ...(method === 'GET' ? {} : { origin: this.#base }),
+                ...(method === 'GET' ? {} : { origin }),
                 ...(body === undefined ? {} : { 'content-type': 'application/json' }),
             },
             body: body === undefined ? undefined : JSON.stringify(body),

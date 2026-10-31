@@ -2,8 +2,9 @@ import { treaty } from '@elysiajs/eden';
 import type { App } from 'api';
 
 // Same origin as the Worker that serves this page, and the session cookie goes with every request. The types are the Worker's own: Eden reads
-// them off the Elysia app, so a route or a schema that changes there is a type error here.
-export const api = treaty<App>(location.origin).admin.v1;
+// them off the Elysia app, so a route or a schema that changes there is a type error here. Eden would turn a string that looks like a date
+// ("2026-10-01", a day of the chart) into a Date; the schema says string, so it stays one.
+export const api = treaty<App>(location.origin, { parseDate: false }).admin.v1;
 
 /** A request the admin API refused or that did not arrive. `code` is the API's error code when it sent one. */
 export class ApiFailure extends Error {
