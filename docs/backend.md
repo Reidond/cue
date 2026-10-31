@@ -31,7 +31,7 @@ reaches it as events (`🔁 Improving transcript…`, `👥 Finding speakers…`
 their meaning.
 
 **Privacy.** Calls' audio, transcripts and notes now live on Cloudflare (R2 and D1 encrypt at rest).
-The recording's audio is deleted from R2 once the notes are ready plus 30 days (a setting); notes stay
+The recording's audio is deleted from R2 once the notes are ready plus 30 days (a setting; at once with Keep audio off); notes stay
 until the user deletes them. Bodies and transcripts are never logged. The app says this at sign-in.
 
 ## Monorepo (Vite+ and pnpm)
@@ -91,15 +91,17 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
 | `POST /v1/calls` | Starts a call for a project (calendar event, speaker, Auto, questions optional) → `callId` |
 | `GET /v1/live?call=ID[&after=SEQ]` (WebSocket) | In: binary audio frames (a channel byte, `me` / `others`, then PCM16 mono 16 kHz) and commands (`config`, `ask`, `answerNow`, `prepare`). Out, each with a `seq`: `ready`, `status {part, state, detail}`, `speaking`, `transcript.partial/final {channel, speaker, text, start, end}`, `question {id, exchange, text, opener, requested, forced}`, `prepared {questionId, answer, source, score}`, `answer.delta/done {questionId}`, `error`, `ended`. `after` replays what a reconnecting client missed. At a fixed path rather than `/v1/calls/:id/live`: Elysia drops a route's 101 under `cf dev`, so the socket is `.mount`ed and has no params |
 | `POST /v1/calls/:id/questions` | Ask from the Ask field (also over the socket); SSE of the same events |
-| `POST /v1/summaries` | Temporary, until the notes Workflow: a summary from the system prompt and transcript the client sends (SSE `delta`, `done`, `error`) |
-| `POST /v1/calls/:id/end` | Ends the call: the live transcript is saved, uploads can start |
-| `PUT /v1/calls/:id/recording/:side` | Multipart upload of `me` / `others` audio to R2 (resumable) |
-| `POST /v1/calls/:id/notes` | Starts the notes Workflow once the uploads are in |
-| `GET /v1/notes[?project]`, `GET /v1/notes/:id` | Notes and their progress (`steps`, as the session log shows them) |
-| `GET /v1/notes/:id/events` (SSE) | Progress events while the Workflow runs |
-| `PATCH /v1/notes/:id` | Rename a speaker, apply or dismiss a name suggestion |
-| `DELETE /v1/notes/:id` | Move to trash |
+| `POST /v1/calls/:id/end` | Ends the call: the live transcript is saved in D1 |
+| `POST /v1/calls/:id/recording/:side?take=MS` | Begins the multipart upload of `me` / `others` / `mixed` audio to R2, or (the same call again) says which parts already arrived: the resume state |
+| `PUT /v1/calls/:id/recording/:side?take=MS&part=N` | Uploads part N (the request body; 5 MiB or more except the last) |
+| `POST /v1/calls/:id/recording/:side/complete?take=MS` | Finishes the upload from the parts that arrived |
+| `POST /v1/calls/:id/notes` | Starts the notes Workflow once the uploads are in; the same `take` again is the same note |
+| `GET /v1/notes[?project]`, `GET /v1/notes/:id` | Notes (newest first, without the trashed) and one note with its `steps`, as the session log shows them |
+| `GET /v1/notes/:id/events[?after]` (SSE) | The Workflow's progress: `step`, `suggestion`, then `note` (ready); `Last-Event-ID` resumes |
+| `PATCH /v1/notes/:id` | Rename a speaker (whole words, throughout), apply a suggested name, or dismiss it |
+| `DELETE /v1/notes/:id` | Move to trash: gone from lists, audio deleted from R2 |
 | `GET /v1/notes/:id/audio/:side` | Audio for playing from a timestamp (R2, range requests) |
+| `PUT /v1/notes/:id/audio/mixed`, `POST /v1/notes/import` | A note the Mac had before it had an account (its Markdown taken apart) and its audio |
 | `GET/PUT /v1/calendar/assignments` | Which calendar series records into which project |
 
 - **Call Durable Object** (`apps/api/src/call/`, PR 5): builds the system prompt from the project's materials, writes the prompt
@@ -108,10 +110,19 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
   at once when the speaker starts talking, the room's microphone as `Room`), matches prepared answers, answers questions, records usage,
   saves the live transcript to D1 when the call ends, and ends a call nobody has come back to. A dropped client resumes: events carry a `seq` and the
   last thousand are replayed.
-- **Notes Workflow** (Cloudflare Workflows, each step retried on its own): transcribe the recording
-  (Deepgram, `diarize`, the project's terms) → label call-side lines by voice → suggest names
-  (Sonnet) → summary (Sonnet) → note stored → progress events. If a step fails for good, the note keeps
-  the live transcript and says what failed, as today.
+- **Notes Workflow** (`apps/api/src/notes/`, Cloudflare Workflows, each step retried three times on its own): `transcript` (Deepgram's recorded-file
+  API, Nova-3, the project's language and terms, `diarize` on the call side, one utterance per line; the live transcript is kept when it
+  hears much less than live recognition did) → `speakers` (each call-side line goes to the voice heard most while it was said, numbered in
+  the order the voices first speak; the port of `Speakers.label`) → `names` (Sonnet suggests who the unnamed people are) → `summary` (Sonnet
+  writes it; the port of `Summarizer` with `prompts/summary.md`) → `store` (note ready, audio dropped when Keep audio is off). A step that fails for
+  good never stops the others: the note keeps what it had (the live transcript) and says what failed. Every step writes **events**
+  (`note_event`: the session log's lines, `🔁 Improving transcript…`, `✅ Speakers: 2 …`, `💡 Suggested name: …`) that clients follow over
+  SSE, and the `steps` of the note. Only the note's id goes between steps; the transcript lives in D1. A recording that stops while Cue goes on
+  listening does not wait for the call to end: the live lines come from the Call DO (`lines()`).
+- **Recordings** are uploaded in parts through the Worker (each under the 100 MB request limit) to R2 (`RECORDINGS`); the R2 binding cannot list
+  parts, so each lands in `upload_part` (D1), which is the resume state. A call can hold several recordings, told apart by `take` (the start).
+- **Retention**: a Durable Object (`Janitor`, one instance, an alarm) deletes the audio of notes `audioRetentionDays` (admin › Settings) after they
+  were ready, aborts uploads nobody finished, and sleeps when no audio is in storage; a note becoming ready wakes it. Notes stay until deleted.
 - The server picks models. Usage (tokens per model, audio seconds) is priced by a table in config,
   recorded in D1; each user has a monthly dollar limit (402 over it) and a Rate Limiting binding.
 - Never: the keys to a client, Deepgram's `callback` parameter, logged bodies or transcripts.
@@ -144,7 +155,7 @@ retention, pause the whole plan). No transcripts or notes: the admin sees usage,
 | `GET/PATCH /admin/v1/settings` | Default monthly limit (20 USD), audio retention (30 days), pausing the plan |
 
 Writes need this origin's `Origin` header. Money is millionths of a dollar in the `usage` table
-(`user_id, feature, provider, model, units, unit, cost_micros, created_at`, which PR 7 fills), and the
+(`user_id, feature, provider, model, units, unit, cost_micros, created_at`; PR 5 and 6 fill it: `answer`, `question_judge`, `live_transcript`, `note_transcript`, `note_names`, `notes_summary`), and the
 limits are dollars: `user_limit` per person, else the `default_monthly_limit_usd` setting. A paused plan
 (`plan_paused`, 503) is checked once per `/v1` request (`src/routes/v1.ts`); the admin is not under `/v1`.
 Invite, enable, disable and revoke are one set of SQL statements (`src/accounts.ts`) shared by the admin
@@ -178,7 +189,7 @@ admin API is same-origin.
 - Kept on the Mac: audio capture, call detection, the calendar, notifications, hot keys, the overlay
   and dashboard, the local recording and its upload, the Markdown copy of each note in `Documents`.
 - Hooks: `CUE_API_URL=url`, `CUE_WEB_AUTH=headless` (follow the authorize URL with URLSession up to the
-  redirect back); `CUE_CONTROL`: `signin`, `signout`. Hooks for removed pieces go. Document them in
+  redirect back); `CUE_CONTROL`: `signin`, `signout`. Hooks for removed pieces go (`CUE_WHISPER_CLI`, `CUE_SPEAKER_MODELS`, `download speakers`). Document them in
   AGENTS.md and README.
 
 ## Testing (end-to-end only)
@@ -193,6 +204,9 @@ admin API is same-origin.
   SPA (Playwright against `cf dev`).
 
 ## PRs, in order (a stack: each is based on the one before; nothing merges to `main` until the owner says)
+
+They form GitHub Stack #21 (https://github.com/Reidond/cue/stack/21). Each new PR is appended with
+`gh stack link 21 <PR number>`, and the whole stack is merged with `gh stack merge` once the owner approves.
 
 1. Monorepo: Vite+, pnpm, TypeScript 7, oxlint/oxfmt; the app moved to `apps/mac`. No behaviour change.
 2. OAuth sign-in, `/v1/me`, the app's sign-in and Settings › Account.

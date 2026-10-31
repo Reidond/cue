@@ -47,9 +47,24 @@ export default defineConfig(({ mode }) => ({
             ],
         },
         // One Call per live call: Deepgram's streams, the question judge and Claude's answers live in it (src/call/).
-        exports: { Call: exports.durableObject({ storage: 'sqlite' }) },
+        exports: {
+            Call: exports.durableObject({ storage: 'sqlite' }),
+            // Deletes the audio of notes whose retention is over (src/notes/janitor.ts).
+            Janitor: exports.durableObject({ storage: 'sqlite' }),
+            // Makes the notes of a recording: the second pass, the voices, names, summary, the note stored (src/notes/workflow.ts).
+            NotesWorkflow: exports.workflow({ name: 'cue-notes' }),
+        },
         env: {
             CALL: bindings.durableObject({ worker: 'cue-api', exportName: 'Call' }),
+            JANITOR: bindings.durableObject({ worker: 'cue-api', exportName: 'Janitor' }),
+            NOTES: bindings.workflow({ name: 'cue-notes', worker: 'cue-api', exportName: 'NotesWorkflow' }),
+            // The recordings of calls: each side's audio, uploaded in parts after the call (the notes Workflow reads them; they go after the retention).
+            RECORDINGS: bindings.r2({ name: 'cue-recordings' }),
+            // Seconds: a step of the notes Workflow that failed waits this long before trying again (three times); how long a "day" of audio
+            // retention is and how often the janitor looks. A case shortens them.
+            NOTES_RETRY_SECONDS: bindings.text(process.env.NOTES_RETRY_SECONDS ?? '5'),
+            RETENTION_DAY_SECONDS: bindings.text(process.env.RETENTION_DAY_SECONDS ?? '86400'),
+            RETENTION_TICK_SECONDS: bindings.text(process.env.RETENTION_TICK_SECONDS ?? '3600'),
             DB: bindings.d1(mode === 'development' ? { name: 'cue', id: DEV_DB_ID } : { name: 'cue' }),
             // User ids of disabled users: their access tokens (valid for up to 15 minutes) stop working at once.
             DENYLIST: bindings.kv(mode === 'development' ? { id: DEV_KV_ID } : {}),

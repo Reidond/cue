@@ -188,15 +188,3 @@ export const PrepareCommand = Type.Object({ type: Type.Literal('prepare'), excha
 
 export const CallCommand = Type.Union([ConfigCommand, AskCommand, AnswerNowCommand, PrepareCommand]);
 export type CallCommand = Static<typeof CallCommand>;
-
-// MARK: Summaries (temporary)
-
-/**
- * `POST /v1/summaries`: until PR 6's notes Workflow, the Mac builds the summary prompt itself and has the backend run it (so the keys stay here).
- * The reply is server-sent events: `delta` `{text}` pieces, then `done` `{}`, or `error` `{message}`.
- */
-export const SummaryBody = Type.Object({
-    system: Type.String({ minLength: 1, maxLength: 200000 }),
-    transcript: Type.String({ minLength: 1, maxLength: 2000000 }),
-});
-export type SummaryBody = Static<typeof SummaryBody>;

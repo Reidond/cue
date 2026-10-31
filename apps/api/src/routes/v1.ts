@@ -5,8 +5,9 @@ import { planPaused } from '../settings.ts';
 import { calls } from './calls.ts';
 import { materials } from './materials.ts';
 import { me } from './me.ts';
+import { notes } from './notes.ts';
 import { projects } from './projects.ts';
-import { summaries } from './summaries.ts';
+import { recordings } from './recordings.ts';
 
 /** Everything under `/v1`: the owner can pause the whole plan (admin › Settings), and then each of these routes answers `plan_paused`. */
 export const v1 = new Elysia({ name: 'v1', prefix: '/v1' })
@@ -17,4 +18,5 @@ export const v1 = new Elysia({ name: 'v1', prefix: '/v1' })
     .use(projects)
     .use(materials)
     .use(calls)
-    .use(summaries);
+    .use(recordings)
+    .use(notes);

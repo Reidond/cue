@@ -20,6 +20,9 @@ const PRICES: Record<string, { input: number; output: number; cacheWrite: number
 /** Deepgram Nova-3 streaming, per second of audio: 0.0077 USD a minute. */
 export const SPEECH_MICROS_PER_SECOND = 128;
 
+/** Deepgram Nova-3 on a recorded file, per second of audio: 0.0043 USD a minute. */
+export const FILE_SPEECH_MICROS_PER_SECOND = 72;
+
 /** What the tokens of one model cost, in millionths of a dollar. */
 export function tokenCostMicros(model: string, tokens: Tokens): { input: number; output: number; cacheWrite: number; cacheRead: number } {
     const price = PRICES[model] ?? PRICES[ANSWER_MODEL]!;

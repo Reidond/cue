@@ -142,6 +142,12 @@ export class Call extends DurableObject<Env> {
         });
     }
 
+    /** The final transcript lines so far: what the notes start from when a recording stops while the call goes on. */
+    async lines(): Promise<{ channel: Channel; speaker: number | null; text: string; start: number; end: number }[]> {
+        await this.#ensure();
+        return this.#lines.map(({ channel, speaker, text, start, end }) => ({ channel, speaker, text, start, end }));
+    }
+
     /** Ends the call: the speech streams finish, usage is recorded, the transcript is kept. */
     async end(): Promise<{ lines: number }> {
         await this.#ensure();
