@@ -38,9 +38,8 @@ for the live call. (`docs/backend.md` is the design.)
   names and terms, and sends the transcript back as it is said.
 - **Who is speaking** comes from the source: the microphone is you, system
   audio is everyone else on the call. In a recording's notes, the people on
-  the call are told apart by voice afterwards, on your Mac, with
-  [FluidAudio](https://github.com/FluidInference/FluidAudio)'s offline
-  speaker diarization.
+  the call are told apart by voice afterwards, on the backend, from Deepgram's
+  speaker labels on the recorded call side.
 - **Question detection** happens on the backend: a small Claude (Haiku, without
   your materials, so it answers in about a second) reads what the participants
   said each time a line is transcribed and lists the questions in it that are
@@ -50,7 +49,7 @@ for the live call. (`docs/backend.md` is the design.)
   its own and shown together. Its prompt is `apps/api/prompts/judge.md`. If the judge
   can't be reached, sentences ending in `?` count instead.
 - **Answers** come from Claude Sonnet on the backend, one conversation per call: your materials are cached in its prompt for an hour and
-  written into the cache before the first question, and kept warm while the room is quiet. The summaries of recordings are written there too.
+  written into the cache before the first question, and kept warm while the room is quiet. The summaries of recordings are written by the backend's notes Workflow (below).
   The prompt is `apps/api/prompts/prompt.md`.
 - **If the connection drops**, the app reconnects to the same call and picks up the events it missed; audio spoken meanwhile is not heard.
 - **The overlay** is a set of Liquid Glass elements following Apple's HIG:
@@ -61,7 +60,6 @@ for the live call. (`docs/backend.md` is the design.)
 ## Setup
 
 ```bash
-brew install whisper-cpp   # only for the second pass over a recorded call
 ./apps/mac/scripts/build.sh
 open apps/mac/build/Cue.app
 ```
@@ -72,10 +70,8 @@ the signing in, and later the listening, answering and note-taking; **Settings �
 and Sign Out. Then, on **Home**:
 
 1. Allow **Microphone** and **Screen & System Audio Recording** when macOS
-   asks; after granting the second one, quit and reopen Cue. Listening and
-   answering need nothing else on the Mac. For the second pass over a recorded call,
-   **Download** the speech model (1.6 GB, once) and the speaker models
-   (22 MB; otherwise the first recording downloads them). The checklist
+   asks; after granting the second one, quit and reopen Cue. Listening,
+   answering and the notes need nothing else on the Mac. The checklist
    shows what is still missing.
 2. Click **New Project** (⌘N) and name it.
 
@@ -149,23 +145,26 @@ again. The session log notes what started and stopped each recording. When you
 stop, Cue saves the transcript right away and opens the
 note in the dashboard, where a list shows the steps it goes through next:
 
-1. **Saving audio** — the call's audio goes next to the note.
+1. **Saving audio** — the call's audio goes next to the note (Keep audio),
+   and each side of the recording is uploaded to the backend. An upload that
+   breaks off is resumed from the parts that already arrived.
 2. **Improving transcript** — the live transcript is written phrase by phrase
    and gets words wrong that the rest of the call makes obvious («дотатниці»
-   for «до п'ятниці»). Whisper now reads each side's whole recording again,
-   with beam search and the project's language, occasion and names and terms,
-   and its transcript replaces the live one — each line still at the moment it
-   was said. This takes about 6 minutes per hour of call on an M2 Pro, and runs
-   at background priority, so a call you start meanwhile isn't slowed down.
+   for «до п'ятниці»). The backend's notes Workflow has Deepgram read each
+   side's whole recording again, with the project's language and names and
+   terms, and its transcript replaces the live one — each line still at the
+   moment it was said.
 3. **Finding speakers** — everyone on the call shares the call's audio, so
-   Cue tells their voices apart in it and gives each line the voice heard
+   the backend tells their voices apart in it and gives each line the voice heard
    most while it was said: «Учасник 1», «Учасник 2»… (Participant 1, 2… in
-   English); a call with one other person keeps the plain «Учасник». This
-   takes about 20 seconds per hour of call on an M2 Pro.
-4. **Writing summary** — Claude's summary streams in as it is written.
+   English); a call with one other person keeps the plain «Учасник».
+4. **Writing summary** — Claude suggests names for the people on the call and
+   writes the summary.
 
-If a step fails, the note keeps what it had (the live transcript, say) and the
-list stays on the page with the reason; the other steps run all the same.
+Each step is retried by the Workflow before it is given up. If one fails for good, the note keeps what it had (the live transcript, say) and the
+list stays on the page with the reason; the other steps run all the same. The notes live in your account on the backend (so
+another Mac, or the Windows client later, sees them); the audio is deleted from the backend after the retention period
+the owner sets (30 days by default), at once with Keep audio off.
 
 Notes go into the current project's `Notes/` folder (a recording made before
 any project exists goes into **Meetings**), as plain Markdown files named
@@ -203,8 +202,7 @@ the names and terms spelled the way the project has them. It is about the
 conversation only: Claude is told never to comment on the transcript or on
 speech recognition, and remarks like «(у транскрипті — „дотатниці“…)» that slip
 through anyway are dropped (the words that give them away are listed per
-language in `apps/mac/Resources/lexicons/`). Use **Summarize Again** on the note to
-regenerate it; the transcript is kept as is. The files open in any Markdown editor (Obsidian, iA Writer, …).
+language in `apps/mac/Resources/lexicons/`). The files open in any Markdown editor (Obsidian, iA Writer, …).
 
 Click a speaker's name in the transcript to rename them: Cue replaces the name
 everywhere in the note — the transcript, the summary, the title (and so the
@@ -228,8 +226,10 @@ a note is being processed, each side is also kept on its own in
 ready.
 
 The recording itself is made on your Mac. While Cue listens or records, though, the call's audio and your microphone are streamed to
-the Cue backend, which has Deepgram write the live transcript, and the transcript goes to Claude for the answers and the summary;
-the audio is not kept there. Let people know when you record — consent rules vary by place.
+the Cue backend, which has Deepgram write the live transcript, and the transcript goes to Claude for the answers. After a recording,
+each side's audio is uploaded to the backend so Deepgram can read it again and Claude can write the notes; the transcript, the
+notes and (with Keep audio on) the audio stay in your account, and the audio is deleted after the retention period the owner sets
+(30 days by default). Let people know when you record — consent rules vary by place.
 
 Tips:
 
@@ -351,14 +351,14 @@ CUE_HOME=$(mktemp -d) CUE_NO_LIVE_AUDIO=1 CUE_APPEARANCE=dark CUE_SNAPSHOT=/tmp/
 `CUE_HOME=dir` keeps all files and settings in `dir` (the sign-in's refresh token too, in
 `dir/Keychain.json`, instead of the keychain), `CUE_API_URL` points Cue at another backend (the default is `https://api.cue.app`),
 `CUE_WEB_AUTH=headless` signs in without the browser sheet (the redirects followed by hand), `CUE_ME_TICK` sets how often (seconds)
-Cue reads its account again, `CUE_WHISPER_CLI` swaps in another `whisper-cli` for the second
-pass, `CUE_SPEAKER_MODELS=dir` keeps the speaker models in `dir`,
+Cue reads its account again, `CUE_UPLOAD_PART_BYTES` sets the size of the parts a recording is uploaded in (8 MiB; the backend wants 5 MiB or
+more except for the last), `CUE_UPLOAD_BREAK=n` cuts the upload's connection once after `n` parts (to see it resume),
 `CUE_PROJECT=name` picks the project at launch, and
 `CUE_CONTROL=file` runs each line appended to the file as a click would
 (`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
 `ask TEXT`, `timestamp 00:00:12`, `assign EVENT | PROJECT`,
 `notification record|dismiss`, `rename NAME | NEW`, `apply LABEL`,
-`download speakers`, `show TEXT`, `newest`, `prepare`, `record`, `settings account`, `signin`, `signout`,
+`show TEXT`, `newest`, `prepare`, `record`, `settings account`, `signin`, `signout`,
 `size 820 700`; see `AGENTS.md`) and keeps notifications in the
 session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` reads the
 calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs using the
