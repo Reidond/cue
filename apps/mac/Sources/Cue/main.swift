@@ -388,9 +388,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         switch command {
         case "signin":
-            Task { await state.api.signIn() }
+            Task { await self.state.api.signIn() }
         case "signout":
-            Task { await state.api.signOut() }
+            Task { await self.state.api.signOut() }
         case "new":
             showDashboard()
             if let project = try? state.projects.create(named: argument) { dashboard.open(project) }

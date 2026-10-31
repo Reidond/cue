@@ -183,7 +183,7 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
         }
         if SecretStore.get(Self.account) != nil {
             phase = .restoring
-            Task { await restore() }
+            Task { await self.restore() }
         }
     }
 
