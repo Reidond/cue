@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { bindings, defineConfig, exports } from 'cf/config';
 import { DEV_DB_ID, DEV_KV_ID } from './dev-ids.ts';
 import * as entrypoint from './src/index.ts' with { type: 'cf-worker' };
 
 // The backend's address, kept in one place (production-url.txt): the Worker's issuer here, and the Mac app, whose build stamps it into Info.plist
 // (apps/mac/scripts/build.sh). `PUBLIC_URL` in the environment overrides it (a case's backend, a dry run elsewhere).
-const productionUrl = readFileSync(new URL('./production-url.txt', import.meta.url), 'utf8').trim();
+const productionUrl = readFileSync(join(import.meta.dirname, 'production-url.txt'), 'utf8').trim();
 
 // Where sign-in with Google and GitHub goes. `IDP_URL` repoints both at a stand-in (the e2e harness' fake-idp.ts, which
 // serves both providers' endpoints under /google and /github); a real deploy leaves it unset.

@@ -23,16 +23,24 @@ if (!id) {
     const text = listing.stdout;
     const json = JSON.parse(text.slice(text.search(/[[{]/))) as unknown;
     const rows = (Array.isArray(json) ? json : ((json as { result?: unknown[] }).result ?? [])) as Record<string, string>[];
-    id = rows.find((row) => (row.name ?? '').toLowerCase() === 'cue')?.uuid ?? rows.find((row) => (row.name ?? '').toLowerCase() === 'cue')?.id;
+    id =
+        rows.find((row) => (row.name ?? '').toLowerCase() === 'cue')?.uuid ??
+        rows.find((row) => (row.name ?? '').toLowerCase() === 'cue')?.id;
 }
 if (!id) {
     if (ifExists) {
-        console.log('::notice::The D1 database "cue" does not exist yet: this is the first deploy, which creates it. Migrations are applied after it.');
+        console.log(
+            '::notice::The D1 database "cue" does not exist yet: this is the first deploy, which creates it. Migrations are applied after it.',
+        );
         process.exit(0);
     }
     console.error('Could not find the D1 database "cue". Deploy first (`cf deploy` creates it), or set CUE_D1_ID.');
     process.exit(1);
 }
 
-const applied = spawnSync(cf, ['d1', 'migrations', 'apply', id, ...(dry ? ['--dry-run'] : [])], { cwd: root, stdio: 'inherit', env: { ...process.env, CI: '1' } });
+const applied = spawnSync(cf, ['d1', 'migrations', 'apply', id, ...(dry ? ['--dry-run'] : [])], {
+    cwd: root,
+    stdio: 'inherit',
+    env: { ...process.env, CI: '1' },
+});
 process.exit(applied.status ?? 1);
