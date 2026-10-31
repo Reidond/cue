@@ -1,8 +1,31 @@
 # Working on Cue
 
 Cue is a macOS overlay prompter and call notetaker: SwiftPM executable in
-`Sources/Cue`, resources in `Resources/`, built into `build/Cue.app` by
-`./scripts/build.sh`. See `README.md` for what it does.
+`apps/mac/Sources/Cue`, resources in `apps/mac/Resources/`, built into
+`apps/mac/build/Cue.app` by `apps/mac/scripts/build.sh`. See `README.md` for
+what it does. `docs/backend.md` is the design of the Cloudflare backend and
+admin app that are being added beside it.
+
+## Layout
+
+The repository is a Vite+ (`vp`) pnpm monorepo:
+
+```
+package.json, pnpm-workspace.yaml   # apps/*, packages/*, tests/e2e; pnpm-lock.yaml is the only lockfile
+vite.config.ts                      # the one lint (oxlint) and fmt (oxfmt) configuration, overrides per package
+apps/mac/                           # the Swift app: Package.swift, Sources/Cue, Resources, scripts/build.sh
+tests/e2e/                          # the end-to-end suite, a workspace package
+scripts/changelog.sh                # release notes; repo-wide, used by the release workflow
+docs/                               # plan.md (the app), backend.md (the backend)
+```
+
+- Install: `pnpm install` (Node 26 or later, pnpm from `packageManager`; `vp` is
+  the `vite-plus` dev dependency, run it as `pnpm vp …` or with the global `vp`).
+- Check: `vp check` formats, lints and type-checks all TypeScript in one go (`vp check --fix`
+  applies fixes). Run it before you commit. Never use `vp test`: unit tests are prohibited.
+- Lint and format settings live only in the root `vite.config.ts`; add package
+  rules as `lint.overrides` / `fmt.overrides` there, not as config files in packages.
+- TypeScript is 7 (`typescript@^7`); type-aware linting runs on its native compiler (tsgo).
 
 ## Cloud sandboxes (Boat)
 
@@ -16,7 +39,7 @@ Source: https://docs.boat.dev/ai-tools#3-add-a-rule-to-agents-md.
 - One-shot job: `boat run --push . -- <command>` creates a sandbox, runs the
   repository command, reports its cost and deletes it; it returns the command's
   exit code.
-- Run: `boat exec "$id" --cwd cue/tests/e2e "npm ci && npm run typecheck"`
+- Run: `boat exec "$id" --cwd cue "pnpm install && pnpm vp check"`
   (30 s timeout; `--timeout 0` means no limit).
 - Server: `boat exec "$id" --detach "<server-command>"`, then
   `boat exec "$id" --status <pid>`.
@@ -27,8 +50,7 @@ Source: https://docs.boat.dev/ai-tools#3-add-a-rule-to-agents-md.
 - When done: `boat stop "$id"` keeps the disk for 14 days;
   `boat delete "$id" --yes` erases it.
 
-Boat supplies Linux VMs. Run portable checks such as the TypeScript typecheck
-there. Building `Cue.app` and running its end-to-end suite require macOS and Apple
+Boat supplies Linux VMs. Run portable checks such as `vp check` there. Building `Cue.app` and running its end-to-end suite require macOS and Apple
 frameworks: use the existing macOS CI runner or an explicitly authorized remote
 Mac, never this computer. The macOS test and snapshot recipes below apply on that
 runner; a Linux check is not evidence that the app builds or passes its native
@@ -41,7 +63,7 @@ extend its lifetime before long work.
 This rule is strict and has no exceptions.
 
 - **Never write unit tests.** Do not add XCTest or Swift Testing, a
-  `testTarget` in `Package.swift`, a `Tests/` folder, `XCTestCase` / `@Test` /
+  `testTarget` in `apps/mac/Package.swift`, a `Tests/` folder, `XCTestCase` / `@Test` /
   `#expect`, mocks or fakes of Cue's own types, or code (protocols, injection
   points, `internal` widening) that exists only so a unit test can call it.
   If you find any, delete them.
@@ -111,7 +133,7 @@ node tests/e2e/run.ts --no-build 4 5   # the existing build; cases whose name st
 node tests/e2e/run.ts --real-claude 45 # the real claude CLI instead of the stand-in
 node tests/e2e/run.ts --real-anthropic --real-deepgram 7 8   # the real cloud providers, keys from the keychain
 node tests/e2e/run.ts --keep           # keep every sandbox (a failed case always keeps its own)
-cd tests/e2e && npm ci && npm run typecheck   # tsc --noEmit; run it before you commit
+pnpm install && vp check               # format, lint, type-check; run it before you commit
 ```
 
 The runner compiles the Swift tools in `tests/e2e/tools/` that need Apple's
@@ -211,7 +233,7 @@ code paths and document new ones here and in `README.md` › Testing.
 
 | Variable | Effect |
 |---|---|
-| `CUE_HOME=dir` | All files under `dir`, settings in the `com.andriishafar.cue.e2e` domain (`Sources/Cue/Storage.swift`), API keys in `dir/Keychain.json` instead of the login keychain (`Sources/Cue/Providers.swift`); windows don't remember their frames (AppKit would keep them in the user's own settings). |
+| `CUE_HOME=dir` | All files under `dir`, settings in the `com.andriishafar.cue.e2e` domain (`apps/mac/Sources/Cue/Storage.swift`), API keys in `dir/Keychain.json` instead of the login keychain (`apps/mac/Sources/Cue/Providers.swift`); windows don't remember their frames (AppKit would keep them in the user's own settings). |
 | `CUE_DEFAULTS_DOMAIN=name` | With `CUE_HOME`, keep settings in this defaults domain. |
 | `CUE_WHISPER_PORT=n` | Run (or reuse) whisper-server on this port instead of 8178. |
 | `CUE_CLAUDE_BIN=path` | Use this binary instead of `claude`. |
@@ -240,7 +262,7 @@ and read the PNGs as images — then the same in the other appearance:
 ```bash
 home=$(mktemp -d)
 CUE_HOME=$home CUE_NO_LIVE_AUDIO=1 CUE_SHOW_SETTINGS=1 CUE_APPEARANCE=dark \
-  CUE_SNAPSHOT=$home/cue.png CUE_CONTROL=$home/control build/Cue.app/Contents/MacOS/Cue & pid=$!
+  CUE_SNAPSHOT=$home/cue.png CUE_CONTROL=$home/control apps/mac/build/Cue.app/Contents/MacOS/Cue & pid=$!
 sleep 3; echo "new Bee talk" >> "$home/control"   # any CUE_CONTROL line: `page home`, `start NAME`, …
 sleep 5; ls "$home"/*.png                         # cue.png (overlay), cue-dashboard.png, cue-settings.png
 grep 📸 "$home/Application Support/Cue/sessions/"*.md; kill $pid  # then CUE_APPEARANCE=light
@@ -274,7 +296,7 @@ updating the cases.
 
 - Never run the app for testing without `CUE_HOME`: it would read and change
   the user's real settings, library and notes (and run migrations on them).
-- Build with `./scripts/build.sh` before running cases; the build must be
+- Build with `apps/mac/scripts/build.sh` before running cases; the build must be
   warning-free for new code.
 - Match the surrounding code: comment density, naming, SwiftUI and HIG idioms
   (standard controls, semantic colours, system Liquid Glass).
@@ -283,8 +305,8 @@ updating the cases.
 ## CI and releases
 
 - `.github/workflows/ci.yml` runs on pull requests only: it builds the app
-  (new warnings in `Sources/Cue` fail it), type-checks the end-to-end suite
-  and runs it on GitHub's hosted macOS runner with the speech model and the
+  (new warnings in `apps/mac/Sources/Cue` fail it), runs `vp check`
+  and the end-to-end suite on GitHub's hosted macOS runner with the speech model and the
   latest Node. That runner can't recognize speech in time, so speech cases
   skip there with the probe's reason (as do overlay or window snapshot cases,
   if the probe finds those unreadable): CI covers the build, the
@@ -293,7 +315,7 @@ updating the cases.
   in the PR. Keep CI green; never fake what's missing.
 - `.github/workflows/release.yml` runs on every push to `main`: it builds
   `Cue.app`, zips it and publishes a GitHub release `v<version>.<patch>`
-  (`<version>` is `CFBundleShortVersionString` in `Resources/Info.plist`,
+  (`<version>` is `CFBundleShortVersionString` in `apps/mac/Resources/Info.plist`,
   bump it for a new minor or major) with `scripts/changelog.sh` as its notes:
   every change on `main` since the previous release, one line each, with a
   merged pull request's own commits listed under it. Write commit subjects and

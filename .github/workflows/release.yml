@@ -1,6 +1,6 @@
 # Every push to main builds Cue.app and publishes it as a GitHub release, with the
 # changes since the previous release as its notes. Versions are CFBundleShortVersionString
-# from Resources/Info.plist plus a patch number: 2.0.0, 2.0.1, …
+# from apps/mac/Resources/Info.plist plus a patch number: 2.0.0, 2.0.1, …
 name: Release
 
 on:
@@ -30,14 +30,14 @@ jobs:
       - name: SwiftPM cache
         uses: actions/cache@v4
         with:
-          path: .build
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          path: apps/mac/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/mac/Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
 
       - name: Version
         id: version
         run: |
-          base=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Resources/Info.plist)
+          base=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" apps/mac/Resources/Info.plist)
           last=$(git tag -l "v$base.*" --sort=-v:refname | head -n 1)
           if [[ -n $last ]]; then patch=$((${last##*.} + 1)); else patch=0; fi
           echo "version=$base.$patch" >> "$GITHUB_OUTPUT"
@@ -46,10 +46,11 @@ jobs:
         env:
           CUE_VERSION: ${{ steps.version.outputs.version }}
           CUE_BUILD: ${{ github.run_number }}
+        working-directory: apps/mac
         run: ./scripts/build.sh
 
       - name: Package
-        run: ditto -c -k --keepParent build/Cue.app "Cue-${{ steps.version.outputs.version }}.zip"
+        run: ditto -c -k --keepParent apps/mac/build/Cue.app "Cue-${{ steps.version.outputs.version }}.zip"
 
       - name: Release notes
         run: |

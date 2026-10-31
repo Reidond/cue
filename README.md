@@ -46,7 +46,7 @@ call audio ──┘   (ScreenCaptureKit)  or Deepgram               └─ Clau
   for you — not the talk itself, a rhetorical question it answers, small talk or
   remarks about the call. Cue then answers them once the participants pause, or
   as soon as you start talking; several asked in one go are answered each on
-  its own and shown together. Its prompt is `Resources/judge.md`. If the judge
+  its own and shown together. Its prompt is `apps/mac/Resources/judge.md`. If the judge
   can't be reached, sentences ending in `?` count instead.
 - **Answers** come from one long-lived Claude Code session (`claude -p` with
   stream-json), using your Claude Code login — no API key. The session is warmed
@@ -63,8 +63,8 @@ call audio ──┘   (ScreenCaptureKit)  or Deepgram               └─ Clau
 
 ```bash
 brew install whisper-cpp
-./scripts/build.sh
-open build/Cue.app
+./apps/mac/scripts/build.sh
+open apps/mac/build/Cue.app
 ```
 
 Cue opens its dashboard. On **Home**:
@@ -197,7 +197,7 @@ the names and terms spelled the way the project has them. It is about the
 conversation only: Claude is told never to comment on the transcript or on
 speech recognition, and remarks like «(у транскрипті — „дотатниці“…)» that slip
 through anyway are dropped (the words that give them away are listed per
-language in `Resources/lexicons/`). Use **Summarize Again** on the note to
+language in `apps/mac/Resources/lexicons/`). Use **Summarize Again** on the note to
 regenerate it; the transcript is kept as is. The files open in any Markdown editor (Obsidian, iA Writer, …).
 
 Click a speaker's name in the transcript to rename them: Cue replaces the name
@@ -300,14 +300,15 @@ Cue is tested end to end only — no unit tests (see `AGENTS.md`). The cases in
 `tests/e2e/cases/` run the built app in a sandbox (`CUE_HOME`), feed it speech
 made with macOS voices, and check the notes, audio, session log and rendered
 windows. They are TypeScript, run by Node 26 or later as they are (Node strips
-the types; there is nothing to build or install to run them):
+the types; there is nothing to build to run them, and `pnpm install` is needed
+only for the type check):
 
 ```bash
 node tests/e2e/run.ts                 # build, then run every case
 node tests/e2e/run.ts --no-build 1    # only cases whose name starts with 1
 node tests/e2e/run.ts --real-claude   # use the real Claude Code instead of the stand-in
 node tests/e2e/run.ts --real-anthropic --real-deepgram 7 8   # the real cloud providers
-cd tests/e2e && npm ci && npm run typecheck   # type-check the cases and the harness
+pnpm install && vp check              # format, lint and type-check the TypeScript (Vite+)
 ```
 
 The cloud providers have stand-ins too, served from the case itself; the real
@@ -323,7 +324,7 @@ security add-generic-password -a "$USER" -s "Cue e2e Deepgram API key" -w
 A case hands a key only to the sandboxed Cue it runs, and removes it from the
 sandbox when it ends, even from one it keeps.
 
-`npm test` in `tests/e2e` is `node run.ts`. A run stays out of your way, so you
+`pnpm test` in `tests/e2e` is `node run.ts`. A run stays out of your way, so you
 can keep working while it goes: each case's Cue has `CUE_BACKGROUND=1`, which
 keeps it from ever coming to the front or taking focus, hides its Dock and menu
 bar icons, turns off its hot keys, puts its windows behind every other window
@@ -334,17 +335,17 @@ The same hooks work by hand:
 
 ```bash
 # What Cue extracts from files, including prepared answers
-build/Cue.app/Contents/MacOS/Cue --inspect slides.pptx answers.docx
+apps/mac/build/Cue.app/Contents/MacOS/Cue --inspect slides.pptx answers.docx
 
 # Rehearsal: play a recording as the call instead of live audio
-CUE_NO_LIVE_AUDIO=1 CUE_REHEARSE_PARTICIPANT=questions.wav build/Cue.app/Contents/MacOS/Cue
+CUE_NO_LIVE_AUDIO=1 CUE_REHEARSE_PARTICIPANT=questions.wav apps/mac/build/Cue.app/Contents/MacOS/Cue
 
 # A two-sided rehearsal that is also recorded and summarized
 CUE_NO_LIVE_AUDIO=1 CUE_REHEARSE_RECORD=1 CUE_REHEARSE_PARTICIPANT=call.wav CUE_REHEARSE_ME=me.wav \
-  build/Cue.app/Contents/MacOS/Cue
+  apps/mac/build/Cue.app/Contents/MacOS/Cue
 
 # Render a notes file the way the dashboard shows it
-build/Cue.app/Contents/MacOS/Cue --render notes.md notes.png
+apps/mac/build/Cue.app/Contents/MacOS/Cue --render notes.md notes.png
 ```
 
 `CUE_SNAPSHOT=/tmp/cue.png` writes the windows to PNGs every 2 s — the overlay
@@ -363,7 +364,7 @@ at the design, launch with `CUE_HOME` and `CUE_SNAPSHOT`, show a page with
 
 ```bash
 CUE_HOME=$(mktemp -d) CUE_NO_LIVE_AUDIO=1 CUE_APPEARANCE=dark CUE_SNAPSHOT=/tmp/cue.png \
-  build/Cue.app/Contents/MacOS/Cue    # /tmp/cue-dashboard.png; /tmp/cue.png is captured once Start Cue shows it
+  apps/mac/build/Cue.app/Contents/MacOS/Cue    # /tmp/cue-dashboard.png; /tmp/cue.png is captured once Start Cue shows it
 ```
 
 `CUE_HOME=dir` keeps all files and settings in `dir` (API keys too, in
@@ -384,4 +385,4 @@ microphone from a text file, both again on every check; `CUE_MEETING_TICK` and
 `CUE_MIC_RELEASE` shorten the 5 s check and the 60 s wait after a call app lets
 go of the microphone. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay
 (snapshots always can).
-`swift scripts/make_icon.swift` regenerates the app icon.
+`cd apps/mac && swift scripts/make_icon.swift` regenerates the app icon.
