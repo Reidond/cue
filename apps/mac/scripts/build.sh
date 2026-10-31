@@ -3,9 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# FluidAudio's binary artifact is public: looking for GitHub credentials in the keychain would only
-# wait, forever when nobody can answer the keychain's prompt (agents, CI).
-swift build -c release --disable-keychain
+swift build -c release
 APP=build/Cue.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

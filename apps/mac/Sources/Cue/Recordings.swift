@@ -92,6 +92,11 @@ struct RecordingFile: Identifiable, Hashable {
     let audio: URL?
     /// Names the summary suggested for the people on the call, by label (front matter `suggestions:`).
     let suggestions: [String: String]
+    /// The note in the account (front matter `note:`); nil for one the account doesn't know yet.
+    let noteID: String?
+    /// The library has no audio of its own, but the account does and the player can stream it (front matter `audio-online:`).
+    let streamsAudio: Bool
+    var hasAudio: Bool { audio != nil || streamsAudio }
 
     static let transcriptMarker = "<!-- transcript -->"
 
@@ -110,7 +115,7 @@ struct RecordingFile: Identifiable, Hashable {
         return RecordingFile(url: url, id: id(project: project, stamp: stamp), title: front["title"] ?? url.deletingPathExtension().lastPathComponent,
                              date: date, duration: front["duration"] ?? "",
                              audio: audio.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil },
-                             suggestions: names(front["suggestions"]))
+                             suggestions: names(front["suggestions"]), noteID: front["note"], streamsAudio: front["audio-online"] == "yes")
     }
 
     static func id(project: String, stamp: String) -> String { "\(project)/\(stamp)" }
@@ -189,6 +194,7 @@ struct MeetingDetails {
 /// The live transcript is saved before any of them, so a step that fails loses nothing.
 enum NoteStep: String {
     case savingAudio = "Saving audio"
+    case uploadingRecording = "Uploading recording"
     case improvingTranscript = "Improving transcript"
     case findingSpeakers = "Finding speakers"
     case writingSummary = "Writing summary"
@@ -219,14 +225,11 @@ struct NoteProgress: Identifiable, Equatable {
     var failed: Bool { if case .failed = state { true } else { false } }
 }
 
-/// Saves recordings as Markdown in each project's `Notes/` and keeps them listed, newest first.
+/// Saves recordings as Markdown in each project's `Notes/` and keeps them listed, newest first. The notes themselves are the account's:
+/// the server makes them after each call (see `process`) and keeps them, and the Markdown here is the copy Cue shows and the user owns.
 @MainActor
 final class RecordingStore: ObservableObject {
     @Published private(set) var files: [RecordingFile] = []
-    /// Summary text streaming in, by recording id.
-    @Published private(set) var liveSummary: [String: String] = [:]
-    @Published private(set) var summarizing: Set<String> = []
-    @Published private(set) var failures: [String: String] = [:]
     /// The steps of each note being processed, by recording id; kept after processing only if one failed.
     @Published private(set) var progress: [String: [NoteProgress]] = [:]
     /// Called with a recording's id once its notes are ready: every step done (or failed).
@@ -234,23 +237,19 @@ final class RecordingStore: ObservableObject {
 
     private let preferences: Preferences
     private let projects: ProjectStore
-    private let speakerModels: SpeakerModels
-    /// Writes the summaries.
     private let api: CueAPI
     private let log: SessionLog
-    /// What cancels each summary being written.
-    private var summarizers: [String: () -> Void] = [:]
-    private var secondPasses: [String: SecondPassProcess] = [:]
-    /// Second passes run one at a time: each loads the 1.6 GB speech model.
-    private var secondPassRunning = false
-    private var secondPassQueue: [CheckedContinuation<Void, Never>] = []
+    private let uploader: RecordingUploader
+    /// What uploads and follows each recording being processed, by recording id.
+    private var tasks: [String: Task<Void, Never>] = [:]
+    private var syncing = false
 
-    init(preferences: Preferences, projects: ProjectStore, speakerModels: SpeakerModels, api: CueAPI, log: SessionLog) {
+    init(preferences: Preferences, projects: ProjectStore, api: CueAPI, log: SessionLog) {
         self.preferences = preferences
         self.projects = projects
-        self.speakerModels = speakerModels
         self.api = api
         self.log = log
+        uploader = RecordingUploader(api: api, log: log)
     }
 
     func reload() {
@@ -267,26 +266,22 @@ final class RecordingStore: ObservableObject {
     func files(in project: Project) -> [RecordingFile] { files.filter { $0.projectID == project.id } }
 
     func contents(_ id: String) -> String {
-        guard let file = file(id), var text = try? String(contentsOf: file.url, encoding: .utf8) else { return "" }
-        if let live = liveSummary[id] {
-            let remarks = (projects.project(file.projectID)?.lexicon ?? Lexicon.load("en")).transcriptRemarks
-            let summary = Summarizer.nameSuggestions(in: Summarizer.droppingTranscriptRemarks(live, words: remarks).text, for: []).text
-            text = replacingSummary(in: text, with: Self.withoutTitle(summary))
-        }
-        return text
+        guard let file = file(id) else { return "" }
+        return (try? String(contentsOf: file.url, encoding: .utf8)) ?? ""
     }
 
-    /// Still going through its steps after Stop, or being summarized again.
+    /// Still going through its steps after Stop.
     func isProcessing(_ id: String) -> Bool {
-        summarizing.contains(id) || progress[id]?.contains { !$0.isFinished } == true
+        progress[id]?.contains { !$0.isFinished } == true
     }
 
     /// Writes the transcript into the project's notes right away so nothing is lost, puts the call's
-    /// audio next to it (with Keep audio on), then improves the transcript and summarizes it (see
-    /// `process`). A call recorded for a calendar event is named after the event and lists its attendees.
-    /// `language` is what the call was recognized in live, when it isn't the project's language.
+    /// audio next to it (with Keep audio on), then has the account make the notes (see `process`).
+    /// A call recorded for a calendar event is named after the event and lists its attendees.
+    /// `language` is what the call was recognized in live, when it isn't the project's language;
+    /// `callID` the live call that heard it, if there is one.
     func save(_ transcript: CallTranscript, into project: Project, meeting: MeetingDetails? = nil,
-              audio: AudioRecorder.Recording? = nil, spokenIn language: String? = nil) -> String? {
+              audio: AudioRecorder.Recording? = nil, spokenIn language: String? = nil, callID: String? = nil) -> String? {
         let lexicon = project.lexicon
         let speaker = preferences.speakerName.isEmpty ? "You" : preferences.speakerName
         let names: (Channel, Int?) -> String = { channel, voice in
@@ -327,6 +322,7 @@ final class RecordingStore: ObservableObject {
             try? FileManager.default.removeItem(at: mixed)
         }
         if audio != nil {
+            steps.append(NoteProgress(step: .uploadingRecording, state: .pending))
             steps.append(NoteProgress(step: .improvingTranscript, state: .pending))
             steps.append(NoteProgress(step: .findingSpeakers, state: .pending))
         }
@@ -370,154 +366,229 @@ final class RecordingStore: ObservableObject {
         }
         progress[id] = steps
         reload()
-        Task { await process(id, transcript: transcript, in: project, language: language ?? project.language, names: names) }
+        let mixedAudio = audioFile
+        tasks[id] = Task {
+            await process(id, transcript: transcript, in: project, title: title, meeting: meeting, audio: audio, mixed: mixedAudio,
+                          language: language ?? project.language, speaker: speaker, callID: callID)
+            tasks[id] = nil
+        }
         return id
     }
 
-    /// The steps after the live transcript is saved, one after another: each works on what the
-    /// one before left, and a step that fails leaves the note as it was for the next.
-    private func process(_ id: String, transcript live: CallTranscript, in project: Project, language: String,
-                         names: @escaping (Channel, Int?) -> String) async {
-        var transcript = live
-        if has(.improvingTranscript, id),
-           let improved = await improve(id, transcript: live, in: project, language: language, names: names) {
-            transcript = improved
+    // MARK: The notes
+
+    /// What happens after the live transcript is saved: the recording goes up to the account (each side of the call, and the mixed audio
+    /// for playing), the account's notes Workflow reads it again, tells the voices apart, suggests names and writes the summary, and this
+    /// follows its progress. A step that fails leaves the note as it was (the live transcript stays) and the Workflow goes on to the next.
+    private func process(_ id: String, transcript live: CallTranscript, in project: Project, title: String, meeting: MeetingDetails?,
+                         audio: AudioRecorder.Recording?, mixed: URL?, language: String, speaker: String, callID: String?) async {
+        guard let serverID = project.serverID else {
+            abandon(id, "this project isn't in your account yet")
+            return
         }
-        if has(.findingSpeakers, id), let labelled = await findSpeakers(id, transcript: transcript, names: names) {
-            transcript = labelled
+        // A recording belongs to the call that heard it. Without one (the live call never started), a call is made just for the notes.
+        var made: String?
+        if callID == nil {
+            do {
+                made = try await api.createCall(projectID: serverID, speaker: speaker, auto: false, micQuestions: false, questions: false).callId
+            } catch {
+                abandon(id, error.localizedDescription)
+                return
+            }
         }
-        if has(.writingSummary, id) {
-            await withCheckedContinuation { done in summarize(id, transcript: transcript.plainText(names: names)) { done.resume() } }
+        let temporary = made != nil
+        guard let call = callID ?? made else { return }
+        let take = Int64((live.startedAt.timeIntervalSince1970 * 1000).rounded(.down))
+
+        var sides: [String] = []
+        if let audio {
+            set(.uploadingRecording, of: id, to: .running(nil))
+            log.write("⬆️ Uploading the recording…")
+            var total = 0
+            var failure: Error?
+            for (side, name) in [("me", AudioRecorder.micFile), ("others", AudioRecorder.callFile)] {
+                do {
+                    total += try await uploader.upload(audio.folder.appendingPathComponent(name), side: side, call: call, take: take)
+                    sides.append(side)
+                } catch {
+                    failure = error
+                    break
+                }
+            }
+            if failure == nil, let mixed {
+                do {
+                    total += try await uploader.upload(mixed, side: "mixed", call: call, take: take)
+                    sides.append("mixed")
+                } catch {
+                    log.write("⚠︎ Couldn't upload the audio for playing: \(error.localizedDescription)")
+                }
+            }
+            if let failure {
+                sides = []
+                log.write("⚠︎ Couldn't upload the recording: \(failure.localizedDescription) — the live transcript is kept")
+                set(.uploadingRecording, of: id, to: .failed(Self.sentence(failure.localizedDescription) + " The live transcript is kept."))
+                // The server has no recording to read again.
+                progress[id]?.removeAll { $0.step == .improvingTranscript || $0.step == .findingSpeakers }
+            } else {
+                let megabytes = String(format: "%.1f", Double(total) / 1_000_000)
+                log.write("⬆️ Recording uploaded: \(megabytes) MB")
+                set(.uploadingRecording, of: id, to: .done("\(megabytes) MB"))
+            }
         }
+        guard !Task.isCancelled, file(id) != nil else {
+            if temporary { await api.endCall(call) }
+            return
+        }
+
+        let started: RemoteNote
+        do {
+            started = try await api.startNotes(call: call, NewNotesBody(
+                title: title, take: take, endedAt: Int64((live.endedAt.timeIntervalSince1970 * 1000).rounded(.down)), sides: sides,
+                speaker: speaker, meeting: meeting.map { RemoteMeeting(title: $0.title, attendees: $0.attendees) },
+                keepAudio: preferences.keepAudio, summarize: has(.writingSummary, id),
+                language: language == project.language ? nil : language, projectId: serverID))
+        } catch {
+            if temporary { await api.endCall(call) }
+            abandon(id, error.localizedDescription)
+            return
+        }
+        if temporary { await api.endCall(call) }
+        guard !Task.isCancelled, file(id) != nil else {
+            try? await api.deleteNote(started.id)  // moved to the Trash meanwhile
+            return
+        }
+        setNoteID(started.id, of: id)
+
+        let followed = await follow(id, note: started.id)
+        guard file(id) != nil else { return }
+        guard let followed else {
+            abandon(id, "the account stopped answering")
+            return
+        }
+        adopt(followed.note, as: id, died: followed.died)
+        finish(id)
+    }
+
+    /// Follows the Workflow's progress events (a dropped stream is picked up again where it left off) until the note is ready; returns the
+    /// note as the account has it then (`died`: the Workflow ended without finishing), or nil when the account stopped answering.
+    private func follow(_ id: String, note noteID: String) async -> (note: RemoteNote, died: Bool)? {
+        var after = 0
+        var ready = false
+        var died = false
+        var progressed = false
+        /// Reads the events after the last one seen, to the end of the stream.
+        func pull() async throws {
+            try await api.followNoteEvents(noteID, after: after) { event in
+                after = max(after, event.seq)
+                progressed = true
+                handle(event, of: id)
+                if event.kind == "note", event.state == "ready" || event.state == "failed" {
+                    ready = true
+                    died = event.state == "failed"
+                }
+            }
+        }
+        var quiet = 0
+        while !ready, quiet < 40, !Task.isCancelled, file(id) != nil {
+            progressed = false
+            do {
+                try await pull()
+            } catch CueAPIError.ended {
+                break
+            } catch {
+                // The stream dropped, or the account is out of reach for a moment: look again below.
+            }
+            if ready { break }
+            if let note = try? await api.note(noteID), note.status == "ready" {
+                // Done while the stream was down: what it missed is replayed so the session log has every line.
+                try? await pull()
+                return (note, died)
+            }
+            quiet = progressed ? 0 : quiet + 1
+            try? await Task.sleep(for: .seconds(progressed ? 0.5 : 2))
+        }
+        guard ready, let note = try? await api.note(noteID) else { return nil }
+        return (note, died)
+    }
+
+    /// One progress event: the line it stands for goes to the session log, the step it is about to the note's page.
+    private func handle(_ event: NoteProgressEvent, of id: String) {
+        if let line = event.line { log.write(line) }
+        guard event.kind == "step", let step = event.step else { return }
+        apply(step: step, state: event.state, detail: event.detail, to: id)
+    }
+
+    /// The Workflow's steps are the page's: the names are suggested as part of writing the summary.
+    private func apply(step: String, state: String, detail: String?, to id: String) {
+        switch (step, state) {
+        case ("transcript", "running"): set(.improvingTranscript, of: id, to: .running(nil))
+        case ("transcript", "done"): set(.improvingTranscript, of: id, to: .done(nil))
+        case ("transcript", "failed"):
+            set(.improvingTranscript, of: id, to: .failed(Self.sentence(detail) + " The live transcript is kept."))
+        case ("speakers", "running"): set(.findingSpeakers, of: id, to: .running(nil))
+        case ("speakers", "done"): set(.findingSpeakers, of: id, to: .done(detail))
+        case ("speakers", "failed"):
+            set(.findingSpeakers, of: id, to: .failed(Self.sentence(detail) + " The transcript is kept as it was."))
+        case ("names", "running"), ("summary", "running"): set(.writingSummary, of: id, to: .running(nil))
+        case ("summary", "done"): set(.writingSummary, of: id, to: .done(nil))
+        case ("summary", "failed"): set(.writingSummary, of: id, to: .failed(Self.sentence(detail)))
+        default: break
+        }
+    }
+
+    /// The note is ready: its steps are settled as the account has them, and its Markdown copy is written from it.
+    private func adopt(_ note: RemoteNote, as id: String, died: Bool) {
+        for step in note.steps where step.state == "done" || step.state == "failed" {
+            apply(step: step.id, state: step.state, detail: step.detail, to: id)
+        }
+        // A step the Workflow didn't run (nothing to read again, say) doesn't keep the page waiting; with a Workflow that died, they failed.
+        progress[id] = progress[id]?.map { step in
+            var step = step
+            if !step.isFinished { step.state = died ? .failed("The notes stopped early. The live transcript is kept.") : .done(nil) }
+            return step
+        }
+        store(note, in: id)
+    }
+
+    /// Nothing more will come of the notes: the steps that hadn't happened failed, and the live transcript is what the note has.
+    private func abandon(_ id: String, _ why: String) {
+        log.write("⚠︎ Couldn't make the notes: \(why) — the live transcript is kept")
+        progress[id] = progress[id]?.map { step in
+            var step = step
+            if !step.isFinished { step.state = .failed(Self.sentence(why) + " The live transcript is kept.") }
+            return step
+        }
+        finish(id)
+    }
+
+    private func finish(_ id: String) {
         guard let file = file(id) else { return }  // moved to the Trash meanwhile
         notesReady(id, file.url, startedAt: file.date)
     }
 
-    /// Whisper's second pass over each side's whole recording replaces the live transcript; on failure
-    /// the live one stays. Returns the improved transcript.
-    private func improve(_ id: String, transcript live: CallTranscript, in project: Project, language: String,
-                         names: @escaping (Channel, Int?) -> String) async -> CallTranscript? {
-        await waitForSecondPass()
-        defer { secondPassFinished() }
-        guard let file = file(id) else { return nil }
-        set(.improvingTranscript, of: id, to: .running(nil))
-        log.write("🔁 Improving transcript…")
-        let child = SecondPassProcess()
-        secondPasses[id] = child
-        defer { secondPasses[id] = nil }
-        let started = Date()
-        let job = SecondPass.Job(folder: file.workingAudio, startedAt: live.startedAt, endedAt: live.endedAt,
-                                 language: language, prompt: project.whisperPrompt,
-                                 lexicon: project.lexicon)
+    /// Records the account's id of a note in its Markdown, so the library and the account know it is one.
+    private func setNoteID(_ noteID: String, of id: String) {
+        guard let file = file(id), let text = try? String(contentsOf: file.url, encoding: .utf8) else { return }
+        try? RecordingFile.setting("note", to: noteID, in: text).write(to: file.url, atomically: true, encoding: .utf8)
+        reload()
+    }
+
+    /// Writes the Markdown copy of a note as the account has it. A new title renames the file and its audio.
+    @discardableResult
+    private func store(_ note: RemoteNote, in id: String) -> Bool {
+        guard let file = file(id), let text = try? String(contentsOf: file.url, encoding: .utf8) else { return false }
+        let stamp = RecordingFile.frontMatter(text)["date"] ?? NoteMarkdown.stamp(note.started)
+        let rendered = NoteMarkdown.render(note, project: projects.project(file.projectID)?.name ?? file.projectID, stamp: stamp,
+                                           audio: file.audio?.lastPathComponent, audioOnline: note.audio.contains("mixed"),
+                                           keepingTranscriptOf: text)
         do {
-            let result = try await SecondPass.run(job, child: child) { [weak self] done in
-                Task { @MainActor in
-                    guard self?.progress[id]?.first(where: { $0.step == .improvingTranscript })?.isFinished == false else { return }
-                    self?.set(.improvingTranscript, of: id, to: .running(done.formatted(.percent.precision(.fractionLength(0)))))
-                }
-            }
-            if let side = Self.sideLost(live: live, improved: result.transcript) {
-                throw ServiceError("it heard much less than live recognition on \(side)")
-            }
-            try writeTranscript(result.transcript, names: names, of: id)
-            let took = String(format: "%.1f", Date().timeIntervalSince(started))
-            log.write("✅ Transcript improved: \(result.transcript.lines.count) segments (\(took) s for \(Self.clock(result.duration)) of audio)")
-            set(.improvingTranscript, of: id, to: .done(nil))
-            return result.transcript
+            try write(rendered, to: file, title: note.title)
+            reload()
+            return true
         } catch {
-            log.write("⚠︎ Couldn't improve the transcript: \(error.localizedDescription) — the live transcript is kept")
-            set(.improvingTranscript, of: id, to: .failed("\(error.localizedDescription). The live transcript is kept."))
-            return nil
+            log.write("⚠︎ Couldn't save the note: \(error.localizedDescription)")
+            return false
         }
-    }
-
-    /// The side on which the second pass lost more than a quarter of the words live recognition heard
-    /// (a wrong language, a cut-off run, nothing but hallucinations), if any: the live transcript is the
-    /// better one then. A good pass stays within a few percent of the live word count.
-    private static func sideLost(live: CallTranscript, improved: CallTranscript) -> String? {
-        func words(_ transcript: CallTranscript, _ channel: Channel) -> Int {
-            transcript.lines.filter { $0.channel == channel }
-                .reduce(0) { $0 + $1.text.split(whereSeparator: \.isWhitespace).count }
-        }
-        for channel in [Channel.me, .others] {
-            let before = words(live, channel), after = words(improved, channel)
-            if before >= 8 && after * 4 < before * 3 { return channel == .me ? "your side" : "the call side" }
-        }
-        return nil
-    }
-
-    /// Tells the voices on the call side apart in `call.wav` and gives each call-side line its voice.
-    /// With several, the transcript and the participants name them «Учасник 1», «Учасник 2»…; with
-    /// one, the note stays as it was, and so it does on failure. Returns the labelled transcript.
-    private func findSpeakers(_ id: String, transcript: CallTranscript,
-                              names: @escaping (Channel, Int?) -> String) async -> CallTranscript? {
-        guard let file = file(id) else { return nil }
-        set(.findingSpeakers, of: id, to: .running(nil))
-        log.write("👥 Finding speakers…")
-        do {
-            guard transcript.lines.contains(where: { $0.channel == .others }) else {
-                log.write("✅ Speakers: 0 (no one spoke on the call side)")
-                set(.findingSpeakers, of: id, to: .done("No one else spoke"))
-                return nil
-            }
-            if !SpeakerModels.installed {
-                set(.findingSpeakers, of: id, to: .running("Downloading the speaker models"))
-                try await speakerModels.prepare()
-                set(.findingSpeakers, of: id, to: .running(nil))
-            }
-            let started = Date()
-            let voices = try await Speakers.voices(in: file.workingAudio.appendingPathComponent(AudioRecorder.callFile)) { [weak self] done in
-                Task { @MainActor in
-                    guard self?.progress[id]?.first(where: { $0.step == .findingSpeakers })?.isFinished == false else { return }
-                    self?.set(.findingSpeakers, of: id, to: .running(done.formatted(.percent.precision(.fractionLength(0)))))
-                }
-            }
-            let (labelled, count) = Speakers.label(transcript, voices: voices)
-            if count > 1 {
-                let people = [names(.me, nil)] + (1...count).map { names(.others, $0) }
-                try writeTranscript(labelled, names: names, participants: people, of: id)
-            }
-            let took = String(format: "%.1f", Date().timeIntervalSince(started))
-            log.write("✅ Speakers: \(count) (\(took) s, \(voices.count) stretches of speech)")
-            set(.findingSpeakers, of: id, to: .done(count > 1 ? "\(count) people on the call" : "One person on the call"))
-            return labelled
-        } catch {
-            // System errors end with a full stop of their own.
-            let reason = error.localizedDescription.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
-            log.write("⚠︎ Couldn't tell speakers apart: \(reason) — the transcript is kept as it was")
-            set(.findingSpeakers, of: id, to: .failed("\(reason). The transcript is kept as it was."))
-            return nil
-        }
-    }
-
-    private func waitForSecondPass() async {
-        guard secondPassRunning else { secondPassRunning = true; return }
-        await withCheckedContinuation { secondPassQueue.append($0) }
-    }
-
-    private func secondPassFinished() {
-        if secondPassQueue.isEmpty { secondPassRunning = false } else { secondPassQueue.removeFirst().resume() }
-    }
-
-    /// Replaces the note's transcript section, and its participants when given.
-    private func writeTranscript(_ transcript: CallTranscript, names: (Channel, Int?) -> String,
-                                 participants: [String]? = nil, of id: String) throws {
-        guard let file = file(id), var text = try? String(contentsOf: file.url, encoding: .utf8),
-              let marker = text.range(of: RecordingFile.transcriptMarker)
-        else { throw ServiceError("The note was moved or changed") }
-        let heading = projects.project(file.projectID)?.lexicon.transcript ?? Lexicon.load("en").transcript
-        let section = "\(RecordingFile.transcriptMarker)\n## \(heading)\n\n\(transcript.markdown(names: names))\n"
-        text = String(text[..<marker.lowerBound]) + section
-        if let participants { text = RecordingFile.setting("participants", to: participants.joined(separator: ", "), in: text) }
-        try text.write(to: file.url, atomically: true, encoding: .utf8)
-        objectWillChange.send()  // the open note shows the new transcript
-    }
-
-    private func has(_ step: NoteStep, _ id: String) -> Bool { progress[id]?.contains { $0.step == step } == true }
-
-    private func set(_ step: NoteStep, of id: String, to state: NoteProgress.State) {
-        guard let index = progress[id]?.firstIndex(where: { $0.step == step }) else { return }
-        progress[id]?[index].state = state
     }
 
     /// The last step a new note goes through: its working audio is no longer needed, and its steps
@@ -533,79 +604,24 @@ final class RecordingStore: ObservableObject {
         onNotesReady(id)
     }
 
+    private func has(_ step: NoteStep, _ id: String) -> Bool { progress[id]?.contains { $0.step == step } == true }
+
+    private func set(_ step: NoteStep, of id: String, to state: NoteProgress.State) {
+        guard let index = progress[id]?.firstIndex(where: { $0.step == step }) else { return }
+        progress[id]?[index].state = state
+    }
+
+    /// "The upload broke" → "The upload broke."; system errors end with a full stop of their own.
+    private static func sentence(_ text: String?) -> String {
+        let trimmed = (text ?? "").trimmingCharacters(in: CharacterSet(charactersIn: ". \n"))
+        return trimmed.isEmpty ? "It failed." : trimmed + "."
+    }
+
     /// 0:42, 12:05 or 1:02:03.
     nonisolated static func clock(_ seconds: TimeInterval) -> String {
         let seconds = max(0, Int(seconds.rounded()))
         return seconds >= 3600 ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
             : String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
-
-    /// (Re)generates the summary of a saved recording. Without `completion` (Summarize Again) the notes
-    /// are ready when it is done; with one, the caller has more to do and calls it.
-    func summarize(_ id: String, transcript: String? = nil, completion: (() -> Void)? = nil) {
-        guard let file = file(id), !summarizing.contains(id) else { completion?(); return }
-        let saved = (try? String(contentsOf: file.url, encoding: .utf8)) ?? ""
-        let text = transcript ?? Self.transcriptSection(saved)
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { completion?(); return }
-        summarizing.insert(id)
-        failures[id] = nil
-        liveSummary[id] = ""
-        set(.writingSummary, of: id, to: .running(nil))
-        log.write("✍️ Writing summary…")
-        let project = projects.project(file.projectID)
-        let lexicon = project?.lexicon ?? Lexicon.load("en")
-        let front = RecordingFile.frontMatter(saved)
-        let meeting = front["event"].map { MeetingDetails(title: $0, attendees: RecordingFile.list(front["attendees"])) }
-        // The labels as the transcript has them: the user first, then the people on the call.
-        let people = RecordingFile.participants(front["participants"])
-        let prompt = Summarizer.systemPrompt(speaker: people.first ?? preferences.speakerName, others: Array(people.dropFirst()),
-                                             unnamed: people.dropFirst().filter(lexicon.isParticipantLabel),
-                                             language: lexicon.name, occasion: project?.occasion ?? "",
-                                             namesAndTerms: project?.vocabulary ?? "", meeting: meeting)
-        summarizers[id] = Summarizer.run(system: prompt, transcript: text, api: api, onText: { [weak self] partial in
-            Task { @MainActor in if self?.summarizing.contains(id) == true { self?.liveSummary[id] = partial } }
-        }, completion: { [weak self] result in
-            Task { @MainActor in self?.finishSummary(id, result, completion: completion) }
-        })
-    }
-
-    private func finishSummary(_ id: String, _ result: Result<String, Error>, completion: (() -> Void)?) {
-        summarizing.remove(id)
-        summarizers[id] = nil
-        liveSummary[id] = nil
-        guard let file = file(id), let text = try? String(contentsOf: file.url, encoding: .utf8) else { completion?(); return }
-        defer {
-            if let completion { completion() } else { notesReady(id, self.file(id)?.url ?? file.url, startedAt: file.date) }
-        }
-        switch result {
-        case .failure(let error):
-            failures[id] = error.localizedDescription
-            set(.writingSummary, of: id, to: .failed(error.localizedDescription))
-            log.write("⚠︎ Summary failed: \(error.localizedDescription)")
-            try? replacingSummary(in: text, with: "").write(to: file.url, atomically: true, encoding: .utf8)
-        case .success(let written):
-            set(.writingSummary, of: id, to: .done(nil))
-            // Remarks about the transcript break the rule in the prompt; the lexicon says how they read.
-            let lexicon = projects.project(file.projectID)?.lexicon ?? Lexicon.load("en")
-            let (cleaned, dropped) = Summarizer.droppingTranscriptRemarks(written, words: lexicon.transcriptRemarks)
-            for remark in dropped { log.write("🧽 Dropped a remark about the transcript from the summary: \(remark)") }
-            // Names the summary found for the people on the call become suggestions on the note's page.
-            let front = RecordingFile.frontMatter(text)
-            let labels = RecordingFile.participants(front["participants"]).dropFirst().filter(lexicon.isParticipantLabel)
-            let (summary, suggested) = Summarizer.nameSuggestions(in: cleaned, for: labels)
-            for (label, name) in suggested.sorted(by: { $0.key < $1.key }) { log.write("💡 Suggested name: \(label) → \(name)") }
-            // A calendar call keeps the event's title; other calls take the summary's.
-            let title = front["event"] == nil ? Self.title(of: summary) ?? file.title : file.title
-            var updated = replacingSummary(in: text, with: Self.withoutTitle(summary))
-            updated = RecordingFile.setting("suggestions", to: suggested.isEmpty ? nil : RecordingFile.names(suggested), in: updated)
-            do {
-                try write(updated, to: file, title: title)
-            } catch {
-                failures[id] = error.localizedDescription
-                set(.writingSummary, of: id, to: .failed(error.localizedDescription))
-            }
-        }
-        reload()
     }
 
     /// Writes a note under its title, which may be new: the front matter and the H1 take it, and the
@@ -628,102 +644,134 @@ final class RecordingStore: ObservableObject {
         if rename { try FileManager.default.moveItem(at: file.url, to: renamed) }
     }
 
+    // MARK: Editing a note
+
     /// Renames a person throughout a note — its transcript, summary, title and participants — and
     /// drops the name suggested for them. Calendar facts (the event, who was invited) stay as they were.
+    /// The account does it; the Markdown copy follows.
     func rename(speaker old: String, to name: String, in id: String) {
         // Commas would split the participants, asterisks the transcript's speaker lines.
         let new = name.components(separatedBy: CharacterSet(charactersIn: ",*\n")).joined().trimmingCharacters(in: .whitespaces)
-        guard let file = file(id), !new.isEmpty, new != old, !isProcessing(id),
-              let text = try? String(contentsOf: file.url, encoding: .utf8),
-              text.hasPrefix("---\n"), let end = text.range(of: "\n---\n", range: text.index(text.startIndex, offsetBy: 3)..<text.endIndex)
-        else { return }
-        let front = RecordingFile.frontMatter(text)
-        var updated = String(text[..<end.upperBound]) + Self.replacingName(old, with: new, in: String(text[end.upperBound...]))
-        // Two labels that turn out to be one person become one participant.
-        var people: [String] = []
-        for person in RecordingFile.participants(front["participants"]).map({ $0 == old ? new : $0 }) where !people.contains(person) {
-            people.append(person)
-        }
-        updated = RecordingFile.setting("participants", to: people.joined(separator: ", "), in: updated)
-        var suggestions = RecordingFile.names(front["suggestions"])
-        suggestions[old] = nil
-        updated = RecordingFile.setting("suggestions", to: suggestions.isEmpty ? nil : RecordingFile.names(suggestions), in: updated)
-        do {
-            try write(updated, to: file, title: Self.replacingName(old, with: new, in: file.title))
-            log.write("✏️ Renamed “\(old)” to “\(new)” in \(file.title)")
-        } catch {
-            NSAlert(error: error).show(logging: log)
-        }
-        reload()
+        guard let file = file(id), !new.isEmpty, new != old, !isProcessing(id) else { return }
+        edit(file, .rename(from: old, to: new), renamed: (old, new))
+    }
+
+    /// Uses the name suggested for a label.
+    func applySuggestion(for label: String, in id: String) {
+        guard let file = file(id), let name = file.suggestions[label], !isProcessing(id) else { return }
+        edit(file, .apply(label), renamed: (label, name))
     }
 
     /// Leaves a name suggestion unused.
     func dismissSuggestion(for label: String, in id: String) {
-        guard let file = file(id), var text = try? String(contentsOf: file.url, encoding: .utf8) else { return }
-        var suggestions = file.suggestions
-        suggestions[label] = nil
-        text = RecordingFile.setting("suggestions", to: suggestions.isEmpty ? nil : RecordingFile.names(suggestions), in: text)
-        try? text.write(to: file.url, atomically: true, encoding: .utf8)
-        reload()
+        guard let file = file(id) else { return }
+        edit(file, .dismiss(label), renamed: nil)
     }
 
-    /// Every whole-word `old` in `text` (not part of a longer word or number: «Учасник 1» isn't «Учасник 12»).
-    private static func replacingName(_ old: String, with new: String, in text: String) -> String {
-        var result = "", rest = text[...]
-        while let found = rest.range(of: old) {
-            let before = found.lowerBound > text.startIndex ? text[text.index(before: found.lowerBound)] : " "
-            let after = found.upperBound < text.endIndex ? text[found.upperBound] : " "
-            let whole = !(before.isLetter || before.isNumber) && !(after.isLetter || after.isNumber)
-            result += rest[..<found.lowerBound] + (whole ? new : old)
-            rest = rest[found.upperBound...]
+    private func edit(_ file: RecordingFile, _ patch: NotePatchBody, renamed: (old: String, new: String)?) {
+        guard let noteID = file.noteID else {
+            log.write("⚠︎ “\(file.title)” isn't in your account yet: try again in a moment")
+            return
         }
-        return result + rest
+        Task {
+            do {
+                let note = try await api.patchNote(noteID, patch)
+                guard store(note, in: file.id) else { return }
+                if let renamed { log.write("✏️ Renamed “\(renamed.old)” to “\(renamed.new)” in \(file.title)") }
+            } catch {
+                NSAlert(error: error).show(logging: log)
+            }
+        }
     }
 
-    /// Moves the note and its audio to the Trash; working audio, if it is still being processed, is deleted.
+    /// Moves the note and its audio to the Trash (and the note out of the account); working audio, if it is still being processed, is deleted.
     func moveToTrash(_ id: String) {
         guard let file = file(id) else { return }
-        summarizers[id]?()
-        secondPasses[id]?.terminate()
+        tasks[id]?.cancel()
+        tasks[id] = nil
         progress[id] = nil
         try? FileManager.default.removeItem(at: file.workingAudio)
-        NSWorkspace.shared.recycle([file.url] + (file.audio.map { [$0] } ?? [])) { [weak self] _, _ in
-            Task { @MainActor in self?.reload() }
+        Task {
+            if let noteID = file.noteID {
+                do {
+                    try await api.deleteNote(noteID)
+                } catch {
+                    log.write("⚠︎ Couldn't delete “\(file.title)” from your account: \(error.localizedDescription)")
+                }
+            }
+            NSWorkspace.shared.recycle([file.url] + (file.audio.map { [$0] } ?? [])) { [weak self] _, _ in
+                Task { @MainActor in self?.reload() }
+            }
         }
     }
 
     func cancelAll() {
-        summarizers.values.forEach { $0() }
-        secondPasses.values.forEach { $0.terminate() }
+        tasks.values.forEach { $0.cancel() }
     }
 
-    // MARK: Markdown surgery
+    // MARK: The account's notes
 
-    /// Everything between the H1 title and the transcript marker is the summary.
-    private func replacingSummary(in text: String, with summary: String) -> String {
-        guard let titleRange = text.range(of: "\n# "),
-              let titleEnd = text[titleRange.upperBound...].firstIndex(of: "\n"),
-              let marker = text.range(of: RecordingFile.transcriptMarker)
-        else { return text }
-        let body = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        return String(text[..<titleEnd]) + "\n\n" + (body.isEmpty ? "" : body + "\n\n") + String(text[marker.lowerBound...])
-    }
+    /// After signing in: the notes this Mac had before it had an account go up to it once (`📦 Imported …`), and the account's notes
+    /// the library doesn't have (from another Mac, say) are written to it (`☁️ Restored …`).
+    func syncWithAccount() async {
+        guard !syncing else { return }
+        syncing = true
+        defer { syncing = false }
+        reload()
+        let remote: [RemoteNote]
+        do {
+            remote = try await api.listNotes()
+        } catch {
+            log.write("⚠︎ Couldn't read your notes from your account: \(error.localizedDescription)")
+            return
+        }
 
-    private static func transcriptSection(_ text: String) -> String {
-        guard let marker = text.range(of: RecordingFile.transcriptMarker) else { return text }
-        return String(text[marker.upperBound...])
-    }
+        var imported = 0
+        for file in files where file.noteID == nil && progress[file.id] == nil {
+            guard let project = projects.project(file.projectID), project.serverID != nil,
+                  let text = try? String(contentsOf: file.url, encoding: .utf8),
+                  let stamp = RecordingFile.frontMatter(text)["date"],
+                  let body = NoteMarkdown.importBody(from: text, project: project, stamp: stamp)
+            else { continue }
+            do {
+                let note = try await api.importNote(body)
+                if let audio = file.audio, !note.audio.contains("mixed") {
+                    do {
+                        try await api.putImportAudio(note.id, file: audio)
+                    } catch {
+                        log.write("⚠︎ Couldn't upload the audio of “\(file.title)”: \(error.localizedDescription)")
+                    }
+                }
+                try? RecordingFile.setting("note", to: note.id, in: text).write(to: file.url, atomically: true, encoding: .utf8)
+                imported += 1
+            } catch {
+                log.write("⚠︎ Couldn't import “\(file.title)”: \(error.localizedDescription)")
+            }
+        }
+        if imported > 0 { log.write("📦 Imported \(imported) note\(imported == 1 ? "" : "s") from this Mac") }
 
-    private static func title(of summary: String) -> String? {
-        summary.split(separator: "\n").first { $0.hasPrefix("# ") }
-            .map { $0.dropFirst(2).trimmingCharacters(in: .whitespaces) }
-            .flatMap { $0.isEmpty ? nil : $0 }
-    }
-
-    private static func withoutTitle(_ summary: String) -> String {
-        summary.split(separator: "\n", omittingEmptySubsequences: false)
-            .drop { $0.trimmingCharacters(in: .whitespaces).isEmpty || $0.hasPrefix("# ") }
-            .joined(separator: "\n")
+        reload()
+        let known = Set(files.compactMap(\.noteID))
+        let identities = Set(files.map(\.id))
+        var restored = 0
+        for note in remote where note.status == "ready" && !known.contains(note.id) {
+            guard let projectID = note.projectId, let project = projects.projects.first(where: { $0.serverID == projectID }),
+                  !identities.contains(RecordingFile.id(project: project.id, stamp: NoteMarkdown.stamp(note.started)))
+            else { continue }
+            let url = project.notesFolder.appendingPathComponent(Self.fileName(date: note.started, title: note.title))
+            guard !FileManager.default.fileExists(atPath: url.path) else { continue }
+            let text = NoteMarkdown.render(note, project: project.name, stamp: NoteMarkdown.stamp(note.started), audio: nil,
+                                           audioOnline: note.audio.contains("mixed"))
+            do {
+                try FileManager.default.createDirectory(at: project.notesFolder, withIntermediateDirectories: true)
+                try text.write(to: url, atomically: true, encoding: .utf8)
+                restored += 1
+            } catch {
+                log.write("⚠︎ Couldn't restore “\(note.title)”: \(error.localizedDescription)")
+            }
+        }
+        if restored > 0 { log.write("☁️ Restored \(restored) note\(restored == 1 ? "" : "s") from your account") }
+        reload()
     }
 
     private static let stampFormat: DateFormatter = {
@@ -737,163 +785,5 @@ final class RecordingStore: ObservableObject {
     private static func fileName(date: Date, title: String) -> String {
         let safe = title.components(separatedBy: CharacterSet(charactersIn: "/:\\\n")).joined(separator: "-").prefix(80)
         return "\(stampFormat.string(from: date)) – \(safe).md"
-    }
-}
-
-/// Turns a transcript into meeting notes; the Cue API's Claude writes them.
-enum Summarizer {
-    /// `others` are the transcript's labels for the people on the call (one label for all of them
-    /// unless their voices were told apart), and `unnamed` those of them that are labels rather than
-    /// names: the summary may suggest who they are. `namesAndTerms` and `occasion` come from the
-    /// note's project, `meeting` from the calendar event it was recorded for.
-    static func systemPrompt(speaker: String, others: [String] = [], unnamed: [String] = [], language: String,
-                             occasion: String, namesAndTerms: String = "", meeting: MeetingDetails? = nil) -> String {
-        let name = speaker.isEmpty ? "the user" : speaker
-        let terms = namesAndTerms.trimmingCharacters(in: .whitespacesAndNewlines)
-        let event = meeting.map { meeting in
-            let invited = meeting.attendees.isEmpty ? "" : " Invited: \(meeting.attendees.joined(separator: ", "))."
-            return "\n\nThe call was the calendar event “\(meeting.title)”.\(invited) The transcript doesn't say which of them is speaking: use a name only where the conversation makes it clear (for example, someone is addressed by name)."
-        } ?? ""
-        let labels = { (names: [String]) in
-            let listed = names.map { "[\($0)]" }
-            return listed.count > 1 ? listed.dropLast().joined(separator: ", ") + " and " + listed.last! : listed.joined()
-        }
-        let people = others.count > 1
-            ? "\(labels(others)) are the other people on the call, told apart by their voices (now and then a line may go to the wrong one)"
-            : "the other label is everyone else, possibly several people"
-        let example = unnamed.first ?? "Participant 1"
-        let naming = unnamed.isEmpty ? "" : """
-
-
-        Where the conversation shows who \(labels(unnamed)) \(unnamed.count > 1 ? "are" : "is") — someone is addressed by name («Дякую, Олено»), introduces themselves, or can only be one of the people invited — add one line per person at the very end, after everything else: <!-- speaker: \(example) = Olena Mulesa --> (the label exactly as in the transcript, then their full name as best you know it, for example from the invited list). Leave the line out when unsure. In the notes, write such a label as it is in the transcript, without brackets and without inflecting it, so it can be replaced with the name later.
-        """
-        return """
-        You turn call transcripts into concise meeting notes in Markdown.
-
-        The transcript comes from automatic speech recognition. [\(name)] is the person who recorded the call; \(people). Fix obvious recognition errors from context, but never invent facts, names, numbers or commitments.
-
-        Write about the conversation only, never about the transcript: no notes, anywhere, about the transcript, the recording or speech recognition — not in parentheses, not as caveats or footnotes. Where a word was misheard, write the right word as if it had been heard correctly; where something can't be made out, leave it out. For example, never write «Надіслати звіт до п'ятниці (у транскрипті — „дотатниці“, ймовірно, мається на увазі „до п'ятниці“)» — write «Надіслати звіт до п'ятниці».
-
-        Write everything in the language of the conversation (usually \(language)). The headings below are in English only to show the structure: write them in the conversation's language too.
-
-        Output exactly this structure and nothing before or after it\(unnamed.isEmpty ? "" : " (except the lines naming people, described at the end)"):
-
-        # A title of at most 8 words
-
-        ## Summary
-        Three to five sentences: what the call was about and how it ended.
-
-        ## Key points
-        - One line each.
-
-        ## Decisions
-        - Only if decisions were made; otherwise leave the section out.
-
-        ## Action items
-        - [ ] Owner: task (deadline if one was mentioned). Leave the section out if there are none.
-
-        ## Questions and answers
-        - **Question:** … — **Answer:** the gist of how it was answered. Only if questions were asked.
-
-        ## Open questions
-        - Only if something was left unresolved.
-
-        Context the user gave about their current talk (it may not apply to this call): \(occasion.isEmpty ? "none" : occasion)\(terms.isEmpty ? "" : "\n\nNames and terms that may come up, spelled the way the user writes them: \(terms)")\(event)\(naming)
-        """
-    }
-
-    /// The names the summary suggests for the people on the call, as `<!-- speaker: LABEL = NAME -->`
-    /// lines (see the prompt), for those of `labels`; returns the summary without them, or any other
-    /// comment line (half a line, while it streams in).
-    static func nameSuggestions(in summary: String, for labels: [String]) -> (text: String, names: [String: String]) {
-        var names: [String: String] = [:]
-        let lines = summary.components(separatedBy: "\n").filter { line in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("<!--") else { return true }
-            if let match = trimmed.firstMatch(of: #/^<!--\s*speaker:\s*(.+?)\s*=\s*(.+?)\s*-->$/#),
-               labels.contains(String(match.1)), String(match.2) != String(match.1) {
-                names[String(match.1)] = String(match.2).replacingOccurrences(of: ",", with: "")
-            }
-            return false
-        }
-        return (lines.joined(separator: "\n"), names)
-    }
-
-    /// The safety net for the rule above: drops parenthetical remarks that mention the transcript or
-    /// recognition (`words`, from the lexicon), as in «до п'ятниці (у транскрипті — „дотатниці“)».
-    /// Returns the summary and the remarks dropped.
-    static func droppingTranscriptRemarks(_ summary: String, words: [String]) -> (text: String, dropped: [String]) {
-        guard !words.isEmpty else { return (summary, []) }
-        var dropped: [String] = []
-        var lines: [String] = []
-        for line in summary.components(separatedBy: "\n") {
-            var characters = Array(line)
-            var index = 0, changed = false
-            while index < characters.count {
-                // A parenthesis right after `]` is a link's address.
-                guard characters[index] == "(", index == 0 || characters[index - 1] != "]",
-                      let close = closingParenthesis(in: characters, from: index),
-                      mentions(String(characters[index + 1..<close]), words)
-                else { index += 1; continue }
-                dropped.append(String(characters[index...close]))
-                var start = index, end = close + 1
-                // An italic remark, `_(…)_`, goes with its markers.
-                if start > 0, end < characters.count, "_*".contains(characters[start - 1]), characters[end] == characters[start - 1] {
-                    start -= 1
-                    end += 1
-                }
-                while start > 0, characters[start - 1] == " " { start -= 1 }
-                if start == 0 { while end < characters.count, characters[end] == " " { end += 1 } }
-                characters.removeSubrange(start..<end)
-                changed = true
-                index = start
-            }
-            let cleaned = String(characters)
-            // A list item or quote that was nothing but the remark goes altogether.
-            if changed, ["", "-", "*", "+", ">", "- [ ]", "- [x]"].contains(cleaned.trimmingCharacters(in: .whitespaces)) { continue }
-            lines.append(cleaned)
-        }
-        return (lines.joined(separator: "\n"), dropped)
-    }
-
-    private static func closingParenthesis(in characters: [Character], from open: Int) -> Int? {
-        var depth = 0
-        for index in open..<characters.count {
-            if characters[index] == "(" { depth += 1 }
-            if characters[index] == ")" { depth -= 1 }
-            if depth == 0 { return index }
-        }
-        return nil
-    }
-
-    /// Whether the text has one of the words, at the start of a word ("транскрипт" in «транскрипті»).
-    private static func mentions(_ text: String, _ words: [String]) -> Bool {
-        words.contains { word in
-            var range = text.startIndex..<text.endIndex
-            while let found = text.range(of: word, options: [.caseInsensitive], range: range) {
-                if found.lowerBound == text.startIndex || !text[text.index(before: found.lowerBound)].isLetter { return true }
-                range = found.upperBound..<text.endIndex
-            }
-            return false
-        }
-    }
-
-    /// Streams the growing summary through `onText` (the Cue API writes it: `POST /v1/summaries`); returns what cancels it.
-    @discardableResult
-    static func run(system: String, transcript: String, api: CueAPI, onText: @escaping (String) -> Void,
-                    completion: @escaping (Result<String, Error>) -> Void) -> (() -> Void)? {
-        let task = Task {
-            var text = ""
-            do {
-                let summary = try await api.summarize(system: system, transcript: transcript) { piece in
-                    text += piece
-                    onText(text)
-                }
-                completion(.success(summary))
-            } catch {
-                completion(.failure(Task.isCancelled ? ServiceError("Summary cancelled") : error))
-            }
-        }
-        return task.cancel
     }
 }

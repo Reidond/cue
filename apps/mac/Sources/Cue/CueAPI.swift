@@ -54,6 +54,12 @@ enum CueAPIError: LocalizedError {
     }
 }
 
+struct ServiceError: LocalizedError {
+    let message: String
+    init(_ message: String) { self.message = message }
+    var errorDescription: String? { message }
+}
+
 /// A secret kept in the login keychain, like the API keys; under CUE_HOME in `CUE_HOME/Keychain.json` instead, so end-to-end
 /// runs never read or change the user's own, nor wait on a keychain prompt nobody answers.
 enum SecretStore {
@@ -305,14 +311,15 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
     }
 
     /// `method path` with the access token (refreshed when it's about to run out or was refused). `json` is the request's body; `file` is
-    /// sent as the body instead, streamed from disk, with `contentType` (the Cue API takes a material that way).
+    /// sent as the body instead, streamed from disk, with `contentType` (the Cue API takes a material that way); `body` is raw bytes, sent the same way
+    /// (a part of a recording's upload).
     func request(_ method: String, _ path: String, query: [String: String] = [:], json: Data? = nil, file: URL? = nil,
-                 contentType: String? = nil) async throws -> Data {
+                 body: Data? = nil, contentType: String? = nil, timeout: TimeInterval = 60) async throws -> Data {
         var token = try await validAccessToken()
         for attempt in 0..<2 {
             var components = URLComponents(url: Self.baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
             if !query.isEmpty { components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) } }
-            var request = URLRequest(url: components.url!)
+            var request = URLRequest(url: components.url!, timeoutInterval: timeout)
             request.httpMethod = method
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
@@ -322,7 +329,7 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             }
             if let contentType { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
-            let (data, status) = try await send(request, file: file)
+            let (data, status) = try await send(request, file: file, body: body)
             if status == 401 && attempt == 0 {
                 token = try await refreshAccessToken()
                 continue
@@ -334,7 +341,7 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
         throw CueAPIError.server("Cue didn't accept the sign-in.")
     }
 
-    /// An access token for what `request` doesn't send (the live socket, a streamed summary): still good, or refreshed first.
+    /// An access token for what `request` doesn't send (the live socket, the notes' event stream, a note's audio): still good, or refreshed first.
     func bearer(refreshing: Bool = false) async throws -> String {
         if refreshing { return try await refreshAccessToken() }
         return try await validAccessToken()
@@ -394,11 +401,13 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
         }
     }
 
-    private func send(_ request: URLRequest, file: URL? = nil) async throws -> (Data, Int) {
+    private func send(_ request: URLRequest, file: URL? = nil, body: Data? = nil) async throws -> (Data, Int) {
         do {
             let result: (Data, URLResponse)
             if let file {
                 result = try await URLSession.shared.upload(for: request, fromFile: file)
+            } else if let body {
+                result = try await URLSession.shared.upload(for: request, from: body)
             } else {
                 result = try await URLSession.shared.data(for: request)
             }

@@ -26,13 +26,6 @@ struct Project: Codable, Identifiable, Hashable {
 
     var lexicon: Lexicon { Lexicon.load(language) }
 
-    /// Initial prompt for Whisper: biases recognition towards the names and terms that will come up.
-    var whisperPrompt: String {
-        [occasion, vocabulary].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: ". ")
-    }
-
     private enum CodingKeys: String, CodingKey {
         case name, occasion, language, vocabulary = "namesAndTerms", created, lastUsed, serverID
     }

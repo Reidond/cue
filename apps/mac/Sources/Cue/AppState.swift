@@ -17,25 +17,6 @@ struct Utterance: Identifiable {
     let time: Date
     /// Which of the call's voices said it (1, 2, …), once they have been told apart.
     var speaker: Int?
-
-    /// The microphone picking up the call through speakers produces a near-copy of a participant line (the second pass drops those;
-    /// the live call drops them on the server).
-    static func isEcho(_ text: String, of other: String, stopWords: Set<String>) -> Bool {
-        let words = Set(stems(text, stopWords: stopWords))
-        guard words.count >= 3 else { return false }
-        let otherWords = Set(stems(other, stopWords: stopWords))
-        return Double(words.intersection(otherWords).count) / Double(words.count) > 0.6
-    }
-
-    /// Crude stemming that works well enough across European languages: lowercase,
-    /// keep words of 4+ letters that are not stop words, cut to 6 letters.
-    static func stems(_ text: String, stopWords: Set<String>) -> [String] {
-        text.lowercased()
-            .replacingOccurrences(of: "’", with: "'")
-            .components(separatedBy: CharacterSet.letters.union(.decimalDigits).union(CharacterSet(charactersIn: "'-")).inverted)
-            .filter { $0.count >= 4 && !stopWords.contains($0) }
-            .map { String($0.prefix(6)) }
-    }
 }
 
 /// What was asked in one go: one question or several, each answered on its own and shown together.
@@ -114,9 +95,6 @@ enum JudgeState { case starting, ready, unavailable }
 final class AppState: ObservableObject {
     let preferences: Preferences
     let projects: ProjectStore
-    let downloader = ModelDownloader()
-    /// The models that tell the voices on a call apart.
-    let speakerModels: SpeakerModels
     let recorder = CallRecorder()
     let recordings: RecordingStore
     /// Plays the audio of the note open in the dashboard.
@@ -238,15 +216,15 @@ final class AppState: ObservableObject {
         api = CueAPI(log: log)
         projects = ProjectStore(preferences: preferences, api: api, log: log)
         projects.migrateLegacySettings(log: log)
-        speakerModels = SpeakerModels(log: log)
-        recordings = RecordingStore(preferences: preferences, projects: projects, speakerModels: speakerModels, api: api, log: log)
+        recordings = RecordingStore(preferences: preferences, projects: projects, api: api, log: log)
         recordings.reload()
-        player = NotePlayer(log: log)
+        player = NotePlayer(log: log, api: api)
         AudioRecorder.removeStaleWorkingFolders()
         calendar = MeetingCalendar(preferences: preferences)
         // The projects are the account's: once someone is signed in they are loaded (and the ones found in the library imported), and one is chosen.
         api.onSignedIn = { [weak self] in
             await self?.projects.syncWithAccount()
+            await self?.recordings.syncWithAccount()
             await self?.chooseProject()
         }
     }
@@ -269,7 +247,6 @@ final class AppState: ObservableObject {
     /// One line for the control bar: what Cue is doing, or the first thing that needs attention.
     var status: (text: String, kind: StatusKind) {
         if readingMaterials { return ("Reading materials…", .working) }
-        if let progress = downloader.progress { return ("Downloading speech model \(Int(progress * 100))%", .working) }
         if !speech.ok { return (speech.detail, speech.working ? .working : .problem) }
         if !claude.ok { return (claude.detail, claude.working ? .working : .problem) }
         if !call.ok && !mic.ok { return ("No audio", .problem) }
@@ -380,10 +357,7 @@ final class AppState: ObservableObject {
             .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &subscriptions)
 
-        // Re-publish so the overlay follows the download and the recorder.
-        downloader.objectWillChange
-            .sink { [weak self] in self?.objectWillChange.send() }
-            .store(in: &subscriptions)
+        // Re-publish so the overlay follows the recorder.
         recorder.objectWillChange
             .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &subscriptions)
@@ -683,7 +657,7 @@ final class AppState: ObservableObject {
         let origin = liveCall?.startedAt ?? Date()
         let started = origin.addingTimeInterval(event.start ?? 0)
         let ended = origin.addingTimeInterval(event.end ?? event.start ?? 0)
-        // `event.speaker` (the live recognizer's guess at the voice) is not used: the notes tell the voices apart in the second pass.
+        // `event.speaker` (the live recognizer's guess at the voice) is not used: the notes' Workflow tells the voices apart in the recording.
         let utterance = Utterance(channel: channel, text: text, started: started, time: max(started, ended))
         utterances.append(utterance)
         if utterances.count > 300 { utterances.removeFirst(utterances.count - 300) }
@@ -832,7 +806,7 @@ final class AppState: ObservableObject {
             guard let project = target else { return }
             // The language live recognition used: the bound project's, which a meeting's project may not share.
             let spoken = activeProject?.language ?? Project.defaultLanguage
-            let id = recordings.save(transcript, into: project, meeting: meeting, audio: audio, spokenIn: spoken)
+            let id = recordings.save(transcript, into: project, meeting: meeting, audio: audio, spokenIn: spoken, callID: liveCall?.id)
             if let id, !automatically { openRecordings(id) }
             saved(id)
         }

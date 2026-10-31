@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         signal(SIGPIPE, SIG_IGN)  // writing to a socket or a process that just closed must not kill the app
-        // Quit cleanly on Ctrl-C / kill, so the live call is ended and the second pass's processes stop.
+        // Quit cleanly on Ctrl-C / kill, so the live call is ended.
         for number in [SIGINT, SIGTERM] {
             signal(number, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
@@ -356,8 +356,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// `assign EVENT | PROJECT` (an Upcoming call's project picker),
     /// `notification record|dismiss` (the latest Record / Not Now prompt), `rename NAME | NEW`
     /// (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL`
-    /// (a name suggestion on the open note), `download speakers` (Home's Download for the
-    /// speaker models), `show TEXT` (the overlay's row of the question with TEXT in it), `newest`
+    /// (a name suggestion on the open note), `show TEXT` (the overlay's row of the question with TEXT in it), `newest`
     /// (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions
     /// waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's
     /// menu), `settings general|account|calendar` (a Settings tab) and
@@ -446,13 +445,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let sides = argument.components(separatedBy: " | ")
             if sides.count == 2, let note = dashboard.note { state.recordings.rename(speaker: sides[0], to: sides[1], in: note) }
         case "apply":
-            if let note = dashboard.note, let name = state.recordings.file(note)?.suggestions[argument] {
-                state.recordings.rename(speaker: argument, to: name, in: note)
-            }
+            if let note = dashboard.note { state.recordings.applySuggestion(for: argument, in: note) }
         case "dismiss":
             if let note = dashboard.note { state.recordings.dismissSuggestion(for: argument, in: note) }
-        case "download":
-            if argument == "speakers" { state.speakerModels.start() }
         case "show":
             if let exchange = state.exchanges.last(where: { $0.answers.contains { $0.question.localizedCaseInsensitiveContains(argument) } }) {
                 state.expand(exchange.id)

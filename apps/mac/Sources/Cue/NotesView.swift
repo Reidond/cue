@@ -27,8 +27,6 @@ struct ProjectNotesView: View {
                         .tag(file.id)
                         .contextMenu {
                             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file.url]) }
-                            Button("Summarize Again") { store.summarize(file.id) }
-                                .disabled(store.isProcessing(file.id))
                             Divider()
                             Button("Move to Trash", role: .destructive) { store.moveToTrash(file.id) }
                         }
@@ -107,26 +105,17 @@ private struct RecordingDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if let steps = store.progress[file.id] {
-                    NoteSteps(steps: steps) { store.summarize(file.id) }
-                } else if store.summarizing.contains(file.id), (store.liveSummary[file.id] ?? "").isEmpty {
-                    Label {
-                        Text("Writing the summary…")
-                    } icon: {
-                        ProgressView().controlSize(.small)
-                    }
-                    .foregroundStyle(.secondary)
-                } else if let failure = store.failures[file.id] {
-                    FailureBanner(message: failure) { store.summarize(file.id) }
+                    NoteSteps(steps: steps)
                 }
                 if !file.suggestions.isEmpty, !store.isProcessing(file.id) {
                     NameSuggestions(suggestions: file.suggestions) { label in
-                        store.rename(speaker: label, to: file.suggestions[label] ?? label, in: file.id)
+                        store.applySuggestion(for: label, in: file.id)
                     } dismiss: { label in
                         store.dismissSuggestion(for: label, in: file.id)
                     }
                 }
                 MarkdownView(markdown: store.contents(file.id),
-                             onTimestamp: file.audio == nil ? nil : { [player] in player.play(from: $0) },
+                             onTimestamp: file.hasAudio ? { [player] in player.play(from: $0) } : nil,
                              onSpeaker: store.isProcessing(file.id) ? nil : { name in
                                  renaming = name
                                  newName = name
@@ -142,20 +131,25 @@ private struct RecordingDetail: View {
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
         .safeAreaInset(edge: .top) {
-            if file.audio != nil {
+            if file.hasAudio {
                 PlayerBar(player: player)
                     .frame(maxWidth: 720)
                     .padding(.horizontal, 28)
                     .padding(.top, 14)
             }
         }
-        .task(id: file.audio) { player.load(file.audio, note: file.id) }
+        .task(id: file.audio?.path ?? (file.streamsAudio ? file.noteID : nil)) {
+            if let audio = file.audio {
+                player.load(audio, note: file.id)
+            } else if file.streamsAudio, let noteID = file.noteID {
+                await player.stream(noteID, note: file.id)
+            } else {
+                player.load(nil, note: nil)
+            }
+        }
         .onDisappear { player.load(nil, note: nil) }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button("Summarize Again", systemImage: "arrow.clockwise") { store.summarize(file.id) }
-                    .disabled(store.isProcessing(file.id))
-                    .help("Summarize again")
                 Button("Copy Markdown", systemImage: "doc.on.doc") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(store.contents(file.id), forType: .string)
@@ -203,13 +197,16 @@ final class NotePlayer: ObservableObject {
 
     private let player = AVPlayer()
     private let log: SessionLog
+    /// The account the audio of a note that isn't in the library streams from.
+    private let api: CueAPI
     private var url: URL?
     private var note: String?
     private var timeObserver: Any?
     private var status: NSKeyValueObservation?
 
-    init(log: SessionLog) {
+    init(log: SessionLog, api: CueAPI) {
         self.log = log
+        self.api = api
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main) { [weak self] time in
             MainActor.assumeIsolated {
                 guard let self, !self.scrubbing else { return }
@@ -227,6 +224,17 @@ final class NotePlayer: ObservableObject {
     /// Opens a note's audio (nil stops). A new file for the same note, renamed after its summary,
     /// carries on from the same moment.
     func load(_ url: URL?, note: String?) {
+        openItem(url, note: note, headers: nil)
+    }
+
+    /// Opens a note's audio from the account (the `mixed` side, with range requests), for a note whose audio isn't in the library.
+    func stream(_ noteID: String, note: String) async {
+        let url = api.audioURL(note: noteID)
+        guard url != self.url, let token = try? await api.bearer() else { return }
+        openItem(url, note: note, headers: ["Authorization": "Bearer \(token)", "Cue-Version": LiveCall.clientVersion])
+    }
+
+    private func openItem(_ url: URL?, note: String?, headers: [String: String]?) {
         guard url != self.url else { return }
         let resume = note != nil && note == self.note ? (time: time, playing: isPlaying) : nil
         player.pause()
@@ -238,7 +246,9 @@ final class NotePlayer: ObservableObject {
             duration = 0
             return
         }
-        let item = AVPlayerItem(url: url)
+        // The header-fields key is AVFoundation's documented-in-practice way to make an asset's requests carry the token.
+        let asset = headers.map { AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": $0]) } ?? AVURLAsset(url: url)
+        let item = AVPlayerItem(asset: asset)
         player.replaceCurrentItem(with: item)
         if let resume {
             player.seek(to: CMTime(seconds: resume.time, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
@@ -422,7 +432,6 @@ private struct NameSuggestions: View {
 /// What happens to a new note after Stop, step by step; it stays on the page if a step failed.
 private struct NoteSteps: View {
     let steps: [NoteProgress]
-    let retrySummary: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -441,9 +450,6 @@ private struct NoteSteps: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    if step.step == .writingSummary, step.failed {
-                        Button("Try Again", action: retrySummary)
-                    }
                 }
             }
         }
@@ -474,25 +480,6 @@ private struct NoteSteps: View {
         case .running(let detail), .done(let detail): detail
         case .failed(let reason): reason
         }
-    }
-}
-
-private struct FailureBanner: View {
-    let message: String
-    let retry: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Couldn't write the summary").fontWeight(.semibold)
-                Text(message).font(.callout).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button("Try Again", action: retry)
-        }
-        .padding(12)
-        .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 12))
     }
 }
 

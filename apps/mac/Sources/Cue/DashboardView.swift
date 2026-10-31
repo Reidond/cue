@@ -93,8 +93,7 @@ struct DashboardView: View {
         } detail: {
             switch model.selection {
             case .home, nil:
-                HomeView(state: state, projects: projects, recordings: state.recordings, downloader: state.downloader,
-                         speakers: state.speakerModels, model: model)
+                HomeView(state: state, projects: projects, recordings: state.recordings, model: model)
             case .upcoming:
                 UpcomingView(calendar: state.calendar, meetings: state.meetings, projects: projects, recorder: state.recorder,
                              preferences: state.preferences, openSettings: state.openSettings)

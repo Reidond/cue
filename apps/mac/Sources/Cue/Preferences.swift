@@ -1,7 +1,7 @@
 import Foundation
 
-/// Spoken languages Cue can listen to. Deepgram and Whisper understand all of them; the second pass's
-/// artefacts and the summary's labels come from Resources/lexicons/<code>.json when present.
+/// Spoken languages Cue can listen to. Deepgram understands all of them; the transcript's
+/// labels come from Resources/lexicons/<code>.json when present.
 struct SpokenLanguage: Identifiable, Hashable {
     let code: String
     let name: String
@@ -64,12 +64,10 @@ final class Preferences: ObservableObject {
     }
 }
 
-/// Per-language data (stop words, Whisper artefacts, spoken openers, labels)
-/// kept in Resources/lexicons so the code stays language-neutral.
+/// Per-language data (spoken openers, labels) kept in Resources/lexicons so the code stays
+/// language-neutral. (The server keeps the rest of each language's data for the notes.)
 struct Lexicon: Decodable {
     var name: String
-    var stopWords: Set<String>
-    var hallucinations: [String]
     var questionLabels: [String]
     var answerLabels: [String]
     var thanksPrefix: String
@@ -80,23 +78,13 @@ struct Lexicon: Decodable {
     /// One of several voices told apart on the call side: "Participant %d".
     var numberedParticipantLabel: String?
     var transcriptHeading: String?
-    /// Words that give away a remark about the transcript or speech recognition ("transcript",
-    /// "misheard"): a summary's parenthetical remarks with one are dropped.
-    var transcriptRemarkWords: [String]?
 
     var participant: String { participantLabel ?? "Participant" }
     /// «Учасник 2», "Participant 2".
     func numberedParticipant(_ number: Int) -> String {
         (numberedParticipantLabel ?? participant + " %d").replacingOccurrences(of: "%d", with: String(number))
     }
-    /// Whether a name is one of the labels Cue gives the people on the call, rather than a name.
-    func isParticipantLabel(_ name: String) -> Bool {
-        let numbered = (numberedParticipantLabel ?? participant + " %d").components(separatedBy: "%d")
-        return name == participant || numbered.count == 2 && name.hasPrefix(numbered[0]) && name.hasSuffix(numbered[1])
-            && Int(name.dropFirst(numbered[0].count).dropLast(numbered[1].count)) != nil
-    }
     var transcript: String { transcriptHeading ?? "Transcript" }
-    var transcriptRemarks: [String] { transcriptRemarkWords ?? [] }
 
     private static var cache: [String: Lexicon] = [:]
     private static let lock = NSLock()
@@ -105,19 +93,17 @@ struct Lexicon: Decodable {
         lock.lock()
         defer { lock.unlock() }
         if let cached = cache[code] { return cached }
-        let english = decode("en") ?? Lexicon(name: "English", stopWords: [], hallucinations: [],
+        let english = decode("en") ?? Lexicon(name: "English",
                                               questionLabels: ["q"], answerLabels: ["a"], thanksPrefix: "",
                                               defaultOpener: "", numbersLabel: "Numbers", sourceLabel: "Source")
         // Unknown languages still get the universal "?" cue and English labels.
-        var lexicon = decode(code) ?? Lexicon(name: SpokenLanguage.named(code).name, stopWords: [],
-                                              hallucinations: english.hallucinations, questionLabels: english.questionLabels,
+        var lexicon = decode(code) ?? Lexicon(name: SpokenLanguage.named(code).name, questionLabels: english.questionLabels,
                                               answerLabels: english.answerLabels, thanksPrefix: "", defaultOpener: "",
                                               numbersLabel: english.numbersLabel, sourceLabel: english.sourceLabel)
         // Prepared materials are often in English even when the talk is not (and so can be an aside in a summary).
         if code != "en" {
             lexicon.questionLabels += english.questionLabels
             lexicon.answerLabels += english.answerLabels
-            lexicon.transcriptRemarkWords = lexicon.transcriptRemarks + english.transcriptRemarks
         }
         cache[code] = lexicon
         return lexicon

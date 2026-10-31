@@ -2,7 +2,7 @@ import AVFoundation
 import CoreMedia
 import ScreenCaptureKit
 
-/// Both sources deliver 16 kHz mono Float32, the format Whisper expects.
+/// Both sources deliver 16 kHz mono Float32, the format the speech services take.
 let whisperSampleRate = 16_000.0
 
 /// Now on the host clock, in seconds: both sources timestamp their audio with it.
