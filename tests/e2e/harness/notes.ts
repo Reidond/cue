@@ -34,15 +34,18 @@ export function turnSpeakers(notes: string, timeline: string): string {
         const turn = /^\*\*([0-9]{2}:[0-9]{2}:[0-9]{2}) · (.+)\*\*$/.exec(line);
         return turn ? [{ time: seconds(turn[1] ?? ''), label: turn[2] ?? '' }] : [];
     });
-    return lines(timeline).map((row) => {
-        const [start = '', , , voice = ''] = row.split('\t');
-        let best = '?', nearest = 2;
-        for (const turn of turns) {
-            const distance = Math.abs(Number(start) - turn.time);
-            if (distance <= nearest) [nearest, best] = [distance, turn.label];
-        }
-        return `${voice}\t${best}\n`;
-    }).join('');
+    return lines(timeline)
+        .map((row) => {
+            const [start = '', , , voice = ''] = row.split('\t');
+            let best = '?',
+                nearest = 2;
+            for (const turn of turns) {
+                const distance = Math.abs(Number(start) - turn.time);
+                if (distance <= nearest) [nearest, best] = [distance, turn.label];
+            }
+            return `${voice}\t${best}\n`;
+        })
+        .join('');
 }
 
 /** The labels `turnSpeakers` found for a voice, sorted, each once, comma-separated. */

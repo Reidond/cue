@@ -24,7 +24,7 @@ function wavHeader(data: number): Buffer {
     header.write('RIFF', 0);
     header.writeUInt32LE(36 + data, 4);
     header.write('WAVEfmt ', 8);
-    header.writeUInt32LE(16, 16);  // PCM: format 1, 1 channel, 16 kHz, 32 000 bytes a second, 2 a frame, 16 bits
+    header.writeUInt32LE(16, 16); // PCM: format 1, 1 channel, 16 kHz, 32 000 bytes a second, 2 a frame, 16 bits
     header.writeUInt16LE(1, 20);
     header.writeUInt16LE(1, 22);
     header.writeUInt32LE(16_000, 24);

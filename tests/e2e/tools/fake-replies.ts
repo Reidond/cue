@@ -51,11 +51,16 @@ export function answer(content: string, env: Env): string {
 export function judgement(content: string, env: Env): string {
     if (content.startsWith('Connection check')) return '—';
     const said = content.split('Just said:\n')[1] ?? '';
-    const own = Object.entries(JSON.parse(env['FAKE_CLAUDE_JUDGEMENTS'] ?? '{}') as Record<string, string>)
-        .find(([pattern]) => new RegExp(pattern, 'i').test(said))?.[1];
+    const own = Object.entries(JSON.parse(env['FAKE_CLAUDE_JUDGEMENTS'] ?? '{}') as Record<string, string>).find(([pattern]) =>
+        new RegExp(pattern, 'i').test(said),
+    )?.[1];
     if (own !== undefined) return own;
-    const questions = said.split('\n').map((line) => line.replace(/^\[[^\]]*\] /, '')).join(' ')
-        .split(/(?<=[.?!…])\s+/).filter((sentence) => sentence.includes('?') && sentence.trim().split(/\s+/).length >= 2);
+    const questions = said
+        .split('\n')
+        .map((line) => line.replace(/^\[[^\]]*\] /, ''))
+        .join(' ')
+        .split(/(?<=[.?!…])\s+/)
+        .filter((sentence) => sentence.includes('?') && sentence.trim().split(/\s+/).length >= 2);
     return questions.length > 0 ? questions.map((question) => `Q: ${question.trim()}`).join('\n') : '—';
 }
 

@@ -26,7 +26,10 @@ export function assertContains(file: string, pattern: RegExp, message?: string):
 export function assertNotContains(file: string, pattern: RegExp, message?: string): void {
     const found = matchingLines(file, pattern);
     if (found.length === 0) return;
-    const shown = found.slice(0, 20).map(({ number, line }) => `${number}:${line}`).join('\n');
+    const shown = found
+        .slice(0, 20)
+        .map(({ number, line }) => `${number}:${line}`)
+        .join('\n');
     fail(message ?? `${basename(file)} should not match /${pattern.source}/`, `--- matches in ${file}`, shown);
 }
 

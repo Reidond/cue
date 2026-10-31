@@ -106,9 +106,14 @@ function deepgramKey(request: IncomingMessage): string {
 /** The samples of a WAV file (16-bit or float PCM, the first channel), and its rate. */
 function samplesOf(wav: Buffer): { rate: number; samples: Float32Array } | undefined {
     if (wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') return undefined;
-    let offset = 12, rate = 16000, bits = 16, channels = 1, float = false;
+    let offset = 12,
+        rate = 16000,
+        bits = 16,
+        channels = 1,
+        float = false;
     while (offset + 8 <= wav.length) {
-        const id = wav.toString('ascii', offset, offset + 4), size = wav.readUInt32LE(offset + 4);
+        const id = wav.toString('ascii', offset, offset + 4),
+            size = wav.readUInt32LE(offset + 4);
         if (id === 'fmt ') {
             float = wav.readUInt16LE(offset + 8) === 3;
             channels = wav.readUInt16LE(offset + 10);
@@ -116,7 +121,8 @@ function samplesOf(wav: Buffer): { rate: number; samples: Float32Array } | undef
             bits = wav.readUInt16LE(offset + 22);
         } else if (id === 'data') {
             const data = wav.subarray(offset + 8, Math.min(wav.length, offset + 8 + size));
-            const step = (bits / 8) * channels, count = Math.floor(data.length / step);
+            const step = (bits / 8) * channels,
+                count = Math.floor(data.length / step);
             const samples = new Float32Array(count);
             for (let index = 0; index < count; index++) {
                 samples[index] = float ? data.readFloatLE(index * step) : data.readInt16LE(index * step) / 32768;
@@ -130,8 +136,10 @@ function samplesOf(wav: Buffer): { rate: number; samples: Float32Array } | undef
 
 /** Stretches of speech, in seconds: 20 ms frames well above silence, pauses under half a second bridged. */
 function stretches(rate: number, samples: Float32Array): [number, number][] {
-    const frame = Math.round(rate / 50), found: [number, number][] = [];
-    let start: number | undefined, last = 0;
+    const frame = Math.round(rate / 50),
+        found: [number, number][] = [];
+    let start: number | undefined,
+        last = 0;
     for (let index = 0; index * frame < samples.length; index++) {
         let sum = 0;
         const end = Math.min(samples.length, (index + 1) * frame);
@@ -152,20 +160,35 @@ function stretches(rate: number, samples: Float32Array): [number, number][] {
 
 function frame(opcode: number, payload: Buffer): Buffer {
     const length = payload.length;
-    const header = length < 126 ? Buffer.from([0x80 | opcode, length])
-        : length < 65536 ? Buffer.from([0x80 | opcode, 126, length >> 8, length & 0xff])
-        : Buffer.concat([Buffer.from([0x80 | opcode, 127]), (() => { const size = Buffer.alloc(8); size.writeBigUInt64BE(BigInt(length)); return size; })()]);
+    const header =
+        length < 126
+            ? Buffer.from([0x80 | opcode, length])
+            : length < 65536
+              ? Buffer.from([0x80 | opcode, 126, length >> 8, length & 0xff])
+              : Buffer.concat([
+                    Buffer.from([0x80 | opcode, 127]),
+                    (() => {
+                        const size = Buffer.alloc(8);
+                        size.writeBigUInt64BE(BigInt(length));
+                        return size;
+                    })(),
+                ]);
     return Buffer.concat([header, payload]);
 }
 
 /** Reads the client's frames as they come, whole messages to `onMessage`. */
 function frames(socket: Duplex, head: Buffer, onMessage: (opcode: number, payload: Buffer) => void): void {
-    let buffer = head, fragments: Buffer[] = [], fragmentOpcode = 0;
+    let buffer = head,
+        fragments: Buffer[] = [],
+        fragmentOpcode = 0;
     const take = (): void => {
         for (;;) {
             if (buffer.length < 2) return;
-            const fin = (buffer[0]! & 0x80) !== 0, opcode = buffer[0]! & 0x0f, masked = (buffer[1]! & 0x80) !== 0;
-            let length = buffer[1]! & 0x7f, offset = 2;
+            const fin = (buffer[0]! & 0x80) !== 0,
+                opcode = buffer[0]! & 0x0f,
+                masked = (buffer[1]! & 0x80) !== 0;
+            let length = buffer[1]! & 0x7f,
+                offset = 2;
             if (length === 126) {
                 if (buffer.length < 4) return;
                 length = buffer.readUInt16BE(2);
@@ -203,7 +226,9 @@ function frames(socket: Duplex, head: Buffer, onMessage: (opcode: number, payloa
 
 /** Starts the stand-ins; `log` is where they note requests, `env` the environment of the Cue running. */
 export async function startFakeProviders(log: string, env: () => Env): Promise<FakeProviders> {
-    let streams = 0, judged = 0, answered = 0;
+    let streams = 0,
+        judged = 0,
+        answered = 0;
     const sockets = new Set<Socket | Duplex>();
 
     async function anthropic(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -211,13 +236,24 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         const system = textOf(sent['system']);
         const messages = (sent['messages'] ?? []) as { content: unknown }[];
         const content = textOf(messages.at(-1)?.content);
-        const kind = content.startsWith('Transcript:') ? 'summary' : system.startsWith('You watch the live transcript') ? 'judge' : 'answer';
+        const kind = content.startsWith('Transcript:')
+            ? 'summary'
+            : system.startsWith('You watch the live transcript')
+              ? 'judge'
+              : 'answer';
         const key = String(request.headers['x-api-key'] ?? '');
         const noted: AnthropicRequest = {
-            kind, key, version: String(request.headers['anthropic-version'] ?? ''), model: String(sent['model']),
-            maxTokens: Number(sent['max_tokens']), stream: sent['stream'] === true,
-            thinking: sent['thinking'] as AnthropicRequest['thinking'], cache: sent['cache_control'] as AnthropicRequest['cache'],
-            systemCache: Array.isArray(sent['system']) ? (sent['system'][0] as { cache_control?: AnthropicRequest['cache'] }).cache_control : undefined,
+            kind,
+            key,
+            version: String(request.headers['anthropic-version'] ?? ''),
+            model: String(sent['model']),
+            maxTokens: Number(sent['max_tokens']),
+            stream: sent['stream'] === true,
+            thinking: sent['thinking'] as AnthropicRequest['thinking'],
+            cache: sent['cache_control'] as AnthropicRequest['cache'],
+            systemCache: Array.isArray(sent['system'])
+                ? (sent['system'][0] as { cache_control?: AnthropicRequest['cache'] }).cache_control
+                : undefined,
             messages: messages.length,
         };
         record(log, 'anthropic-request', JSON.stringify(noted));
@@ -255,7 +291,8 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
             return json(response, 200, { type: 'message', role: 'assistant', content: [{ type: 'text', text }], stop_reason: 'end_turn' });
         }
         response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-        const event = (type: string, data: object): boolean => response.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
+        const event = (type: string, data: object): boolean =>
+            response.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
         event('message_start', { message: { type: 'message', role: 'assistant', model: noted.model, content: [], stop_reason: null } });
         event('content_block_start', { index: 0, content_block: { type: 'text', text: '' } });
         if (kind === 'answer' && ++answered <= Number(environment['FAKE_ANTHROPIC_CUT'] ?? 0)) {
@@ -274,14 +311,23 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         const audio = await body(request);
         const decoded = samplesOf(audio);
         const key = deepgramKey(request);
-        record(log, 'deepgram-file', JSON.stringify({
-            ...queryOf(url), key, seconds: decoded ? decoded.samples.length / decoded.rate : 0,
-            contentType: request.headers['content-type'] ?? '',
-        } satisfies DeepgramRequest));
+        record(
+            log,
+            'deepgram-file',
+            JSON.stringify({
+                ...queryOf(url),
+                key,
+                seconds: decoded ? decoded.samples.length / decoded.rate : 0,
+                contentType: request.headers['content-type'] ?? '',
+            } satisfies DeepgramRequest),
+        );
         if (key !== FAKE_KEYS.deepgram) return json(response, 401, { err_code: 'INVALID_AUTH', err_msg: 'Invalid credentials.' });
         if (!decoded) return json(response, 400, { err_code: 'Bad Request', err_msg: 'Bad Request: failed to process audio' });
-        const utterances = stretches(decoded.rate, decoded.samples)
-            .map(([start, end], index) => ({ start, end, transcript: `Second pass by Deepgram, part ${index + 1}.` }));
+        const utterances = stretches(decoded.rate, decoded.samples).map(([start, end], index) => ({
+            start,
+            end,
+            transcript: `Second pass by Deepgram, part ${index + 1}.`,
+        }));
         json(response, 200, {
             metadata: { duration: decoded.samples.length / decoded.rate, channels: 1 },
             results: { channels: [{ alternatives: [{ transcript: utterances.map((item) => item.transcript).join(' ') }] }], utterances },
@@ -291,22 +337,39 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
     function deepgramLive(request: IncomingMessage, socket: Duplex, head: Buffer, url: URL): void {
         const key = deepgramKey(request);
         if (key !== FAKE_KEYS.deepgram) {
-            record(log, 'deepgram-live', JSON.stringify({ ...queryOf(url), key, seconds: 0, messages: 0, closed: false } satisfies DeepgramRequest));
+            record(
+                log,
+                'deepgram-live',
+                JSON.stringify({ ...queryOf(url), key, seconds: 0, messages: 0, closed: false } satisfies DeepgramRequest),
+            );
             socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n');
             return;
         }
-        const accept = createHash('sha1').update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
-        socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+        const accept = createHash('sha1')
+            .update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+            .digest('base64');
+        socket.write(
+            `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`,
+        );
         const environment = env();
         const lines = JSON.parse(environment['FAKE_DEEPGRAM_LIVE'] ?? '[]') as string[];
         const rate = Number(url.searchParams.get('sample_rate') ?? 16000);
-        let bytes = 0, messages = 0, done = false, waited: number | undefined, number = 0;
+        let bytes = 0,
+            messages = 0,
+            done = false,
+            waited: number | undefined,
+            number = 0;
         const opened = performance.now();
         const said = (): string => lines[number - 1] ?? `Utterance ${number}.`;
         const results = (final: boolean): void => {
-            const words = said().split(' '), text = final ? said() : words.slice(0, Math.min(words.length, messages)).join(' ');
+            const words = said().split(' '),
+                text = final ? said() : words.slice(0, Math.min(words.length, messages)).join(' ');
             const result = {
-                type: 'Results', is_final: final, speech_final: final, start: 0, duration: bytes / 2 / rate,
+                type: 'Results',
+                is_final: final,
+                speech_final: final,
+                start: 0,
+                duration: bytes / 2 / rate,
                 channel: { alternatives: [{ transcript: text, confidence: 0.99 }] },
             };
             socket.write(frame(1, Buffer.from(JSON.stringify(result))));
@@ -314,9 +377,19 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         const finish = (closed: boolean, dropped = false): void => {
             if (done) return;
             done = true;
-            record(log, 'deepgram-live', JSON.stringify({
-                ...queryOf(url), key, seconds: bytes / 2 / rate, messages, closed, waited, dropped,
-            } satisfies DeepgramRequest));
+            record(
+                log,
+                'deepgram-live',
+                JSON.stringify({
+                    ...queryOf(url),
+                    key,
+                    seconds: bytes / 2 / rate,
+                    messages,
+                    closed,
+                    waited,
+                    dropped,
+                } satisfies DeepgramRequest),
+            );
         };
         frames(socket, head, (opcode, payload) => {
             if (opcode === 2) {
@@ -351,12 +424,18 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
 
     const server = createServer((request, response) => {
         const url = new URL(request.url ?? '/', 'http://127.0.0.1');
-        const handled = request.method === 'POST' && url.pathname === '/v1/messages' ? anthropic(request, response)
-            : request.method === 'POST' && url.pathname === '/v1/listen' ? deepgramFile(request, response, url)
-            : request.method === 'GET' && url.pathname === '/v1/projects'
-                ? Promise.resolve(deepgramKey(request) === FAKE_KEYS.deepgram ? json(response, 200, { projects: [] })
-                    : json(response, 401, { err_code: 'INVALID_AUTH', err_msg: 'Invalid credentials.' }))
-            : Promise.resolve(json(response, 404, { error: `no ${request.method} ${url.pathname} here` }));
+        const handled =
+            request.method === 'POST' && url.pathname === '/v1/messages'
+                ? anthropic(request, response)
+                : request.method === 'POST' && url.pathname === '/v1/listen'
+                  ? deepgramFile(request, response, url)
+                  : request.method === 'GET' && url.pathname === '/v1/projects'
+                    ? Promise.resolve(
+                          deepgramKey(request) === FAKE_KEYS.deepgram
+                              ? json(response, 200, { projects: [] })
+                              : json(response, 401, { err_code: 'INVALID_AUTH', err_msg: 'Invalid credentials.' }),
+                      )
+                    : Promise.resolve(json(response, 404, { error: `no ${request.method} ${url.pathname} here` }));
         handled.catch((error: unknown) => {
             if (!response.headersSent) json(response, 500, { type: 'error', error: { type: 'api_error', message: String(error) } });
             else response.end();
@@ -377,9 +456,10 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
     const { port } = server.address() as AddressInfo;
     return {
         url: `http://127.0.0.1:${port}`,
-        close: () => new Promise<void>((resolve) => {
-            for (const socket of sockets) socket.destroy();
-            server.close(() => resolve());
-        }),
+        close: () =>
+            new Promise<void>((resolve) => {
+                for (const socket of sockets) socket.destroy();
+                server.close(() => resolve());
+            }),
     };
 }

@@ -1,8 +1,18 @@
 import { copyFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-    assertContains, assertEq, assertFile, assertNotContains, e2eCase, exists, fail, fixture, isFile, listDir,
-    sameContents, sleep,
+    assertContains,
+    assertEq,
+    assertFile,
+    assertNotContains,
+    e2eCase,
+    exists,
+    fail,
+    fixture,
+    isFile,
+    listDir,
+    sameContents,
+    sleep,
 } from '../harness/index.ts';
 
 e2eCase('Settings and notes from before projects become the project "My project", once.', async (cue) => {

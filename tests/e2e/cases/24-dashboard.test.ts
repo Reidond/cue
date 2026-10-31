@@ -1,7 +1,15 @@
 import { copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-    assertContains, assertEq, assertNotContains, countLines, e2eCase, fixture, isDirectory, needOverlaySnapshots, ocr,
+    assertContains,
+    assertEq,
+    assertNotContains,
+    countLines,
+    e2eCase,
+    fixture,
+    isDirectory,
+    needOverlaySnapshots,
+    ocr,
 } from '../harness/index.ts';
 
 e2eCase("The dashboard shows Home, a project's page, its prepared answers and its notes.", async (cue) => {

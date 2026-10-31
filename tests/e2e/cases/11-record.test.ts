@@ -1,6 +1,15 @@
 import { basename } from 'node:path';
 import {
-    assertContains, assertEq, assertFile, assertNotContains, CLAUDE, dialogue, e2eCase, fail, fixture, needWhisper,
+    assertContains,
+    assertEq,
+    assertFile,
+    assertNotContains,
+    CLAUDE,
+    dialogue,
+    e2eCase,
+    fail,
+    fixture,
+    needWhisper,
 } from '../harness/index.ts';
 
 e2eCase('A two-sided rehearsal is recorded into notes with both sides, a summary and a title.', async (cue) => {
@@ -12,7 +21,9 @@ e2eCase('A two-sided rehearsal is recorded into notes with both sides, a summary
     await cue.defaults('autoAnswer', false);
     const call = await dialogue(fixture('dialogues', 'sync.txt'), cue.path('call'));
     await cue.launch({
-        CUE_REHEARSE_RECORD: '1', CUE_REHEARSE_PARTICIPANT: call.wav('call'), CUE_REHEARSE_ME: call.wav('me'),
+        CUE_REHEARSE_RECORD: '1',
+        CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+        CUE_REHEARSE_ME: call.wav('me'),
     });
     await cue.waitLog(/Transcript saved/, 120);
     await cue.waitLog(/Notes ready/, 180);

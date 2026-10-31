@@ -1,7 +1,5 @@
 import { join } from 'node:path';
-import {
-    assertContains, assertNotContains, e2eCase, exists, fail, fixture, isDirectory, isFile, sameContents,
-} from '../harness/index.ts';
+import { assertContains, assertNotContains, e2eCase, exists, fail, fixture, isDirectory, isFile, sameContents } from '../harness/index.ts';
 
 e2eCase('A new user creates a project, drops a file on it, starts Cue and gets an answer from it.', async (cue) => {
     await cue.launch({ FAKE_CLAUDE_ANSWER: 'We studied 48 hives on six rooftops.\n- 48 hives, 6 rooftops\nSource: talk.md' });

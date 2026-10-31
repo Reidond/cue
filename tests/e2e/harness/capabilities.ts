@@ -24,7 +24,11 @@ async function wavSeconds(path: string): Promise<number> {
 }
 
 function lastLine(text: string): string {
-    return linesOf(text).filter((line) => line.trim() !== '').at(-1) ?? '';
+    return (
+        linesOf(text)
+            .filter((line) => line.trim() !== '')
+            .at(-1) ?? ''
+    );
 }
 
 /** Whether whisper-cli hears a short spoken phrase, and how long it takes. */
@@ -35,7 +39,8 @@ export async function probeSpeech(): Promise<Capability | undefined> {
     if (!exists(model) || cli === undefined) return undefined;
     const dir = await mkdtemp(join(E2E_WORK, 'probe-speech.'));
     try {
-        const aiff = join(dir, 'phrase.aiff'), wav = join(dir, 'phrase.wav');
+        const aiff = join(dir, 'phrase.aiff'),
+            wav = join(dir, 'phrase.wav');
         // An English voice (the default one speaks the system's language); any voice if it's missing.
         let said = await exec('say', ['-v', 'Samantha', '-o', aiff, '--', PHRASE]);
         if (said.code !== 0) said = await exec('say', ['-o', aiff, '--', PHRASE]);
@@ -46,7 +51,8 @@ export async function probeSpeech(): Promise<Capability | undefined> {
         const heard = await exec(cli, ['-m', model, '-f', wav, '-l', 'en', '-nt', '-np'], { timeout: SPEECH_LIMIT * 3 });
         const took = ((Date.now() - started) / 1000).toFixed(1);
         const slow = `speech recognition is too slow here: ${length} s of speech took`;
-        if (heard.code === 137) return { ok: false, detail: `${slow} over ${SPEECH_LIMIT * 3} s (the cases need it within ${SPEECH_LIMIT} s)` };
+        if (heard.code === 137)
+            return { ok: false, detail: `${slow} over ${SPEECH_LIMIT * 3} s (the cases need it within ${SPEECH_LIMIT} s)` };
         if (heard.code !== 0) return { ok: false, detail: `whisper-cli fails here (exit ${heard.code}): ${lastLine(heard.stderr)}` };
         if (!/friday/i.test(heard.stdout)) {
             return { ok: false, detail: `whisper-cli doesn't hear test speech here (it heard "${heard.stdout.trim().slice(0, 80)}")` };
@@ -64,7 +70,8 @@ export async function probeSpeech(): Promise<Capability | undefined> {
  */
 export async function probeSnapshots(): Promise<Pick<Capabilities, 'windows' | 'overlay'>> {
     const cue = await Cue.open('00-probe-snapshots');
-    let dashboard = '', overlay = '';
+    let dashboard = '',
+        overlay = '';
     const windowsRead = (): boolean => /New Project/i.test(dashboard);
     const overlayRead = (): boolean => /Listening|No audio|When someone asks|Drop your|Ask anything/i.test(overlay);
     try {
@@ -84,8 +91,12 @@ export async function probeSnapshots(): Promise<Pick<Capabilities, 'windows' | '
         const unreadable = (text: string, method: string): string =>
             `${text.trim() ? 'not the expected text' : 'no text'} in its snapshots here (${method})`;
         return {
-            windows: windowsRead() ? { ok: true, detail: windowsMethod } : { ok: false, detail: `the dashboard shows ${unreadable(dashboard, windowsMethod)}` },
-            overlay: overlayRead() ? { ok: true, detail: overlayMethod } : { ok: false, detail: `the overlay shows ${unreadable(overlay, overlayMethod)}` },
+            windows: windowsRead()
+                ? { ok: true, detail: windowsMethod }
+                : { ok: false, detail: `the dashboard shows ${unreadable(dashboard, windowsMethod)}` },
+            overlay: overlayRead()
+                ? { ok: true, detail: overlayMethod }
+                : { ok: false, detail: `the overlay shows ${unreadable(overlay, overlayMethod)}` },
         };
     } finally {
         await cue.close(windowsRead() && overlayRead());

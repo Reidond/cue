@@ -7,7 +7,19 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ANTHROPIC, CLAUDE, CUE_BIN, DEEPGRAM, E2E_CACHE, E2E_WORK, FAKE_CLAUDE, KEEP, REAL_SUPPORT } from './config.ts';
 import { FAKE_KEYS, startFakeProviders, type AnthropicRequest, type DeepgramRequest, type FakeProviders } from './fake-providers.ts';
-import { countLines, exists, findFiles, isDirectory, lines, linesOf, matches, nonEmpty, tail, withFlags, writeExecutable } from './files.ts';
+import {
+    countLines,
+    exists,
+    findFiles,
+    isDirectory,
+    lines,
+    linesOf,
+    matches,
+    nonEmpty,
+    tail,
+    withFlags,
+    writeExecutable,
+} from './files.ts';
 import { exec, shellQuote, type Ran } from './process.ts';
 import { keychainKey, needOverlaySnapshots, needWhisperCli, needWindowSnapshots } from './requirements.ts';
 import { fail, print, Skip } from './results.ts';
@@ -16,8 +28,11 @@ import { sleep, within } from './time.ts';
 
 /** The speaker models' files (FluidAudio's speaker-diarization/ folder) that tell they're all there. */
 export const SPEAKER_FILES = [
-    'Segmentation.mlmodelc/coremldata.bin', 'FBank.mlmodelc/coremldata.bin', 'Embedding.mlmodelc/coremldata.bin',
-    'PldaRho.mlmodelc/coremldata.bin', 'plda-parameters.json',
+    'Segmentation.mlmodelc/coremldata.bin',
+    'FBank.mlmodelc/coremldata.bin',
+    'Embedding.mlmodelc/coremldata.bin',
+    'PldaRho.mlmodelc/coremldata.bin',
+    'plda-parameters.json',
 ];
 
 /** A call in the calendar Cue reads (CUE_CALENDAR_EVENTS); times from `minutesFromNow` or `tomorrowAt`. */
@@ -216,10 +231,14 @@ export class Cue {
      * `defaults('language', 'uk')`, `defaults('materials', [a, b])`, `defaults('autoAnswer', true)`.
      */
     async defaults(key: string, value: DefaultsValue): Promise<void> {
-        const typed = typeof value === 'string' ? ['-string', value]
-            : typeof value === 'boolean' ? ['-bool', String(value)]
-            : typeof value === 'number' ? [Number.isInteger(value) ? '-int' : '-float', String(value)]
-            : ['-array', ...value];
+        const typed =
+            typeof value === 'string'
+                ? ['-string', value]
+                : typeof value === 'boolean'
+                  ? ['-bool', String(value)]
+                  : typeof value === 'number'
+                    ? [Number.isInteger(value) ? '-int' : '-float', String(value)]
+                    : ['-array', ...value];
         const wrote = await exec('defaults', ['write', this.domain, key, ...typed]);
         if (wrote.code !== 0) fail(`defaults write ${key} failed`, wrote.output);
     }
@@ -235,8 +254,13 @@ export class Cue {
         writeFileSync(this.path('control'), '');
         const out = openSync(this.path('cue.out'), 'a');
         this.#launched = {
-            ...this.env, CUE_NO_LIVE_AUDIO: '1', CUE_BACKGROUND: '1', CUE_CONTROL: this.path('control'),
-            CUE_CALENDAR_EVENTS: this.events, CUE_MIC_APPS: this.micAppsFile, ...env,
+            ...this.env,
+            CUE_NO_LIVE_AUDIO: '1',
+            CUE_BACKGROUND: '1',
+            CUE_CONTROL: this.path('control'),
+            CUE_CALENDAR_EVENTS: this.events,
+            CUE_MIC_APPS: this.micAppsFile,
+            ...env,
         };
         const app = spawn(CUE_BIN, [], { env: this.#launched, stdio: ['ignore', out, out] });
         closeSync(out);
@@ -315,14 +339,17 @@ export class Cue {
      */
     async whisperCliSpy(seconds = 0.5): Promise<string> {
         const whisperCli = needWhisperCli();
-        return writeExecutable(this.path('whisper-cli'), [
-            '#!/bin/bash',
-            `printf '%s\\n' "$@" > ${shellQuote(this.path('whisper-args.txt'))}`,
-            `sleep ${seconds}`,
-            `ps -o pri= -p $$ | tr -d ' ' > ${shellQuote(this.path('whisper-priority.txt'))}`,
-            `exec ${shellQuote(whisperCli)} "$@"`,
-            '',
-        ].join('\n'));
+        return writeExecutable(
+            this.path('whisper-cli'),
+            [
+                '#!/bin/bash',
+                `printf '%s\\n' "$@" > ${shellQuote(this.path('whisper-args.txt'))}`,
+                `sleep ${seconds}`,
+                `ps -o pri= -p $$ | tr -d ' ' > ${shellQuote(this.path('whisper-priority.txt'))}`,
+                `exec ${shellQuote(whisperCli)} "$@"`,
+                '',
+            ].join('\n'),
+        );
     }
 
     // MARK: Waiting
@@ -334,10 +361,12 @@ export class Cue {
     async waitFor(what: string, seconds: number, check: () => boolean | Promise<boolean>): Promise<void> {
         const deadline = Date.now() + seconds * 1000;
         for (;;) {
-            const held = await Promise.resolve().then(check).catch((error: unknown) => {
-                if (error instanceof Skip) throw error;
-                return false;
-            });
+            const held = await Promise.resolve()
+                .then(check)
+                .catch((error: unknown) => {
+                    if (error instanceof Skip) throw error;
+                    return false;
+                });
             if (held) return;
             if (this.#app && !this.alive()) {
                 fail(`Cue exited while waiting for ${what}`, '--- cue.out', tail(this.path('cue.out'), 40));
@@ -365,7 +394,8 @@ export class Cue {
         try {
             for (const name of readdirSync(sessions)) {
                 if (!name.endsWith('.md')) continue;
-                const path = join(sessions, name), time = statSync(path).mtimeMs;
+                const path = join(sessions, name),
+                    time = statSync(path).mtimeMs;
                 if (!newest || time > newest.time) newest = { path, time };
             }
         } catch {
@@ -386,7 +416,11 @@ export class Cue {
 
     /** The notes file named by the last "Notes ready:" log line ('' when there is none). */
     readyNotes(): string {
-        return matches(this.sessionLog(), /Notes ready: .*/).at(-1)?.slice('Notes ready: '.length) ?? '';
+        return (
+            matches(this.sessionLog(), /Notes ready: .*/)
+                .at(-1)
+                ?.slice('Notes ready: '.length) ?? ''
+        );
     }
 
     /** Every Markdown note under the sandbox's Documents (materials excluded). */
@@ -409,7 +443,9 @@ export class Cue {
     #noted(kind: string): string[] {
         let names: string[];
         try {
-            names = readdirSync(this.claudeLog).filter((name) => name.endsWith(`-${kind}.txt`)).sort();
+            names = readdirSync(this.claudeLog)
+                .filter((name) => name.endsWith(`-${kind}.txt`))
+                .sort();
         } catch {
             names = [];
         }

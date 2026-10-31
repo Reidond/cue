@@ -31,8 +31,7 @@ e2eCase('An older answer opened to read stays open as new questions arrive under
     assertContains(reading, /New Question/, 'the new question should wait under a button');
 
     cue.control('newest');
-    await cue.waitFor('the newest answer to show', 20, async () =>
-        /Point about swarms/.test(await cue.snapshotText(cue.path('cue.png'))));
+    await cue.waitFor('the newest answer to show', 20, async () => /Point about swarms/.test(await cue.snapshotText(cue.path('cue.png'))));
     const newest = cue.save('newest.txt', await cue.snapshotText(cue.path('cue.png')));
     assertNotContains(newest, /New Question/, 'the button should go once the newest is shown');
 });

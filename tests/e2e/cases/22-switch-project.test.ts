@@ -2,13 +2,16 @@ import { join } from 'node:path';
 import { assertContains, assertNotContains, e2eCase, fail, fixture, isFile, sleep } from '../harness/index.ts';
 
 e2eCase('Switching the project from the overlay changes which materials Cue answers from, and is remembered.', async (cue) => {
-    const solar = cue.save('solar.md', `# Solar panels on the school roof
+    const solar = cue.save(
+        'solar.md',
+        `# Solar panels on the school roof
 
 The school installed 120 panels in 2025; they cover 70 percent of its power.
 
 Q: How many panels are on the roof?
 A: There are 120 panels, covering 70 percent of the school's power.
-`);
+`,
+    );
 
     await cue.launch();
     cue.control('new Bees');
