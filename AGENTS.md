@@ -37,8 +37,17 @@ the only way to use the app. Work on it in a Boat sandbox like everything else (
 - Elysia on Cloudflare Workers, Better Auth with `@better-auth/oauth-provider` (the backend is an OAuth 2.1 server), D1 and KV.
   The toolchain has three settings that must stay: the `vite@*` override and `autoInstallPeers: false` in `pnpm-workspace.yaml`, and
   no `vite` dependency in `apps/api` (`node apps/api/scripts/check-vite.ts` fails when `cf` would use upstream Vite; CI runs it).
-- Elysia compiles ahead of time only in production (`aot: !import.meta.env.DEV`). Better Auth, WebSocket upgrades and anything that
-  needs its body unread go through `.mount()`, never a normal route (Elysia reads the body first and breaks them under `cf dev`).
+- **Routing rule: no hand-written routing.** No `pathname.startsWith(…)` / `endsWith` / regex dispatch on a request's path, and no `fetch`
+  in front of Elysia that switches on paths: every HTTP route is an Elysia route with typed `params` / `query` / `body` and TypeBox
+  schemas, grouped by feature in a plugin under `src/routes/` (`.use()`d from `src/index.ts`), and the Worker's `fetch` is the Elysia
+  app's. Better Auth goes in with `.mount('/api/auth', …)`. Durable Objects are called through RPC methods on their stubs
+  (`stub.keepWarm()`), never `fetch` with a path; a DO's `fetch` exists only for the WebSocket upgrade, which the route hands over with
+  Elysia's own mechanism (`.mount()` on that route's path if a plain route cannot return the 101 under `cf dev`) and a one-line comment
+  saying why. The one path touch there is: `whole()` in `src/routes/sign-in.ts` puts `/api/auth` back on a mounted request, because
+  Elysia strips a mount's prefix when compiled (production) but not under `cf dev`; it routes nothing.
+- Elysia compiles ahead of time only in production (`aot: !import.meta.env.DEV`; workerd forbids `Function(…)` under `cf dev`). Better
+  Auth, WebSocket upgrades and anything that needs its body unread are mounted, never plain routes (Elysia reads the body first and
+  breaks them under `cf dev`); GET routes with no body, like the identity providers' callbacks, are plain routes.
 - Routes return errors as `{error: {code, message, retryable}}` (`packages/contract`). The OpenAPI document is `/v1/openapi.json`.
 - Better Auth's tables are generated from the same config the Worker uses: `pnpm --filter api schema` rewrites
   `migrations/0002_better_auth.sql` (do it whenever a plugin or an auth option changes). Other migrations are plain SQL files.
