@@ -1,13 +1,4 @@
-import {
-    ApiError as ApiErrorBody,
-    Deleted,
-    NewProject,
-    PreparedAnswers,
-    Project,
-    ProjectId,
-    ProjectPatch,
-    Projects,
-} from '@cue/contract';
+import { ApiError as ApiErrorBody, Deleted, NewProject, PreparedAnswers, Project, ProjectId, ProjectPatch, Projects } from '@cue/contract';
 import { env } from 'cloudflare:workers';
 import { Elysia } from 'elysia';
 import { ApiError } from '../errors.ts';
@@ -35,7 +26,9 @@ export const projects = new Elysia({ name: 'projects', prefix: '/projects' })
     .get(
         '/',
         async ({ userId }) => {
-            const { results } = await env.DB.prepare(`SELECT ${PROJECT_COLUMNS} FROM project p WHERE p.user_id = ? ORDER BY p.created_at, p.id`)
+            const { results } = await env.DB.prepare(
+                `SELECT ${PROJECT_COLUMNS} FROM project p WHERE p.user_id = ? ORDER BY p.created_at, p.id`,
+            )
                 .bind(userId)
                 .all<ProjectRow>();
             return { projects: results.map(projectOf) };
@@ -50,7 +43,16 @@ export const projects = new Elysia({ name: 'projects', prefix: '/projects' })
             await env.DB.prepare(
                 `INSERT INTO project (id, user_id, name, occasion, language, names_and_terms, created_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             )
-                .bind(id, userId, cleanName(body.name), body.occasion ?? '', body.language ?? 'en', body.namesAndTerms ?? '', createdAt, body.lastUsedAt ?? null)
+                .bind(
+                    id,
+                    userId,
+                    cleanName(body.name),
+                    body.occasion ?? '',
+                    body.language ?? 'en',
+                    body.namesAndTerms ?? '',
+                    createdAt,
+                    body.lastUsedAt ?? null,
+                )
                 .run();
             return status(201, projectOf(await mustFind(userId, id)));
         },
@@ -78,13 +80,20 @@ export const projects = new Elysia({ name: 'projects', prefix: '/projects' })
             };
             const changed = Object.entries(columns).filter(([, value]) => value !== undefined);
             if (changed.length > 0) {
-                await env.DB.prepare(`UPDATE project SET ${changed.map(([column]) => `${column} = ?`).join(', ')} WHERE id = ? AND user_id = ?`)
+                await env.DB.prepare(
+                    `UPDATE project SET ${changed.map(([column]) => `${column} = ?`).join(', ')} WHERE id = ? AND user_id = ?`,
+                )
                     .bind(...changed.map(([, value]) => value as string | number | null), params.id, userId)
                     .run();
             }
             return projectOf(await mustFind(userId, params.id));
         },
-        { params: ProjectId, body: ProjectPatch, response: { 200: Project, 400: ApiErrorBody, ...errors }, detail: { summary: "Changes a project's settings" } },
+        {
+            params: ProjectId,
+            body: ProjectPatch,
+            response: { 200: Project, 400: ApiErrorBody, ...errors },
+            detail: { summary: "Changes a project's settings" },
+        },
     )
     .delete(
         '/:id',
@@ -101,7 +110,11 @@ export const projects = new Elysia({ name: 'projects', prefix: '/projects' })
             await env.DB.prepare('DELETE FROM project WHERE id = ? AND user_id = ?').bind(params.id, userId).run();
             return { deleted: params.id };
         },
-        { params: ProjectId, response: { 200: Deleted, ...errors }, detail: { summary: 'Deletes a project, its materials and their files' } },
+        {
+            params: ProjectId,
+            response: { 200: Deleted, ...errors },
+            detail: { summary: 'Deletes a project, its materials and their files' },
+        },
     )
     .get(
         '/:id/prepared-answers',

@@ -70,7 +70,9 @@ export const Material = Type.Object({
     size: Type.Integer({ description: 'Bytes of the file as uploaded' }),
     createdAt: Type.Number(),
     error: Type.Union([Type.String(), Type.Null()], { description: "Why its text couldn't be read; null when it was" }),
-    summary: Type.String({ description: '"1,204 words · 3 prepared answers", "12 slides · 2 prepared answers"; empty when it has an error' }),
+    summary: Type.String({
+        description: '"1,204 words · 3 prepared answers", "12 slides · 2 prepared answers"; empty when it has an error',
+    }),
     preparedCount: Type.Integer(),
 });
 export type Material = Static<typeof Material>;
@@ -82,7 +84,9 @@ export type Materials = Static<typeof Materials>;
 export const MaterialText = Type.Composite([Material, Type.Object({ text: Type.String() })]);
 export type MaterialText = Static<typeof MaterialText>;
 
-export const UploadQuery = Type.Object({ name: Type.String({ minLength: 1, maxLength: 255, description: 'The file name, with its extension' }) });
+export const UploadQuery = Type.Object({
+    name: Type.String({ minLength: 1, maxLength: 255, description: 'The file name, with its extension' }),
+});
 
 /** A prepared question and answer found in a material (`Q: …` / `A: …`, or a question followed by an `Answer:` line, also in speaker notes). */
 export const PreparedAnswer = Type.Object({

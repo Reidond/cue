@@ -20,7 +20,9 @@ export const extensionOf = (name: string) => (name.includes('.') ? name.slice(na
 
 export const isSupported = (name: string) => {
     const extension = extensionOf(name);
-    return [...MATERIAL_EXTENSIONS.text, ...MATERIAL_EXTENSIONS.slides, ...MATERIAL_EXTENSIONS.documents].some((known) => known === extension);
+    return [...MATERIAL_EXTENSIONS.text, ...MATERIAL_EXTENSIONS.slides, ...MATERIAL_EXTENSIONS.documents].some(
+        (known) => known === extension,
+    );
 };
 
 const wordsOf = (text: string) => text.split(/\s+/).filter(Boolean).length;
@@ -48,7 +50,9 @@ export async function extract(name: string, bytes: ArrayBuffer, contentType: str
 
 /** What a stored material says about prepared answers, in the project's language. */
 export function preparedIn(material: { name: string; text: string; qa: string | null }, language: string): Prepared[] {
-    const blocks: QaBlock[] = material.qa ? (JSON.parse(material.qa) as QaBlock[]) : [{ source: material.name, lines: material.text.split(/\r?\n/).map(unmark) }];
+    const blocks: QaBlock[] = material.qa
+        ? (JSON.parse(material.qa) as QaBlock[])
+        : [{ source: material.name, lines: material.text.split(/\r?\n/).map(unmark) }];
     return blocks.flatMap((block) => extractQA(block.lines, language, block.source));
 }
 

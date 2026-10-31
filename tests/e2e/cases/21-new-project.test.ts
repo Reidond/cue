@@ -1,5 +1,16 @@
 import { join } from 'node:path';
-import { assertContains, assertDeepEq, assertEq, assertNotContains, e2eCase, exists, fail, fixture, isDirectory, isFile } from '../harness/index.ts';
+import {
+    assertContains,
+    assertDeepEq,
+    assertEq,
+    assertNotContains,
+    e2eCase,
+    exists,
+    fail,
+    fixture,
+    isDirectory,
+    isFile,
+} from '../harness/index.ts';
 
 e2eCase('A new user creates a project, drops a file on it, starts Cue and gets an answer from it.', async (cue) => {
     await cue.launch({ FAKE_CLAUDE_ANSWER: 'We studied 48 hives on six rooftops.\n- 48 hives, 6 rooftops\nSource: talk.md' });
@@ -20,7 +31,11 @@ e2eCase('A new user creates a project, drops a file on it, starts Cue and gets a
     // The file goes to the account, which reads it.
     cue.control(`add ${fixture('materials', 'talk.md')}`);
     await cue.waitLog(/Added talk\.md to Bee talk: 133 words · 3 prepared answers/, 20);
-    assertDeepEq((await account.materials(remote)).map((material) => material.name), ['talk.md'], 'the file is in the account');
+    assertDeepEq(
+        (await account.materials(remote)).map((material) => material.name),
+        ['talk.md'],
+        'the file is in the account',
+    );
     if (isDirectory(join(project, 'Materials'))) fail('nothing is copied into the project folder any more');
 
     cue.control('start Bee talk');

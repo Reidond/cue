@@ -76,10 +76,14 @@ export const materials = new Elysia({ name: 'materials' })
             const project = await mustFindProject(userId, params.id);
             const name = query.name.split(/[/\\]/).at(-1)!.trim();
             if (name === '' || !isSupported(name)) {
-                throw new ApiError('bad_request', `Cue can't read ${extensionOf(name) ? `.${extensionOf(name)}` : 'that kind of'} files. It takes ${FORMATS}.`);
+                throw new ApiError(
+                    'bad_request',
+                    `Cue can't read ${extensionOf(name) ? `.${extensionOf(name)}` : 'that kind of'} files. It takes ${FORMATS}.`,
+                );
             }
             const size = Number(request.headers.get('content-length'));
-            if (!Number.isInteger(size) || size <= 0) throw new ApiError('bad_request', 'Send the file as the request body, with its Content-Length.');
+            if (!Number.isInteger(size) || size <= 0)
+                throw new ApiError('bad_request', 'Send the file as the request body, with its Content-Length.');
             if (size > MATERIAL_MAX_BYTES) throw new ApiError('bad_request', `That file is over ${MATERIAL_MAX_BYTES / 1024 / 1024} MB.`);
             if (!request.body) throw new ApiError('bad_request', 'Send the file as the request body.');
 
@@ -130,7 +134,20 @@ export const materials = new Elysia({ name: 'materials' })
                 env.DB.prepare(
                     `INSERT INTO material (id, project_id, user_id, ${COLUMNS.replace('id, ', '')}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 ).bind(
-                    row.id, params.id, userId, row.name, row.content_type, row.size, row.etag, row.r2_key, row.error, row.text, row.qa, row.words, row.slides, row.created_at,
+                    row.id,
+                    params.id,
+                    userId,
+                    row.name,
+                    row.content_type,
+                    row.size,
+                    row.etag,
+                    row.r2_key,
+                    row.error,
+                    row.text,
+                    row.qa,
+                    row.words,
+                    row.slides,
+                    row.created_at,
                 ),
             ];
             // Workers AI read it: one file of usage, priced by the table (PDFs and Office files are free, images are not).
@@ -150,7 +167,7 @@ export const materials = new Elysia({ name: 'materials' })
             params: ProjectId,
             query: UploadQuery,
             response: { 200: Material, 201: Material, 400: ApiErrorBody, ...errors, 502: ApiErrorBody },
-            detail: { summary: "Adds a file to a project: the body is the file, its type the Content-Type, ?name= its name" },
+            detail: { summary: 'Adds a file to a project: the body is the file, its type the Content-Type, ?name= its name' },
         },
     )
     .get(
@@ -175,7 +192,11 @@ export const materials = new Elysia({ name: 'materials' })
             if (!row) throw new ApiError('not_found', 'That file does not exist.');
             return { ...materialOf(row, project.language), text: row.text };
         },
-        { params: MaterialPath, response: { 200: MaterialText, ...errors }, detail: { summary: 'One material with the text the server read from it' } },
+        {
+            params: MaterialPath,
+            response: { 200: MaterialText, ...errors },
+            detail: { summary: 'One material with the text the server read from it' },
+        },
     )
     .delete(
         '/projects/:id/materials/:materialId',

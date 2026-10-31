@@ -24,7 +24,12 @@ e2eCase('Projects are kept in the account with all their settings, and each pers
 
     // Create: every setting a project has.
     const created = await backend.call('POST', '/v1/projects', a, {
-        body: { name: ' Bee talk ', language: 'uk', occasion: 'A PhD pre-defense', namesAndTerms: 'Varroa, Kyiv; Linden.\nTetiana Kovalenko' },
+        body: {
+            name: ' Bee talk ',
+            language: 'uk',
+            occasion: 'A PhD pre-defense',
+            namesAndTerms: 'Varroa, Kyiv; Linden.\nTetiana Kovalenko',
+        },
     });
     assertEq(created.status, 201, 'creating a project');
     const project = created.body as Project;
@@ -36,7 +41,9 @@ e2eCase('Projects are kept in the account with all their settings, and each pers
     assertEq((await backend.call('POST', '/v1/projects', a, { body: { name: '   ' } })).status, 400, 'a project needs a name');
 
     // Change some settings; the others stay.
-    const patched = await backend.call('PATCH', `/v1/projects/${project.id}`, a, { body: { name: 'Bees', language: 'pl', lastUsedAt: 1_700_000_000_000 } });
+    const patched = await backend.call('PATCH', `/v1/projects/${project.id}`, a, {
+        body: { name: 'Bees', language: 'pl', lastUsedAt: 1_700_000_000_000 },
+    });
     assertEq(patched.status, 200, 'changing settings');
     const listed = (await backend.call('GET', '/v1/projects', a)).body.projects as Project[];
     assertEq(listed.length, 1);
@@ -49,7 +56,11 @@ e2eCase('Projects are kept in the account with all their settings, and each pers
     // Another person's view: nothing of Ann's, and her project's address finds nothing.
     assertEq((await backend.call('GET', '/v1/projects', b)).body.projects.length, 0, "Bob sees none of Ann's projects");
     await backend.call('POST', '/v1/projects', b, { body: { name: 'Bob only' } });
-    assertDeepEq(((await backend.call('GET', '/v1/projects', a)).body.projects as Project[]).map((item) => item.name), ['Bees'], "Ann sees none of Bob's");
+    assertDeepEq(
+        ((await backend.call('GET', '/v1/projects', a)).body.projects as Project[]).map((item) => item.name),
+        ['Bees'],
+        "Ann sees none of Bob's",
+    );
     for (const [method, path, body] of [
         ['GET', `/v1/projects/${project.id}`, undefined],
         ['PATCH', `/v1/projects/${project.id}`, { name: 'Mine now' }],

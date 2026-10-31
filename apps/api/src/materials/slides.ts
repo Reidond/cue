@@ -21,7 +21,8 @@ const decode = (text: string) =>
 
 /** A minimal XML tokenizer: start and end tags (a self-closing one is both) and text. */
 function* tags(xml: string): Generator<Tag> {
-    const pattern = /<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<!\[CDATA\[([\s\S]*?)\]\]>|<(\/?)([^\s/>]+)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>|([^<]+)/g;
+    const pattern =
+        /<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<!\[CDATA\[([\s\S]*?)\]\]>|<(\/?)([^\s/>]+)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>|([^<]+)/g;
     for (const match of xml.matchAll(pattern)) {
         const [, cdata, closing, name, attributeText, selfClosing, text] = match;
         if (cdata !== undefined) yield { kind: 'text', name: '', attributes: {}, text: cdata };
@@ -41,7 +42,9 @@ function* tags(xml: string): Generator<Tag> {
 }
 
 const attributeValues = (xml: string, element: string, attribute: string) =>
-    [...tags(xml)].flatMap((tag) => (tag.kind === 'open' && tag.name === element && tag.attributes[attribute] !== undefined ? [tag.attributes[attribute]!] : []));
+    [...tags(xml)].flatMap((tag) =>
+        tag.kind === 'open' && tag.name === element && tag.attributes[attribute] !== undefined ? [tag.attributes[attribute]!] : [],
+    );
 
 const trim = (text: string) => text.replace(/^[\p{Zs}\t]+|[\p{Zs}\t]+$/gu, '');
 

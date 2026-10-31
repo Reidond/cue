@@ -18,5 +18,8 @@ const LABELS: Record<string, Labels> = {
 export function labelsFor(language: string): Labels {
     const own = LABELS[language.split('-')[0]!.toLowerCase()];
     if (!own || own === ENGLISH) return ENGLISH;
-    return { questionLabels: [...own.questionLabels, ...ENGLISH.questionLabels], answerLabels: [...own.answerLabels, ...ENGLISH.answerLabels] };
+    return {
+        questionLabels: [...own.questionLabels, ...ENGLISH.questionLabels],
+        answerLabels: [...own.answerLabels, ...ENGLISH.answerLabels],
+    };
 }

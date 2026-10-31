@@ -80,7 +80,8 @@ export function extractQA(rawLines: string[], language: string, source: string):
     };
     const opensPair = (index: number): number | undefined => {
         const line = lines[index]!;
-        if (!(line.includes('?') || labelLength(line, questionLabels) !== undefined) || labelLength(line, answerLabels) !== undefined) return undefined;
+        if (!(line.includes('?') || labelLength(line, questionLabels) !== undefined) || labelLength(line, answerLabels) !== undefined)
+            return undefined;
         const next = nextNonBlank(index);
         return next !== undefined && labelLength(lines[next]!, answerLabels) !== undefined ? next : undefined;
     };
