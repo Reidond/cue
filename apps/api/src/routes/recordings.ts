@@ -50,18 +50,18 @@ export const recordings = new Elysia({ name: 'recordings' })
         '/calls/:id/recording/:side',
         async ({ userId, params, query }) => {
             await mustFindCall(userId, params.id);
-            let row = await find(userId, params.id, query.take, params.side);
+            let row = await find(userId, params.id, Number(query.take), params.side);
             if (!row) {
-                const key = recordingKey(userId, params.id, query.take, params.side);
+                const key = recordingKey(userId, params.id, Number(query.take), params.side);
                 const created = await env.RECORDINGS.createMultipartUpload(key, {
                     httpMetadata: { contentType: contentTypeOf(params.side) },
                 });
                 await env.DB.prepare(
                     'INSERT INTO upload (upload_id, user_id, call_id, take, side, object_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (call_id, take, side) DO NOTHING',
                 )
-                    .bind(created.uploadId, userId, params.id, query.take, params.side, key, Date.now())
+                    .bind(created.uploadId, userId, params.id, Number(query.take), params.side, key, Date.now())
                     .run();
-                row = (await find(userId, params.id, query.take, params.side))!;
+                row = (await find(userId, params.id, Number(query.take), params.side))!;
                 // Two begins at once: the other's upload is the one that stays.
                 if (row.upload_id !== created.uploadId) await created.abort().catch(() => {});
             }
@@ -78,7 +78,7 @@ export const recordings = new Elysia({ name: 'recordings' })
         '/calls/:id/recording/:side',
         async ({ userId, params, query, request }) => {
             await mustFindCall(userId, params.id);
-            const row = await find(userId, params.id, query.take, params.side);
+            const row = await find(userId, params.id, Number(query.take), params.side);
             if (!row) throw new ApiError('not_found', 'Begin the upload first.');
             if (row.status !== 'open') throw new ApiError('bad_request', 'That upload is already complete.');
             const size = Number(request.headers.get('content-length'));
@@ -86,11 +86,14 @@ export const recordings = new Elysia({ name: 'recordings' })
                 throw new ApiError('bad_request', 'Send the part as the request body, with its Content-Length.');
             }
             // The part streams into R2; a connection that breaks partway records nothing, and the part is sent again.
-            const part = await env.RECORDINGS.resumeMultipartUpload(row.object_key, row.upload_id).uploadPart(query.part, request.body);
+            const part = await env.RECORDINGS.resumeMultipartUpload(row.object_key, row.upload_id).uploadPart(
+                Number(query.part),
+                request.body,
+            );
             await env.DB.prepare('INSERT OR REPLACE INTO upload_part (upload_id, part_number, etag, size) VALUES (?, ?, ?, ?)')
-                .bind(row.upload_id, query.part, part.etag, size)
+                .bind(row.upload_id, Number(query.part), part.etag, size)
                 .run();
-            return { partNumber: query.part, etag: part.etag };
+            return { partNumber: Number(query.part), etag: part.etag };
         },
         {
             // The route reads its own body: Elysia would buffer it and the stream could not go to R2.
@@ -105,7 +108,7 @@ export const recordings = new Elysia({ name: 'recordings' })
         '/calls/:id/recording/:side/complete',
         async ({ userId, params, query }) => {
             await mustFindCall(userId, params.id);
-            const row = await find(userId, params.id, query.take, params.side);
+            const row = await find(userId, params.id, Number(query.take), params.side);
             if (!row) throw new ApiError('not_found', 'Begin the upload first.');
             if (row.status === 'done') return stateOf(row, params.side);
             const { results } = await env.DB.prepare(

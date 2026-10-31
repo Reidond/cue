@@ -229,7 +229,7 @@ export const notes = new Elysia({ name: 'notes' })
         '/notes',
         async ({ userId, query }) => {
             const { results } = await env.DB.prepare(
-                `SELECT ${NOTE_COLUMNS} FROM note WHERE user_id = ? AND trashed_at IS NULL AND (?1 IS NULL OR project_id = ?1) ORDER BY started_at DESC`,
+                `SELECT ${NOTE_COLUMNS} FROM note WHERE user_id = ?1 AND trashed_at IS NULL AND (?2 IS NULL OR project_id = ?2) ORDER BY started_at DESC`,
             )
                 .bind(userId, query.project ?? null)
                 .all<NoteRow>();
@@ -250,7 +250,7 @@ export const notes = new Elysia({ name: 'notes' })
         '/notes/:id/events',
         async function* ({ userId, params, query, request }) {
             const row = await mustFind(userId, params.id);
-            let after = query.after ?? Number(request.headers.get('last-event-id') ?? 0);
+            let after = Number(query.after ?? request.headers.get('last-event-id') ?? 0);
             if (!Number.isFinite(after)) after = 0;
             let quiet = 0;
             for (;;) {
@@ -290,6 +290,10 @@ export const notes = new Elysia({ name: 'notes' })
             }
         },
         {
+            // An error thrown inside a streaming handler reaches no error hook: another person's note is refused before the stream starts.
+            beforeHandle: async ({ userId, params }) => {
+                await mustFind(userId, params.id);
+            },
             params: NoteId,
             query: EventsQuery,
             detail: {
@@ -357,7 +361,8 @@ export const notes = new Elysia({ name: 'notes' })
             const object = key ? await env.RECORDINGS.get(key, { range: request.headers }) : null;
             if (!object) throw new ApiError('not_found', 'That audio is not in storage (it may be past its retention).');
             const headers = new Headers({ 'content-type': contentTypeOf(params.side), 'accept-ranges': 'bytes', etag: object.httpEtag });
-            const range = object.range;
+            // R2 describes the whole object as a range too: only a request that asked for one gets a 206.
+            const range = request.headers.has('range') ? object.range : undefined;
             if (range) {
                 const offset =
                     'offset' in range && range.offset !== undefined

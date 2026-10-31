@@ -19,11 +19,14 @@ export const MIN_PART_BYTES = 5 * 1024 * 1024;
 /** `…/recording/:side`: which call and side. */
 export const RecordingPath = Type.Object({ id: Type.String(), side: Side });
 
-/** `?take=`: the recording's start, milliseconds since the epoch (a call can hold several recordings); `part` on the `PUT`. */
-export const TakeQuery = Type.Object({ take: Type.Integer({ minimum: 1 }) });
+/**
+ * `?take=`: the recording's start, milliseconds since the epoch (a call can hold several recordings); `part` on the `PUT`. Query strings are text,
+ * so these are digits that the routes read as numbers (Elysia only converts its own `t.Numeric`).
+ */
+export const TakeQuery = Type.Object({ take: Type.String({ pattern: '^[1-9][0-9]{0,14}$' }) });
 export const PartQuery = Type.Object({
-    take: Type.Integer({ minimum: 1 }),
-    part: Type.Integer({ minimum: 1, maximum: 10000 }),
+    take: Type.String({ pattern: '^[1-9][0-9]{0,14}$' }),
+    part: Type.String({ pattern: '^[1-9][0-9]{0,4}$', description: '1 to 10000' }),
 });
 
 export const UploadPart = Type.Object({ partNumber: Type.Integer(), size: Type.Integer() });
@@ -173,4 +176,6 @@ export const NoteEvent = Type.Object({
     at: Type.Integer(),
 });
 export type NoteEvent = Static<typeof NoteEvent>;
-export const EventsQuery = Type.Object({ after: Type.Optional(Type.Integer({ minimum: 0 })) });
+export const EventsQuery = Type.Object({
+    after: Type.Optional(Type.String({ pattern: '^[0-9]{1,15}$', description: 'A sequence number' })),
+});
