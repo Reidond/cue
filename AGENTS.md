@@ -78,7 +78,7 @@ A person's projects (name, occasion, language, names and terms) and their materi
   `OfficeXML`); everything else Workers AI `toMarkdown` (`markdown.ts`). `cf dev` can't run Workers AI without a token, so the `AI` binding is left out unless
   `AI_BINDING=1` and `MARKDOWN_URL` points at a stand-in speaking `toMarkdown`'s shape: `harness/fake-providers.ts` serves it (`/markdown`, noted as
   `markdown-request`, reading Word and PDF files built by `harness/documents.ts`). A real `toMarkdown` run is not covered by any case. Each file it reads is a `usage` row
-  (`material_text`, provider `cloudflare`, unit `files`, priced by `TOMARKDOWN_MICROS_PER_FILE` in `src/usage.ts`, now 0: documents are free).
+  (`material_text`, provider `cloudflare`, unit `files`, priced by `PRICING.toMarkdown` in `src/pricing.ts`, now 0: documents are free).
 - **Prepared answers** are found when asked for (`src/materials/prepared.ts`, the port of `Materials.extractQA`), in the project's language (`lexicon.ts` holds the question and
   answer labels; English ones always count), so changing the language changes them.
 - **The Mac app**: `ProjectStore` is the account's projects plus a folder each in the library, for the notes until PR 6. `Project.id` stays the folder name (notes and calendar
@@ -90,6 +90,35 @@ A person's projects (name, occasion, language, names and terms) and their materi
 - **In a case**: `backend.call(method, path, token, { body | file })`, `backend.accountOf(email)` (`Account`: `projects()`, `materials()`, `text()`, `answers()`) and
   `backend.rows(sql)` and `backend.objects()` (R2 keys) check the account from outside the app; `makeDocx`/`makePdf`/`makePptx`/`writeFile` build the files.
 
+## Limits and usage (`apps/api/src/{pricing,limits,usage}.ts`)
+
+What a person may spend, and what stops them. `docs/backend.md` › Limits has the design; the shapes are `Me` in `packages/contract/src/index.ts`.
+
+- **One price table**: `PRICING` in `src/pricing.ts` (per model input / output / cache write / cache read tokens per million, Deepgram live and recorded per minute,
+  `toMarkdown` per file; millionths of a dollar, list prices to check before the first deploy). Every `usage` row is built by `tokenUsage`, `speechUsage` or
+  `markdownUsage` there: a new thing that costs money is a line in the table and one of those, nowhere else.
+- **A month's allowance**: `limitState(db, userId)` (`src/usage.ts`): the UTC month's `usage` against `user_limit`, else the admin's default. Over it (spend >= limit; a
+  limit of 0 stops everything) is `limit_reached` (402, not retryable) with a sentence the app shows as it is ("You've used $20.00 of your $20.00 Cue plan for this month. It
+  starts over on November 1 (UTC).").
+- **Where it is checked** (`src/limits.ts`): `mayStartCostlyWork(userId)` (the stricter rate, then the allowance) opens `POST /v1/calls` and `POST /v1/calls/:id/questions`; a material upload asks `mustBeWithinLimit` only (the first sign-in uploads a whole library at once). Not checked: a call with `notesOnly` (the Mac's call just for a recording's notes: a row that starts ended, no Durable Object, free), the notes `POST`, uploads of
+  recordings, everything that costs nothing.
+- **In a call** (`call.ts` `#withinLimit`): before each answer the call writes its usage and looks at the allowance. Over it: no answer is started (an answer under way is
+  finished), a question the person asked gets the sentence as its `answer.done` `error`, one Cue noticed is not listed (the judge is not asked), and one `error` event
+  `{code: 'limit_reached', fatal: false}` tells the client (a client that connects later gets it too). Transcription goes on. It is looked at again on every alarm tick and
+  every 30 s by the judge, and for each answer, so a raised limit lets answers flow again at once.
+- **In the notes Workflow**: before a step that spends money (the second pass, a speakers pass that must read the call side again, names, summary) a `… limit` step asks
+  `limitState`; over it the step is `failed` with the reason `Cue plan limit reached` and the session-log line `⚠︎ Cue plan limit reached: the summary wasn't written — the transcript
+  is kept` (the others: see `LIMITED` in `workflow.ts`). The note is ready with the live transcript.
+- **Rate limits**: Cloudflare Rate Limiting bindings, per user id: `RATE_LIMIT` (600 a minute, every authenticated `/v1` request, in the `authed` plugin and the socket) and
+  `RATE_LIMIT_COSTLY` (30 a minute, what `mayStartCostlyWork` guards: calls and questions). Over: `rate_limited` (429, retryable). A case lowers them with `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_PERIOD`
+  (10 or 60) and `RATE_LIMIT_COSTLY_REQUESTS` in `cue.backend({ env })`; the limiter is eventually consistent per location in production.
+- **`/v1/me`** reports `limits.monthlyUsd`, and `usage`: `usd`, `audioSeconds`, `limitReached`, `byFeature` (dearest first), `periodStart`, `periodEnd`.
+- **The Mac**: `CueMe` decodes them; Settings › Account has the usage bar (`UsageBar`), the limit, when it starts over and where the money went. `AppState.planLimit` is set by
+  a `limit_reached` from `POST /v1/calls`, by the socket's `error` event, or by `/v1/me` (`CUE_ME_TICK`) saying `limitReached`: an alert once (`⚠︎ Cue plan limit reached: SENTENCE`), the
+  overlay's status line says "Cue plan limit reached", and `🔓 Cue plan has room again` when it clears (a raised limit, a new month, an answer arriving).
+- **In a case** (`9d-…`, all but `9d-limit-app` and `9d-limit-overlay` run with `--no-app`): `backend.setLimit(owner, email, usd | null)` (the admin API; the backend needs
+  `adminEmails`) and `backend.seedUsage` put a person over or under; `cue.backend({ env: { RATE_LIMIT_REQUESTS: '6', RATE_LIMIT_PERIOD: '10', … } })` makes `rate_limited` easy to see.
+
 ## The admin (`apps/api` `/admin/v1`, `apps/admin`)
 
 The owner's admin: usage and money, never content (no transcripts, no notes). `docs/backend.md` › Admin API says what it covers.
@@ -99,7 +128,7 @@ The owner's admin: usage and money, never content (no transcripts, no notes). `d
   must carry this origin's `Origin` header. Schemas are in `packages/contract/src/admin.ts`; money is dollars in the contract and millionths of a
   dollar in the `usage` table; times are milliseconds. Settings (default monthly limit, audio retention, pausing the plan) are rows of `setting`;
   `src/routes/v1.ts` is the `/v1` group (the plan gate, then each feature's plugin: `me`, PR 4's projects, …), and a paused plan makes every route in
-  it answer `plan_paused` (503). `/v1/me` reads the limit (`user_limit`, else the default) and the month's usage from `usage`; PR 7 writes that table.
+  it answer `plan_paused` (503). `/v1/me` reads the limit (`user_limit`, else the default) and the month's usage from `usage` (see Limits and usage).
 - **One code path for who may use Cue**: `src/accounts.ts` holds the SQL of invite, enable, disable and revoke (plain TypeScript, no
   `cloudflare:workers`); the admin API runs it through `env.DB.batch`, the owner's script (`scripts/invite.ts`) through `cf d1 raw`. Disabling also
   puts the user on the KV denylist (`denylistKey`).
@@ -136,8 +165,8 @@ what its events say. `docs/backend.md` has the design; the shapes are `packages/
   client with the retries), `lexicon.ts` (language names, stop words, openers). Echo lines (the microphone hearing the call) are dropped before anyone sees them.
 - **Alarms** (`CACHE_TICK_SECONDS` 300): each tick warms a session quiet for `CACHE_REFRESH_SECONDS` (2700), records usage and ends an abandoned call.
 - **Usage** (`usage` table, flushed each tick and at the end): `answer` and `question_judge` rows per model for input / output / cache write / cache read tokens,
-  `live_transcript` audio seconds per stream (both channels are billed), `notes_summary` tokens (the notes Workflow also writes `note_transcript` audio seconds per side and `note_names` tokens). Prices are the table in `src/call/models.ts` (list prices, not checked
-  against an invoice; `SPEECH_MICROS_PER_SECOND`). Nothing enforces the limit yet (PR 7).
+  `live_transcript` audio seconds per stream (both channels are billed), `notes_summary` tokens (the notes Workflow also writes `note_transcript` audio seconds per side and `note_names` tokens). Prices are the one table in `src/pricing.ts` (list prices, not checked
+  against an invoice); the limit is enforced (see Limits and usage).
 - **Secrets**: `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, endpoints `ANTHROPIC_URL`, `DEEPGRAM_URL` (cases point them at `fake-providers.ts`). The user's token goes to neither.
 - **The Mac** (`LiveCall.swift`, `AppState`): `createCall` / `endCall` when capture starts / stops, the socket with reconnects (backoff, `after=`) and `AudioSink`
   (frames; silence is filled by the host clock so the server's clock keeps up), events drive the same `Exchange` / `Answer` state as before.
@@ -283,7 +312,7 @@ local D1 and KV, started by the case.
   `backend.refresh(token)`, `backend.revoke(token)`, `backend.get(path, accessToken)`, `backend.invite(email)` and
   `backend.disable(email)` (the owner's script), the stand-in `backend.idp` and `backend.log` (the Worker's output). The admin's:
   `backend.adminAs(email)` (an `AdminClient` with the session cookie a browser would get: `get`, `call(method, path, body, origin)`),
-  `backend.seedUsage(email, rows)` (rows of the `usage` table, as PR 7 will write them) and `AdminPage.signIn(backend, email, { scheme, viewport,
+  `backend.seedUsage(email, rows)` (rows of the `usage` table, as the backend writes them) and `AdminPage.signIn(backend, email, { scheme, viewport,
   shots })` (`harness/browser.ts`: the SPA in a browser, signed in through the stand-in provider; `.page` is Playwright's, `.shot(name)` writes a
   screenshot into the case's sandbox, `.assertClean()` fails on console errors, exceptions and 5xx, `.navigate('Users')` follows the navigation).
 - **Recordings and notes without the app** (`9c-…`): `harness/recordings.ts`. `recordCall(cue, backend, email, …)` makes a call (optionally live, so the Call DO holds lines) and the two
@@ -329,7 +358,7 @@ windows stay behind all others, where snapshots still capture them.
 Each case is a TypeScript file, `tests/e2e/cases/NN-name.test.ts`, numbered
 by feature area (`0x` CLI and launch, `1x` prompter and recording, `2x`
 projects and dashboard, `3x` call audio, `4x` the notes' second pass (upload, steps, retries), `5x`
-speakers, `6x` calendar, `7x` the backend's Anthropic calls, `8x` Deepgram through the backend, `9x` signing in, the backend and the admin: the admin's are `9a-…`, the live calls' `9b-…`, the notes' `9c-…`). It declares one test, whose title says the
+speakers, `6x` calendar, `7x` the backend's Anthropic calls, `8x` Deepgram through the backend, `9x` signing in, the backend and the admin: the admin's are `9a-…`, the live calls' `9b-…`, the notes' `9c-…`, the limits, usage and rate limits' `9d-…`). It declares one test, whose title says the
 behaviour it checks:
 
 ```ts

@@ -123,11 +123,21 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
   parts, so each lands in `upload_part` (D1), which is the resume state. A call can hold several recordings, told apart by `take` (the start).
 - **Retention**: a Durable Object (`Janitor`, one instance, an alarm) deletes the audio of notes `audioRetentionDays` (admin › Settings) after they
   were ready, aborts uploads nobody finished, and sleeps when no audio is in storage; a note becoming ready wakes it. Notes stay until deleted.
-- The server picks models. Usage (tokens per model, audio seconds) is priced by a table in config,
-  recorded in D1; each user has a monthly dollar limit (402 over it) and a Rate Limiting binding.
+- The server picks models. Usage (tokens per model, audio seconds, files) is priced by one table (`apps/api/src/pricing.ts`: per model input / output /
+  cache write / cache read per million tokens, Deepgram live and recorded per minute, `toMarkdown` per file), recorded in D1 (`usage`); see Limits below.
 - Never: the keys to a client, Deepgram's `callback` parameter, logged bodies or transcripts.
 - Contract: TypeBox schemas in `packages/contract` (including the WebSocket events); Elysia serves the
   OpenAPI document; the Swift `Codable` types follow it (and the Windows client will too).
+
+### Limits
+
+Each person has a monthly dollar limit (`user_limit`, else the admin's default, 20 USD) against the UTC month's `usage`. `/v1/me` reports the spend, the limit, the spend by
+feature and the period (`periodStart`, `periodEnd`). Work that costs money does not start over the limit: `POST /v1/calls`, a question and a material answer `402 limit_reached`
+with a sentence the app shows as it is. A call under way finishes the answer it is writing, then stops answering and says why over the socket (an `error` event
+`limit_reached`, not fatal; transcription goes on, and answers flow again once the limit is raised or the month turns). The notes Workflow still stores the live transcript: the steps
+that would spend money are marked failed with the limit as the reason, and the note says so (`⚠︎ Cue plan limit reached: the summary wasn't written …`). A call made only to hang a recording's
+notes on (`notesOnly`) starts over already and is never stopped. Every authenticated request is also counted per user by a Rate Limiting binding (600 a minute; 30 a minute for what starts
+a call or a question): over it `429 rate_limited`. The Mac shows the usage in Settings › Account, alerts once when the limit is reached, and says so in the overlay.
 
 ### Materials
 
