@@ -9,7 +9,8 @@ e2eCase(
         await cue.defaults('autoAnswer', false);
         // The participant's first utterance loses its connection as it starts.
         const call = await dialogue(fixture('dialogues', 'sync.txt'), cue.path('call'));
-        await cue.launch({ CUE_REHEARSE_PARTICIPANT: call.wav('call'), FAKE_DEEPGRAM_DROP: '1' });
+        // A call is made for a project.
+        await cue.launch({ CUE_PROJECT: 'Bees', CUE_REHEARSE_PARTICIPANT: call.wav('call'), FAKE_DEEPGRAM_DROP: '1' });
         await cue.waitLog(/⚠︎ Speech recognition unavailable: Speech recognition stopped answering/, 60);
         await cue.waitLog(/🗣 Speech recognition ready again: Cue plan/, 30);
         // The utterance goes on over the new stream, and is still transcribed (the stand-in numbers the utterances it hears).

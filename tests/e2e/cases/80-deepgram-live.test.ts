@@ -47,11 +47,10 @@ e2eCase(
         assertEq(mic.seconds, 0, 'nothing was said into it, and nothing was sent');
         assertEq(mic.keepAlives >= 1, true, 'so it was kept open with KeepAlive');
         const spoken = (await audioLength(question)) ?? fail("can't measure the question");
-        // Everything of the call side goes up, as it is captured, from the first sound: about as long as the rehearsal, not more.
-        if (call.seconds < spoken * 0.8 || call.seconds > spoken + 4) {
-            fail(
-                `about the ${spoken} s spoken should be sent (and no more than a moment of silence after it), not ${call.seconds.toFixed(1)} s`,
-            );
+        // Everything of the call side goes up as it is captured, the quiet after it too (the server's clock is the samples it gets): at least
+        // what was said, and no more than the call has lasted.
+        if (call.seconds < spoken * 0.8 || call.seconds > spoken + 60) {
+            fail(`at least the ${spoken} s spoken should be sent, and not more than the call lasted, not ${call.seconds.toFixed(1)} s`);
         }
         assertEq(call.messages > call.seconds, true, 'in small pieces, many a second');
     },

@@ -6,7 +6,7 @@ e2eCase(
     async (cue) => {
         // A rehearsal shows the overlay at launch; recorded, a silent one ends in "Nothing was recorded".
         const call = await silence(cue.path('silence.wav'), 3);
-        await cue.launch({ CUE_SHOW_SETTINGS: '1', CUE_REHEARSE_RECORD: '1', CUE_REHEARSE_PARTICIPANT: call });
+        await cue.launch({ CUE_PROJECT: 'Bees', CUE_SHOW_SETTINGS: '1', CUE_REHEARSE_RECORD: '1', CUE_REHEARSE_PARTICIPANT: call });
         const seen: AppWindows[] = [];
         const look = async (): Promise<void> => {
             seen.push(await appWindows(cue.pid));
