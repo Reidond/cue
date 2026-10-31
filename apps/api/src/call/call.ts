@@ -254,7 +254,8 @@ export class Call extends DurableObject<Env> {
 
     #emit(draft: Draft): CallEvent {
         const event = { ...draft, seq: ++this.#seq } as CallEvent;
-        this.#log.push(event);
+        // A partial is replaced by the next one (and by the final): a client that was away has no use for the old ones.
+        if (event.type !== 'transcript.partial') this.#log.push(event);
         if (this.#log.length > EVENT_LOG) this.#log.splice(0, this.#log.length - EVENT_LOG);
         if (event.type === 'status') this.#statuses.set(event.part, event);
         const text = JSON.stringify(event);
@@ -329,7 +330,7 @@ export class Call extends DurableObject<Env> {
                 mode: 'stream',
                 maxTokens: 4096,
                 onState: (state, detail) => this.#status('claude', state, detail),
-                onTokens: (model, _kind, tokens) => this.#count('live_answer', model, tokens),
+                onTokens: (model, _kind, tokens) => this.#count('answer', model, tokens),
             },
             history,
         );

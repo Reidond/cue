@@ -30,6 +30,7 @@ e2eCase(
             CUE_WHISPER_CLI: missing,
             CUE_SNAPSHOT: cue.path('cue.png'),
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+            FAKE_DEEPGRAM_LIVE: call.live(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 180);

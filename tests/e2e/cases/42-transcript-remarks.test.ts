@@ -3,14 +3,12 @@ import {
     assertContains,
     assertEq,
     assertNotContains,
-    CLAUDE,
     countLines,
     dialogue,
     e2eCase,
     fail,
     fixture,
     needWhisper,
-    skip,
     summaryOf,
 } from '../harness/index.ts';
 
@@ -19,7 +17,6 @@ e2eCase(
         'away are in the lexicons); the rest of it, other parentheses included, stays as written.',
     async (cue) => {
         needWhisper();
-        if (CLAUDE !== 'fake') skip("needs the fake claude's summary");
 
         await cue.defaults('speakerName', 'Андрій Тест');
         await cue.defaults('autoAnswer', false);
@@ -30,6 +27,7 @@ e2eCase(
             CUE_REHEARSE_RECORD: '1',
             FAKE_CLAUDE_SUMMARY: fixture('summaries', 'transcript-remarks.md'),
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+            FAKE_DEEPGRAM_LIVE: call.live(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 180);

@@ -2,7 +2,6 @@ import {
     assertContains,
     assertEq,
     assertNotContains,
-    CLAUDE,
     countLines,
     dialogue,
     e2eCase,
@@ -10,7 +9,6 @@ import {
     labelsOf,
     lines,
     needWhisper,
-    skip,
     summaryOf,
     turnSpeakers,
 } from '../harness/index.ts';
@@ -21,7 +19,6 @@ e2eCase(
         "throughout the note. Suggestions for labels that aren't the call's are ignored.",
     async (cue) => {
         needWhisper();
-        if (CLAUDE !== 'fake') skip("needs the fake claude's summary");
 
         await cue.defaults('speakerName', 'Andrii Test');
         await cue.defaults('autoAnswer', false);
@@ -33,6 +30,7 @@ e2eCase(
             FAKE_CLAUDE_SUMMARY: fixture('summaries', 'speaker-names.md'),
             CUE_SNAPSHOT: cue.path('cue.png'),
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+            FAKE_DEEPGRAM_LIVE: call.live(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 300);

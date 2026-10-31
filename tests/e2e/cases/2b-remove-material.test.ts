@@ -1,6 +1,6 @@
 import { assertContains, assertDeepEq, assertNotContains, e2eCase, fixture, makeDocx } from '../harness/index.ts';
 
-e2eCase("A material removed from a project leaves the account and Claude's prompt.", async (cue) => {
+e2eCase("A material removed from a project leaves the account, and the next call's prompt.", async (cue) => {
     const word = makeDocx(cue.path('files', 'prepared.docx'), ['Q: Which mites did you count?', 'A: Varroa mites, once a month.']);
     await cue.launch();
     cue.control('new Bee talk');
@@ -27,6 +27,9 @@ e2eCase("A material removed from a project leaves the account and Claude's promp
     );
 
     await cue.waitLog(/Materials for Bee talk .*prepared\.docx(?!.*talk\.md)/, 30);
+    // A call keeps the prompt it started with; listening again starts a call that reads the account anew.
+    cue.control('stop');
+    cue.control('start Bee talk');
     await cue.waitFor(
         'the prompt without the removed file',
         20,
@@ -35,3 +38,4 @@ e2eCase("A material removed from a project leaves the account and Claude's promp
     assertNotContains(cue.save('system.txt', latestSystem()), /48 hives/);
     assertContains(cue.path('system.txt'), /Varroa mites, once a month/);
 });
+

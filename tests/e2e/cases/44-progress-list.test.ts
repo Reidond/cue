@@ -20,6 +20,7 @@ e2eCase(
             FAKE_CLAUDE_SUMMARY_DELAY: '20',
             CUE_SNAPSHOT: cue.path('cue.png'),
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+            FAKE_DEEPGRAM_LIVE: call.live(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         const page = cue.page;

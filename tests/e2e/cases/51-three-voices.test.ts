@@ -3,7 +3,6 @@ import {
     assertEq,
     assertFile,
     assertNotContains,
-    CLAUDE,
     countLines,
     dialogue,
     e2eCase,
@@ -30,6 +29,7 @@ e2eCase(
             CUE_PROJECT: 'Library',
             CUE_REHEARSE_RECORD: '1',
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+            FAKE_DEEPGRAM_LIVE: call.live(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 300);
@@ -63,16 +63,14 @@ e2eCase(
         assertEq(countLines(notes, /^\*\*[0-9]{2}:[0-9]{2}:[0-9]{2} · /), 11, 'each line of the call is its own turn');
 
         // The summary is written from the labelled transcript, and asked for names where the call makes them clear.
-        if (CLAUDE === 'fake') {
-            const input = cue.save('summary-input.txt', cue.claudeRequests('summary-input').join(''));
-            assertContains(input, /\[Participant 2\] .*visitor survey/);
-            assertContains(input, /\[Participant 3\] .*budget/);
-            const system = cue.save('summary-system.txt', cue.claudeRequests('summary-system').join(''));
-            assertContains(
-                system,
-                /\[Andrii Test\] is the person who recorded the call; \[Participant 1\], \[Participant 2\] and \[Participant 3\] are the other people on the call, told apart by their voices/,
-            );
-            assertContains(system, /<!-- speaker: Participant 1 = Olena Mulesa -->/);
-        }
+        const input = cue.save('summary-input.txt', cue.claudeRequests('summary-input').join(''));
+        assertContains(input, /\[Participant 2\] .*visitor survey/);
+        assertContains(input, /\[Participant 3\] .*budget/);
+        const system = cue.save('summary-system.txt', cue.claudeRequests('summary-system').join(''));
+        assertContains(
+            system,
+            /\[Andrii Test\] is the person who recorded the call; \[Participant 1\], \[Participant 2\] and \[Participant 3\] are the other people on the call, told apart by their voices/,
+        );
+        assertContains(system, /<!-- speaker: Participant 1 = Olena Mulesa -->/);
     },
 );

@@ -18,7 +18,7 @@ e2eCase(
         assertEq(warmups('answer').length, 1, 'the answer prompt is written to the cache first');
         assertEq(warmups('judge').length, 1, "and the judge's");
         assertEq(JSON.stringify(warmups('answer')[0]?.systemCache), JSON.stringify({ type: 'ephemeral', ttl: '1h' }), 'for an hour');
-        assertEq(warmups('answer')[0]?.cache, undefined, 'the warm-up has no conversation to cache');
+        assertEq(JSON.stringify(warmups('answer')[0]?.cache), undefined, 'the warm-up has no conversation to cache');
         assertEq(early.filter((request) => request.maxTokens > 0).length, 0, 'no question had been asked yet');
 
         // Quiet: it is warmed again, and again (a request in each tick that finds it two seconds old).
@@ -49,9 +49,9 @@ e2eCase(
         const rows = await backend.rows('SELECT feature, provider, model, unit, units, cost_micros FROM usage ORDER BY feature, model, unit');
         const sum = (feature: string, unit: string) =>
             rows.filter((row) => row['feature'] === feature && row['unit'] === unit).reduce((total, row) => total + Number(row['units']), 0);
-        if (sum('live_answer', 'cache_write_tokens') <= 0) fail('the answer prompt written to the cache is recorded', JSON.stringify(rows));
-        if (sum('live_answer', 'cache_read_tokens') <= 0) fail('and what the warm-ups and the question read from it', JSON.stringify(rows));
-        if (sum('live_answer', 'output_tokens') <= 0) fail('and the answer’s own tokens', JSON.stringify(rows));
+        if (sum('answer', 'cache_write_tokens') <= 0) fail('the answer prompt written to the cache is recorded', JSON.stringify(rows));
+        if (sum('answer', 'cache_read_tokens') <= 0) fail('and what the warm-ups and the question read from it', JSON.stringify(rows));
+        if (sum('answer', 'output_tokens') <= 0) fail('and the answer’s own tokens', JSON.stringify(rows));
         if (sum('question_judge', 'input_tokens') <= 0) fail("the judge's tokens are recorded", JSON.stringify(rows));
         if (sum('live_transcript', 'audio_seconds') < 5) fail('audio seconds are recorded, both sides', JSON.stringify(rows));
         assertEq(

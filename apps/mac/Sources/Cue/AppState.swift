@@ -681,8 +681,8 @@ final class AppState: ObservableObject {
         let origin = liveCall?.startedAt ?? Date()
         let started = origin.addingTimeInterval(event.start ?? 0)
         let ended = origin.addingTimeInterval(event.end ?? event.start ?? 0)
-        var utterance = Utterance(channel: channel, text: text, started: started, time: max(started, ended))
-        utterance.speaker = event.speaker
+        // `event.speaker` (the live recognizer's guess at the voice) is not used: the notes tell the voices apart in the second pass.
+        let utterance = Utterance(channel: channel, text: text, started: started, time: max(started, ended))
         utterances.append(utterance)
         if utterances.count > 300 { utterances.removeFirst(utterances.count - 300) }
         recorder.add(utterance)

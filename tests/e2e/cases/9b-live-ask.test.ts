@@ -26,7 +26,7 @@ e2eCase('Questions asked in the Ask field are answered at once, over the socket 
         body: JSON.stringify({ text: 'What were the winter losses?' }),
     });
     assertEq(response.status, 200);
-    assertEq(response.headers.get('content-type'), 'text/event-stream');
+    assertEq(response.headers.get('content-type') ?? undefined, 'text/event-stream');
     const stream = await response.text();
     const kinds = [...stream.matchAll(/^event: (.+)$/gm)].map((match) => match[1]);
     assertEq(kinds[0], 'question');

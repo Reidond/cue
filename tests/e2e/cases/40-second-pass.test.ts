@@ -2,7 +2,6 @@ import {
     assertContains,
     assertEq,
     assertFile,
-    CLAUDE,
     countLines,
     dialogue,
     e2eCase,
@@ -35,6 +34,7 @@ e2eCase(
             CUE_REHEARSE_RECORD: '1',
             CUE_WHISPER_CLI: whisperCli,
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+            FAKE_DEEPGRAM_LIVE: call.live(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 180);
@@ -85,9 +85,7 @@ e2eCase(
         );
 
         // The summary is written from the improved transcript.
-        if (CLAUDE === 'fake') {
-            const input = cue.save('summary-input.txt', cue.claudeRequests('summary-input').join(''));
-            assertContains(input, /\[Андрій Тест\] .*до п['’ʼ]ятниці/);
-        }
+        const input = cue.save('summary-input.txt', cue.claudeRequests('summary-input').join(''));
+        assertContains(input, /\[Андрій Тест\] .*до п['’ʼ]ятниці/);
     },
 );

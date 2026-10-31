@@ -24,7 +24,7 @@ export const summaries = new Elysia({ name: 'summaries', prefix: '/summaries' })
                         (text) => event('delta', { text }),
                         request.signal,
                     );
-                    await recordUsage(env.DB, userId, tokenUsage('call_summary', ANSWER_MODEL, result.tokens));
+                    await recordUsage(env.DB, userId, tokenUsage('notes_summary', ANSWER_MODEL, result.tokens));
                     event('done', {});
                 } catch (error) {
                     event('error', { message: describe(error) });

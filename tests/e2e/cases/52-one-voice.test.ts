@@ -2,7 +2,6 @@ import {
     assertContains,
     assertEq,
     assertNotContains,
-    CLAUDE,
     countLines,
     dialogue,
     e2eCase,
@@ -27,6 +26,7 @@ e2eCase(
             CUE_PROJECT: 'Interviews',
             CUE_REHEARSE_RECORD: '1',
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+            FAKE_DEEPGRAM_LIVE: call.live(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 300);
@@ -43,9 +43,7 @@ e2eCase(
         assertEq(labelsOf(speakers, 'Daniel'), 'Participant');
 
         // The summary is told there is one other label, which may stand for several people.
-        if (CLAUDE === 'fake') {
-            const system = cue.save('summary-system.txt', cue.claudeRequests('summary-system').join(''));
-            assertContains(system, /\[Andrii Test\] is the person who recorded the call; the other label is everyone else/);
-        }
+        const system = cue.save('summary-system.txt', cue.claudeRequests('summary-system').join(''));
+        assertContains(system, /\[Andrii Test\] is the person who recorded the call; the other label is everyone else/);
     },
 );

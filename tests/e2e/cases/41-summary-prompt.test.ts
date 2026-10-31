@@ -1,11 +1,10 @@
-import { assertContains, assertFile, assertNotContains, CLAUDE, dialogue, e2eCase, fixture, needWhisper, skip } from '../harness/index.ts';
+import { assertContains, assertFile, assertNotContains, dialogue, e2eCase, fixture, needWhisper } from '../harness/index.ts';
 
 e2eCase(
     "The summary is asked for with the project's names and terms and occasion, and with an explicit rule, and a " +
         'counter-example, against notes about the transcript or speech recognition.',
     async (cue) => {
         needWhisper();
-        if (CLAUDE !== 'fake') skip('checks what Cue sends the fake claude');
 
         await cue.defaults('speakerName', 'Andrii Test');
         await cue.defaults('autoAnswer', false);
@@ -19,6 +18,7 @@ e2eCase(
             CUE_PROJECT: 'Beekeeping',
             CUE_REHEARSE_RECORD: '1',
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+            FAKE_DEEPGRAM_LIVE: call.live(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 180);
