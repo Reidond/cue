@@ -17,15 +17,58 @@ export function zip(entries: Record<string, string>): Buffer {
     for (const [name, text] of Object.entries(entries)) {
         const nameBytes = Buffer.from(name);
         const data = Buffer.from(text);
-        const header = Buffer.concat([u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0x21), u32(crc32(data)), u32(data.length), u32(data.length), u16(nameBytes.length), u16(0), nameBytes]);
+        const header = Buffer.concat([
+            u32(0x04034b50),
+            u16(20),
+            u16(0),
+            u16(0),
+            u16(0),
+            u16(0x21),
+            u32(crc32(data)),
+            u32(data.length),
+            u32(data.length),
+            u16(nameBytes.length),
+            u16(0),
+            nameBytes,
+        ]);
         directory.push(
-            Buffer.concat([u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0x21), u32(crc32(data)), u32(data.length), u32(data.length), u16(nameBytes.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), nameBytes]),
+            Buffer.concat([
+                u32(0x02014b50),
+                u16(20),
+                u16(20),
+                u16(0),
+                u16(0),
+                u16(0),
+                u16(0x21),
+                u32(crc32(data)),
+                u32(data.length),
+                u32(data.length),
+                u16(nameBytes.length),
+                u16(0),
+                u16(0),
+                u16(0),
+                u16(0),
+                u32(0),
+                u32(offset),
+                nameBytes,
+            ]),
         );
         parts.push(header, data);
         offset += header.length + data.length;
     }
     const central = Buffer.concat(directory);
-    return Buffer.concat([...parts, central, u32(0x06054b50), u16(0), u16(0), u16(directory.length), u16(directory.length), u32(central.length), u32(offset), u16(0)]);
+    return Buffer.concat([
+        ...parts,
+        central,
+        u32(0x06054b50),
+        u16(0),
+        u16(0),
+        u16(directory.length),
+        u16(directory.length),
+        u32(central.length),
+        u32(offset),
+        u16(0),
+    ]);
 }
 
 /** The entries of a zip file, as text (stored or deflated). */
@@ -64,8 +107,10 @@ export function makeDocx(path: string, paragraphs: string[]): string {
     writeFile(
         path,
         zip({
-            '[Content_Types].xml': '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
-            '_rels/.rels': '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+            '[Content_Types].xml':
+                '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+            '_rels/.rels':
+                '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
             'word/document.xml': `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`,
         }),
     );
@@ -97,7 +142,8 @@ export function makePdf(path: string, lines: string[]): string {
 
 /** A PowerPoint file: a title and body on each slide, and its speaker notes. */
 export function makePptx(path: string, slides: { title: string; body?: string; notes?: string[] }[]): string {
-    const ns = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+    const ns =
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
     const shape = (placeholder: string, paragraphs: string[]) =>
         `<p:sp><p:nvSpPr><p:cNvPr id="1" name="x"/><p:cNvSpPr/><p:nvPr><p:ph type="${placeholder}"/></p:nvPr></p:nvSpPr><p:txBody>${paragraphs.map((text) => `<a:p><a:r><a:t>${escapeXml(text)}</a:t></a:r></a:p>`).join('')}</p:txBody></p:sp>`;
     const entries: Record<string, string> = {

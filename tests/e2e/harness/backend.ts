@@ -113,7 +113,12 @@ export class Backend {
             const out = openSync(log, 'a');
             // Its own process group: `cf dev` leaves `cf-vite` and `workerd` behind when only it is killed.
             const child = preview
-                ? spawn(VP, ['preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { cwd: API, env, stdio: ['ignore', out, out], detached: true })
+                ? spawn(VP, ['preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
+                      cwd: API,
+                      env,
+                      stdio: ['ignore', out, out],
+                      detached: true,
+                  })
                 : spawn(CF, ['dev'], { cwd: API, env, stdio: ['ignore', out, out], detached: true });
             closeSync(out);
             backend = new Backend(url, idp, log, state, child);
@@ -262,7 +267,9 @@ export class Backend {
     /** The keys of the objects in the backend's R2 (local, a SQLite file under the case's folder): what was stored, which the API does not list. */
     objects(): string[] {
         const folder = join(this.state, 'v3', 'r2', 'miniflare-R2BucketObject');
-        const files = existsSync(folder) ? readdirSync(folder).filter((name) => name.endsWith('.sqlite') && name !== 'metadata.sqlite') : [];
+        const files = existsSync(folder)
+            ? readdirSync(folder).filter((name) => name.endsWith('.sqlite') && name !== 'metadata.sqlite')
+            : [];
         return files.flatMap((name) => {
             const database = new DatabaseSync(join(folder, name), { readOnly: true });
             try {

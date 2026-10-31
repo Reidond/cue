@@ -71,7 +71,9 @@ function markdownOf(name: string, file: Buffer): string | undefined {
                 .join('\n\n');
         }
         if (/\.pdf$/i.test(name)) {
-            return [...file.toString('latin1').matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)].map((shown) => shown[1]!.replace(/\\(.)/g, '$1')).join('\n\n');
+            return [...file.toString('latin1').matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)]
+                .map((shown) => shown[1]!.replace(/\\(.)/g, '$1'))
+                .join('\n\n');
         }
     } catch {
         /* not a file of that kind */
@@ -455,7 +457,15 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
     async function markdown(request: IncomingMessage, response: ServerResponse): Promise<void> {
         const file = await body(request);
         const name = decodeURIComponent(String(request.headers['x-file-name'] ?? 'file'));
-        record(log, 'markdown-request', JSON.stringify({ name, contentType: String(request.headers['content-type'] ?? ''), bytes: file.length } satisfies MarkdownRequest));
+        record(
+            log,
+            'markdown-request',
+            JSON.stringify({
+                name,
+                contentType: String(request.headers['content-type'] ?? ''),
+                bytes: file.length,
+            } satisfies MarkdownRequest),
+        );
         const data = markdownOf(name, file);
         json(
             response,
@@ -474,14 +484,14 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
                 : request.method === 'POST' && url.pathname === '/markdown'
                   ? markdown(request, response)
                   : request.method === 'POST' && url.pathname === '/v1/listen'
-                  ? deepgramFile(request, response, url)
-                  : request.method === 'GET' && url.pathname === '/v1/projects'
-                    ? Promise.resolve(
-                          deepgramKey(request) === FAKE_KEYS.deepgram
-                              ? json(response, 200, { projects: [] })
-                              : json(response, 401, { err_code: 'INVALID_AUTH', err_msg: 'Invalid credentials.' }),
-                      )
-                    : Promise.resolve(json(response, 404, { error: `no ${request.method} ${url.pathname} here` }));
+                    ? deepgramFile(request, response, url)
+                    : request.method === 'GET' && url.pathname === '/v1/projects'
+                      ? Promise.resolve(
+                            deepgramKey(request) === FAKE_KEYS.deepgram
+                                ? json(response, 200, { projects: [] })
+                                : json(response, 401, { err_code: 'INVALID_AUTH', err_msg: 'Invalid credentials.' }),
+                        )
+                      : Promise.resolve(json(response, 404, { error: `no ${request.method} ${url.pathname} here` }));
         handled.catch((error: unknown) => {
             if (!response.headersSent) json(response, 500, { type: 'error', error: { type: 'api_error', message: String(error) } });
             else response.end();

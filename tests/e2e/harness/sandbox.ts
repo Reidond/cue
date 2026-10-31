@@ -8,7 +8,14 @@ import { basename, dirname, join } from 'node:path';
 import { Backend, type BackendOptions } from './backend.ts';
 import { closeBrowser } from './browser.ts';
 import { ANTHROPIC, CLAUDE, CUE_BIN, DEEPGRAM, E2E_CACHE, E2E_WORK, FAKE_CLAUDE, KEEP, REAL_SUPPORT } from './config.ts';
-import { FAKE_KEYS, startFakeProviders, type AnthropicRequest, type DeepgramRequest, type FakeProviders, type MarkdownRequest } from './fake-providers.ts';
+import {
+    FAKE_KEYS,
+    startFakeProviders,
+    type AnthropicRequest,
+    type DeepgramRequest,
+    type FakeProviders,
+    type MarkdownRequest,
+} from './fake-providers.ts';
 import {
     countLines,
     exists,
@@ -260,7 +267,16 @@ export class Cue {
         this.#backend ??= Backend.start(this.dir, {
             ...options,
             // What the backend calls upstream is what this case's stand-ins answer.
-            env: { ...(this.#providers ? { ANTHROPIC_URL: this.#providers.url, DEEPGRAM_URL: this.#providers.url, MARKDOWN_URL: `${this.#providers.url}/markdown` } : {}), ...options.env },
+            env: {
+                ...(this.#providers
+                    ? {
+                          ANTHROPIC_URL: this.#providers.url,
+                          DEEPGRAM_URL: this.#providers.url,
+                          MARKDOWN_URL: `${this.#providers.url}/markdown`,
+                      }
+                    : {}),
+                ...options.env,
+            },
         });
         return this.#backend;
     }
@@ -491,7 +507,8 @@ export class Cue {
 
     /** What the cloud services' stand-ins noted about Cue's requests of that kind, oldest first. */
     serviceRequests<Kind extends keyof ServiceRequests>(kind: Kind): ServiceRequests[Kind][] {
-        if ((kind === 'anthropic-request' ? ANTHROPIC : kind === 'markdown-request' ? 'fake' : DEEPGRAM) !== 'fake') fail(`serviceRequests('${kind}') needs the stand-in`);
+        if ((kind === 'anthropic-request' ? ANTHROPIC : kind === 'markdown-request' ? 'fake' : DEEPGRAM) !== 'fake')
+            fail(`serviceRequests('${kind}') needs the stand-in`);
         return this.#noted(kind).map((text) => JSON.parse(text) as ServiceRequests[Kind]);
     }
 
