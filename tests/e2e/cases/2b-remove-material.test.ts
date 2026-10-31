@@ -38,4 +38,3 @@ e2eCase("A material removed from a project leaves the account, and the next call
     assertNotContains(cue.save('system.txt', latestSystem()), /48 hives/);
     assertContains(cue.path('system.txt'), /Varroa mites, once a month/);
 });
-

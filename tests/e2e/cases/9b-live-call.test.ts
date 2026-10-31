@@ -13,8 +13,18 @@ e2eCase(
             FAKE_CLAUDE_ANSWER: 'We studied 48 hives on 6 rooftops.\n• Six rooftops across Kyiv\nSource: talk.md',
         });
         const backend = await cue.backend();
-        const call = await startCall(backend, 'ann@cue.test', { materials: [fixture('materials', 'talk.md')], namesAndTerms: 'varroa mite, Kyiv' });
-        const others = pcmOf(readFileSync(await bursts(cue.path('others.wav'), 12, [[1, 3.5], [8, 10]])));
+        const call = await startCall(backend, 'ann@cue.test', {
+            materials: [fixture('materials', 'talk.md')],
+            namesAndTerms: 'varroa mite, Kyiv',
+        });
+        const others = pcmOf(
+            readFileSync(
+                await bursts(cue.path('others.wav'), 12, [
+                    [1, 3.5],
+                    [8, 10],
+                ]),
+            ),
+        );
         const me = pcmOf(readFileSync(await bursts(cue.path('me.wav'), 12, [[5, 6.5]])));
 
         const live = await LiveClient.connect(backend, call.token, call.callId);
@@ -28,7 +38,11 @@ e2eCase(
         assertEq(asked.text, 'How many hives did you study?', 'the judge found the question in the first line');
         assertEq(asked.requested, true, 'Auto is on: it is being answered');
         assertEq(asked.forced, false, 'noticed by Cue, not asked for');
-        assertEq(asked.opener ?? undefined, 'We studied 48 hives on 6 rooftops in Kyiv over two seasons.', 'the prepared answer’s first sentence, until the answer comes');
+        assertEq(
+            asked.opener ?? undefined,
+            'We studied 48 hives on 6 rooftops in Kyiv over two seasons.',
+            'the prepared answer’s first sentence, until the answer comes',
+        );
         const prepared = await live.next('prepared', (event) => event.questionId === asked.id, 10);
         assertEq(prepared.source, 'talk.md');
         assertEq(prepared.answer, 'We studied 48 hives on 6 rooftops in Kyiv over two seasons.');
@@ -48,9 +62,17 @@ e2eCase(
             'each side, in order, with the voices told apart on the call side',
         );
         if (!lines.every((line) => line.start >= 0 && line.end > line.start)) fail('every line has its times', JSON.stringify(lines));
-        assertEq(lines[0]!.start > 0.5 && lines[0]!.start < 2.5, true, `the first line starts about a second in (it says ${lines[0]!.start})`);
+        assertEq(
+            lines[0]!.start > 0.5 && lines[0]!.start < 2.5,
+            true,
+            `the first line starts about a second in (it says ${lines[0]!.start})`,
+        );
         if (live.of('transcript.partial').length === 0) fail('partials come before the finals');
-        assertEq(live.of('speaking').filter((event) => event.channel === 'others' && event.active).length, 2, 'they were told when the call side started talking');
+        assertEq(
+            live.of('speaking').filter((event) => event.channel === 'others' && event.active).length,
+            2,
+            'they were told when the call side started talking',
+        );
 
         // What reached Claude: the question with the prompt from the project's materials; the second line (a statement of the speaker's) is not asked.
         const asks = cue.claudeRequests('ask');

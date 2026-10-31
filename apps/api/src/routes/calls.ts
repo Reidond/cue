@@ -27,7 +27,8 @@ async function mustFind(userId: string, id: string): Promise<{ project_id: strin
  * answers untouched. A mounted handler runs before Elysia's hooks in that mode, so it asks for the bearer token and the plan itself.
  */
 async function live(request: Request): Promise<Response> {
-    if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') throw new ApiError('bad_request', 'This is a WebSocket: connect with an upgrade.');
+    if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket')
+        throw new ApiError('bad_request', 'This is a WebSocket: connect with an upgrade.');
     const { userId } = await authenticate(request, authFor, env.PUBLIC_URL, env.DENYLIST);
     if (await planPaused(env.DB)) throw new ApiError('plan_paused', 'Cue is paused for now. Try again later.', true);
     const params = new URL(request.url).searchParams;
@@ -62,7 +63,11 @@ export const calls = new Elysia({ name: 'calls', prefix: '/calls' })
             });
             return status(201, { callId, projectId: project.id, startedAt });
         },
-        { body: NewCall, response: { 201: Call, 400: ApiErrorBody, 401: ApiErrorBody, 404: ApiErrorBody }, detail: { summary: 'Starts a live call for a project' } },
+        {
+            body: NewCall,
+            response: { 201: Call, 400: ApiErrorBody, 401: ApiErrorBody, 404: ApiErrorBody },
+            detail: { summary: 'Starts a live call for a project' },
+        },
     )
     .post(
         '/:id/questions',
@@ -71,7 +76,14 @@ export const calls = new Elysia({ name: 'calls', prefix: '/calls' })
             const events = await callOf(params.id).ask(body.text);
             return new Response(events, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' } });
         },
-        { params: CallId, body: AskBody, response: { 401: ApiErrorBody, 404: ApiErrorBody }, detail: { summary: 'The Ask field: answers a question now (server-sent events: question, prepared, answer.delta, answer.done)' } },
+        {
+            params: CallId,
+            body: AskBody,
+            response: { 401: ApiErrorBody, 404: ApiErrorBody },
+            detail: {
+                summary: 'The Ask field: answers a question now (server-sent events: question, prepared, answer.delta, answer.done)',
+            },
+        },
     )
     .post(
         '/:id/end',
@@ -80,7 +92,11 @@ export const calls = new Elysia({ name: 'calls', prefix: '/calls' })
             const { lines } = await callOf(params.id).end();
             return { callId: params.id, lines };
         },
-        { params: CallId, response: { 200: CallEnded, ...errors }, detail: { summary: 'Ends a call: the speech streams finish, usage is recorded, the transcript is kept' } },
+        {
+            params: CallId,
+            response: { 200: CallEnded, ...errors },
+            detail: { summary: 'Ends a call: the speech streams finish, usage is recorded, the transcript is kept' },
+        },
     );
 
 /** `GET /v1/live?call=ID[&after=SEQ]`: the call's WebSocket (see `live`). */

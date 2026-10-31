@@ -20,13 +20,21 @@ export const AUDIO = { sampleRate: 16000, channelByte: { me: 0, others: 1 } } as
 /** `POST /v1/calls`: starts a call for a project. The settings can be changed later with the socket's `config` command. */
 export const NewCall = Type.Object({
     projectId: Type.String(),
-    eventId: Type.Optional(Type.String({ description: "The calendar event the call is for, if any (kept with the call; PR 6's notes use it)" })),
+    eventId: Type.Optional(
+        Type.String({ description: "The calendar event the call is for, if any (kept with the call; PR 6's notes use it)" }),
+    ),
     eventTitle: Type.Optional(Type.String()),
     ...{
         speaker: Type.Optional(Type.String({ description: 'The name the speaker goes by (empty: "the speaker")' })),
-        auto: Type.Optional(Type.Boolean({ description: 'Answer the questions Cue notices by itself (default true); off: they wait for `prepare`' })),
-        micQuestions: Type.Optional(Type.Boolean({ description: 'The microphone also hears the room: its lines can hold questions (default false)' })),
-        questions: Type.Optional(Type.Boolean({ description: 'Look for questions at all (default true); off while a call is only being recorded' })),
+        auto: Type.Optional(
+            Type.Boolean({ description: 'Answer the questions Cue notices by itself (default true); off: they wait for `prepare`' }),
+        ),
+        micQuestions: Type.Optional(
+            Type.Boolean({ description: 'The microphone also hears the room: its lines can hold questions (default false)' }),
+        ),
+        questions: Type.Optional(
+            Type.Boolean({ description: 'Look for questions at all (default true); off while a call is only being recorded' }),
+        ),
     },
 });
 export type NewCall = Static<typeof NewCall>;
@@ -45,7 +53,10 @@ export const AskBody = Type.Object({ text: Type.String({ minLength: 1, maxLength
 export type AskBody = Static<typeof AskBody>;
 
 /** `POST /v1/calls/:id/end`. */
-export const CallEnded = Type.Object({ callId: Type.String(), lines: Type.Integer({ description: 'Final transcript lines kept with the call' }) });
+export const CallEnded = Type.Object({
+    callId: Type.String(),
+    lines: Type.Integer({ description: 'Final transcript lines kept with the call' }),
+});
 export type CallEnded = Static<typeof CallEnded>;
 
 /** `GET /v1/live?call=ID[&after=SEQ]`: the socket. Events after `after` that the server still has are sent again first. */
@@ -53,10 +64,18 @@ export const LiveQuery = Type.Object({ call: Type.String(), after: Type.Optional
 
 // MARK: Events, server to client (JSON text frames)
 
-const Seq = Type.Integer({ description: 'Counts the call\'s events, 1, 2, …; a client that reconnects asks for what came after the last it saw' });
+const Seq = Type.Integer({
+    description: "Counts the call's events, 1, 2, …; a client that reconnects asks for what came after the last it saw",
+});
 
 /** The first event of every connection. `resumed` when the client had been connected to this call before. */
-export const ReadyEvent = Type.Object({ type: Type.Literal('ready'), seq: Seq, callId: Type.String(), resumed: Type.Boolean(), startedAt: Type.Number() });
+export const ReadyEvent = Type.Object({
+    type: Type.Literal('ready'),
+    seq: Seq,
+    callId: Type.String(),
+    resumed: Type.Boolean(),
+    startedAt: Type.Number(),
+});
 
 /** What a part of the live path is doing; the client words its session log and status line from it. */
 export const StatusEvent = Type.Object({
@@ -72,7 +91,9 @@ export const SpeakingEvent = Type.Object({ type: Type.Literal('speaking'), seq: 
 
 const Line = {
     channel: Channel,
-    speaker: Type.Union([Type.Integer(), Type.Null()], { description: 'Which voice on the call side (1, 2, …) when the recognizer told them apart; null otherwise' }),
+    speaker: Type.Union([Type.Integer(), Type.Null()], {
+        description: 'Which voice on the call side (1, 2, …) when the recognizer told them apart; null otherwise',
+    }),
     text: Type.String(),
     start: Type.Number(),
     end: Type.Number(),
@@ -88,10 +109,10 @@ export const QuestionEvent = Type.Object({
     seq: Seq,
     id: Type.String(),
     exchange: Type.String(),
-    index: Type.Integer({ description: 'Its place among the exchange\'s questions, from 0' }),
+    index: Type.Integer({ description: "Its place among the exchange's questions, from 0" }),
     of: Type.Integer({ description: 'How many questions the exchange has' }),
     text: Type.String(),
-    opener: Type.Union([Type.String(), Type.Null()], { description: 'What to say right away, until the answer\'s first line is ready' }),
+    opener: Type.Union([Type.String(), Type.Null()], { description: "What to say right away, until the answer's first line is ready" }),
     requested: Type.Boolean({ description: 'An answer is being written; false with Auto off, until `prepare`' }),
     forced: Type.Boolean({ description: 'The person asked for it (the Ask field, answer now): show it at once' }),
 });
@@ -108,7 +129,12 @@ export const PreparedEvent = Type.Object({
     score: Type.Number({ description: '0…1' }),
 });
 
-export const AnswerDeltaEvent = Type.Object({ type: Type.Literal('answer.delta'), seq: Seq, questionId: Type.String(), text: Type.String() });
+export const AnswerDeltaEvent = Type.Object({
+    type: Type.Literal('answer.delta'),
+    seq: Seq,
+    questionId: Type.String(),
+    text: Type.String(),
+});
 export const AnswerDoneEvent = Type.Object({
     type: Type.Literal('answer.done'),
     seq: Seq,
@@ -117,7 +143,13 @@ export const AnswerDoneEvent = Type.Object({
 });
 
 /** Something went wrong with the call itself (not with one answer): a reason for people. `fatal` ends the socket. */
-export const ErrorEvent = Type.Object({ type: Type.Literal('error'), seq: Seq, code: Type.String(), message: Type.String(), fatal: Type.Boolean() });
+export const ErrorEvent = Type.Object({
+    type: Type.Literal('error'),
+    seq: Seq,
+    code: Type.String(),
+    message: Type.String(),
+    fatal: Type.Boolean(),
+});
 
 /** The call is over (ended with `POST …/end`, or timed out without a client). The server closes the socket after it. */
 export const EndedEvent = Type.Object({ type: Type.Literal('ended'), seq: Seq, lines: Type.Integer() });

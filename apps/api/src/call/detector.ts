@@ -134,7 +134,11 @@ export class QuestionDetector {
     }
 }
 
-const wordsOf = (text: string) => text.toLowerCase().split(/[^\p{L}]+/u).filter(Boolean);
+const wordsOf = (text: string) =>
+    text
+        .toLowerCase()
+        .split(/[^\p{L}]+/u)
+        .filter(Boolean);
 
 /** Without the judge: sentences ending in "?" that are more than a tag ("Right?"). */
 export function markedQuestions(text: string): string[] {

@@ -27,12 +27,14 @@ export class BrokenOff extends Error {
 }
 
 /** Failures worth trying again in a moment. */
-export const transient = (error: unknown) => (error instanceof AnthropicFailure && error.transient) || error instanceof BrokenOff || error instanceof TypeError;
+export const transient = (error: unknown) =>
+    (error instanceof AnthropicFailure && error.transient) || error instanceof BrokenOff || error instanceof TypeError;
 
 /** What a failure means for the person; never the provider's own words about keys or accounts. */
 export function describe(error: unknown): string {
     if (error instanceof AnthropicFailure) {
-        if (error.status === 401 || error.status === 403) return 'Cue could not reach Claude (the plan’s key was refused). The owner has been told.';
+        if (error.status === 401 || error.status === 403)
+            return 'Cue could not reach Claude (the plan’s key was refused). The owner has been told.';
         if (error.status === 429) return 'Claude is busy right now (rate limit). Try again in a moment.';
         if (error.status === 529) return 'Claude is overloaded. Try again in a moment.';
         return error.message ? `Claude: ${error.message}` : `Claude: error ${error.status}`;
@@ -100,7 +102,11 @@ export async function send(body: object): Promise<{ text: string; tokens: Tokens
  * Streams a reply's text through `onText`, piece by piece, and returns all of it, only once `message_stop` says it's whole. Rate limits,
  * overload and dropped connections are tried twice more, unless some of the reply has come already.
  */
-export async function stream(body: object, onText: (piece: string) => void, signal?: AbortSignal): Promise<{ text: string; tokens: Tokens }> {
+export async function stream(
+    body: object,
+    onText: (piece: string) => void,
+    signal?: AbortSignal,
+): Promise<{ text: string; tokens: Tokens }> {
     for (let attempt = 0; ; attempt++) {
         let text = '';
         const tokens = noTokens();
@@ -119,7 +125,13 @@ export async function stream(body: object, onText: (piece: string) => void, sign
                     const line = buffer.slice(0, newline).trimEnd();
                     buffer = buffer.slice(newline + 1);
                     if (!line.startsWith('data:')) continue;
-                    let event: { type?: string; delta?: { type?: string; text?: string; stop_reason?: string }; message?: { usage?: RawUsage }; usage?: RawUsage; error?: { type?: string; message?: string } };
+                    let event: {
+                        type?: string;
+                        delta?: { type?: string; text?: string; stop_reason?: string };
+                        message?: { usage?: RawUsage };
+                        usage?: RawUsage;
+                        error?: { type?: string; message?: string };
+                    };
                     try {
                         event = JSON.parse(line.slice(5));
                     } catch {
@@ -140,7 +152,11 @@ export async function stream(body: object, onText: (piece: string) => void, sign
                             addUsage(tokens, event.usage);
                             break;
                         case 'error':
-                            throw new AnthropicFailure(event.error?.type === 'overloaded_error' ? 529 : 500, event.error?.type ?? '', event.error?.message ?? '');
+                            throw new AnthropicFailure(
+                                event.error?.type === 'overloaded_error' ? 529 : 500,
+                                event.error?.type ?? '',
+                                event.error?.message ?? '',
+                            );
                         case 'message_stop':
                             finished = true;
                             break read;

@@ -86,13 +86,24 @@ export class LiveClient {
     }
 
     /** Waits for an event of `type` (that `check` accepts, if given) that has not been waited for before; fails the case on timeout. */
-    async next<Type extends CallEvent['type']>(type: Type, check: (event: Of<Type>) => boolean = () => true, seconds = 30, from = 0): Promise<Of<Type>> {
+    async next<Type extends CallEvent['type']>(
+        type: Type,
+        check: (event: Of<Type>) => boolean = () => true,
+        seconds = 30,
+        from = 0,
+    ): Promise<Of<Type>> {
         const deadline = Date.now() + seconds * 1000;
         for (;;) {
             const found = this.of(type).find((event) => event.seq > from && check(event));
             if (found) return found;
             if (Date.now() > deadline) {
-                return fail(`timed out after ${seconds}s waiting for a ${type} event`, ...this.events.filter((event) => event.type !== 'transcript.partial').slice(-60).map((event) => JSON.stringify(event)));
+                return fail(
+                    `timed out after ${seconds}s waiting for a ${type} event`,
+                    ...this.events
+                        .filter((event) => event.type !== 'transcript.partial')
+                        .slice(-60)
+                        .map((event) => JSON.stringify(event)),
+                );
             }
             await sleep(0.1);
         }
@@ -122,7 +133,9 @@ export async function bursts(out: string, seconds: number, spans: [number, numbe
         for (let index = Math.round(from * RATE); index < Math.min(samples, Math.round(to * RATE)); index++) {
             const t = index / RATE;
             // A voice-ish mix of tones that wavers like syllables, at a level far above the silence threshold.
-            const value = 0.25 * Math.sin(2 * Math.PI * 180 * t) * (0.6 + 0.4 * Math.sin(2 * Math.PI * 4 * t)) + 0.1 * Math.sin(2 * Math.PI * 1300 * t);
+            const value =
+                0.25 * Math.sin(2 * Math.PI * 180 * t) * (0.6 + 0.4 * Math.sin(2 * Math.PI * 4 * t)) +
+                0.1 * Math.sin(2 * Math.PI * 1300 * t);
             data.writeInt16LE(Math.round(value * 32767), index * 2);
         }
     }
@@ -169,7 +182,12 @@ export async function startCall(
     await backend.invite(email);
     const token = (await backend.tokensFor(email)).access_token;
     const created = await backend.call('POST', '/v1/projects', token, {
-        body: { name: 'Bee talk', language: options.language ?? 'en', occasion: 'A talk about rooftop bees', namesAndTerms: options.namesAndTerms ?? '' },
+        body: {
+            name: 'Bee talk',
+            language: options.language ?? 'en',
+            occasion: 'A talk about rooftop bees',
+            namesAndTerms: options.namesAndTerms ?? '',
+        },
     });
     if (created.status !== 201) return fail('creating the project failed', JSON.stringify(created));
     const projectId = (created.body as { id: string }).id;

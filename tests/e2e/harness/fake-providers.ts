@@ -68,7 +68,9 @@ function markdownOf(name: string, file: Buffer): string | undefined {
                 .join('\n\n');
         }
         if (/\.pdf$/i.test(name)) {
-            return [...file.toString('latin1').matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)].map((shown) => shown[1]!.replace(/\\(.)/g, '$1')).join('\n\n');
+            return [...file.toString('latin1').matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)]
+                .map((shown) => shown[1]!.replace(/\\(.)/g, '$1'))
+                .join('\n\n');
         }
     } catch {
         /* not a file of that kind */
@@ -118,7 +120,9 @@ function json(response: ServerResponse, status: number, value: unknown): void {
 
 function textOf(content: unknown): string {
     if (typeof content === 'string') return content;
-    return Array.isArray(content) ? content.map((block: { text?: string } | string) => (typeof block === 'string' ? block : (block.text ?? ''))).join('') : '';
+    return Array.isArray(content)
+        ? content.map((block: { text?: string } | string) => (typeof block === 'string' ? block : (block.text ?? ''))).join('')
+        : '';
 }
 
 function queryOf(url: URL): { query: Record<string, string>; keyterms: string[] } {
@@ -128,7 +132,9 @@ function queryOf(url: URL): { query: Record<string, string>; keyterms: string[] 
 }
 
 function headersOf(request: IncomingMessage): Record<string, string> {
-    return Object.fromEntries(Object.entries(request.headers).map(([name, value]) => [name, Array.isArray(value) ? value.join(', ') : (value ?? '')]));
+    return Object.fromEntries(
+        Object.entries(request.headers).map(([name, value]) => [name, Array.isArray(value) ? value.join(', ') : (value ?? '')]),
+    );
 }
 
 /** Deepgram's `Authorization: Token KEY`. */
@@ -286,13 +292,28 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
             text = answer(content, environment);
         }
         if (!noted.stream) {
-            return json(response, 200, { type: 'message', role: 'assistant', content: [{ type: 'text', text }], stop_reason: 'end_turn', usage: usage(text) });
+            return json(response, 200, {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'text', text }],
+                stop_reason: 'end_turn',
+                usage: usage(text),
+            });
         }
         response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
         const event = (type: string, data: object): boolean =>
             response.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
         const used = usage(text);
-        event('message_start', { message: { type: 'message', role: 'assistant', model: noted.model, content: [], stop_reason: null, usage: { ...used, output_tokens: 1 } } });
+        event('message_start', {
+            message: {
+                type: 'message',
+                role: 'assistant',
+                model: noted.model,
+                content: [],
+                stop_reason: null,
+                usage: { ...used, output_tokens: 1 },
+            },
+        });
         event('content_block_start', { index: 0, content_block: { type: 'text', text: '' } });
         if (kind === 'answer' && ++answered <= Number(environment['FAKE_ANTHROPIC_CUT'] ?? 0)) {
             event('content_block_delta', { index: 0, delta: { type: 'text_delta', text: pieces(text)[0] ?? '' } });
@@ -312,7 +333,18 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         const { query, keyterms } = queryOf(url);
         const side = query['diarize'] === 'true' ? 'others' : 'me';
         const noted = (extra: Partial<DeepgramRequest>): string =>
-            JSON.stringify({ query, keyterms, key, headers: headersOf(request), side, seconds: 0, messages: 0, closed: false, keepAlives: 0, ...extra } satisfies DeepgramRequest);
+            JSON.stringify({
+                query,
+                keyterms,
+                key,
+                headers: headersOf(request),
+                side,
+                seconds: 0,
+                messages: 0,
+                closed: false,
+                keepAlives: 0,
+                ...extra,
+            } satisfies DeepgramRequest);
         if (key !== FAKE_KEYS.deepgram) {
             record(log, 'deepgram-live', noted({}));
             socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n');
@@ -391,7 +423,7 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
                 voicedRun = voiced ? voicedRun + 1 : 0;
                 if (voicedRun < 4) return;
                 speaking = true;
-                started = Math.max(0, bytes / 2 / rate - (voicedRun * 0.02));
+                started = Math.max(0, bytes / 2 / rate - voicedRun * 0.02);
                 speechFrames = voicedRun;
                 silentRun = 0;
                 sinceInterim = 0;
@@ -418,7 +450,10 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
                     return;
                 }
                 const entry = entries[number - 1];
-                said = { text: typeof entry === 'string' ? entry : (entry?.text ?? `Utterance ${number}.`), speaker: typeof entry === 'object' ? (entry.speaker ?? 0) : 0 };
+                said = {
+                    text: typeof entry === 'string' ? entry : (entry?.text ?? `Utterance ${number}.`),
+                    speaker: typeof entry === 'object' ? (entry.speaker ?? 0) : 0,
+                };
             }
             if (counted && said && sinceInterim >= 10) {
                 sinceInterim = 0;
@@ -466,7 +501,15 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
     async function markdown(request: IncomingMessage, response: ServerResponse): Promise<void> {
         const file = await body(request);
         const name = decodeURIComponent(String(request.headers['x-file-name'] ?? 'file'));
-        record(log, 'markdown-request', JSON.stringify({ name, contentType: String(request.headers['content-type'] ?? ''), bytes: file.length } satisfies MarkdownRequest));
+        record(
+            log,
+            'markdown-request',
+            JSON.stringify({
+                name,
+                contentType: String(request.headers['content-type'] ?? ''),
+                bytes: file.length,
+            } satisfies MarkdownRequest),
+        );
         const data = markdownOf(name, file);
         json(
             response,

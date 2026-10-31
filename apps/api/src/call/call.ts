@@ -154,7 +154,8 @@ export class Call extends DurableObject<Env> {
     /** The WebSocket upgrade, handed over by the Worker. */
     override async fetch(request: Request): Promise<Response> {
         await this.#ensure();
-        if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') return new Response('Expected a WebSocket upgrade', { status: 426 });
+        if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket')
+            return new Response('Expected a WebSocket upgrade', { status: 426 });
         const after = Number(new URL(request.url).searchParams.get('after'));
         const { 0: client, 1: server } = new WebSocketPair();
         server.accept();
@@ -380,7 +381,8 @@ export class Call extends DurableObject<Env> {
     #speechStatus(): void {
         const problem = (['me', 'others'] as const).find((channel) => this.#speechOk[channel] === false);
         if (problem) return this.#status('speech', 'unavailable', this.#speechDetail[problem] ?? 'Speech recognition is unavailable.');
-        if ((['me', 'others'] as const).every((channel) => this.#speechOk[channel] === true)) this.#status('speech', 'ready', 'Speech recognition ready');
+        if ((['me', 'others'] as const).every((channel) => this.#speechOk[channel] === true))
+            this.#status('speech', 'ready', 'Speech recognition ready');
     }
 
     #speak(channel: Channel, active: boolean): void {
@@ -418,14 +420,17 @@ export class Call extends DurableObject<Env> {
         this.#emit({ type: 'transcript.final', channel, speaker, text, start, end });
         void this.ctx.storage.put('lines', this.#lines);
         // Questions are only looked for while the client asks for them (Cue running: the overlay shows them).
-        if (meta.questions && (channel === 'others' || meta.micQuestions)) this.#detector.add(text, this.#judgeLabel(channel), started, ended);
+        if (meta.questions && (channel === 'others' || meta.micQuestions))
+            this.#detector.add(text, this.#judgeLabel(channel), started, ended);
     }
 
     /** The microphone picking up the call through speakers produces a near-copy of a participant line. */
     #isEcho(channel: Channel, text: string): boolean {
         if (channel !== 'me') return false;
         const now = Date.now();
-        return this.#lines.slice(-4).some((other) => other.channel === 'others' && now - other.ended < 15_000 && isEcho(text, other.text, this.#lexicon.stopWords));
+        return this.#lines
+            .slice(-4)
+            .some((other) => other.channel === 'others' && now - other.ended < 15_000 && isEcho(text, other.text, this.#lexicon.stopWords));
     }
 
     // MARK: Questions
@@ -481,7 +486,9 @@ export class Call extends DurableObject<Env> {
         exchange.questions.forEach((question, index) => {
             this.#byQuestion.set(question.id, exchange);
             const match = this.#matcher.match(question.text);
-            const opener = (match && firstSentence(match.answer.a, this.#lexicon.thanksPrefix)) ?? (this.#lexicon.defaultOpener === '' ? null : this.#lexicon.defaultOpener);
+            const opener =
+                (match && firstSentence(match.answer.a, this.#lexicon.thanksPrefix)) ??
+                (this.#lexicon.defaultOpener === '' ? null : this.#lexicon.defaultOpener);
             this.#emitFor(exchange, {
                 type: 'question',
                 id: question.id,
@@ -520,7 +527,11 @@ export class Call extends DurableObject<Env> {
             const others = all.filter((other) => other !== question).map((other) => `«${other.text}»`);
             const message = this.#messageFor(question.text, others, exchange.forced);
             answers
-                .ask(message, (piece) => this.#emitFor(exchange, { type: 'answer.delta', questionId: question.id, text: piece }), this.#abort.signal)
+                .ask(
+                    message,
+                    (piece) => this.#emitFor(exchange, { type: 'answer.delta', questionId: question.id, text: piece }),
+                    this.#abort.signal,
+                )
                 .then(
                     () => {
                         void this.ctx.storage.put('history', [...answers.history]);
@@ -575,7 +586,15 @@ export class Call extends DurableObject<Env> {
             const total = this.#streams[channel]?.seconds ?? 0;
             const delta = total - (this.#billedSeconds[channel] ?? 0);
             this.#billedSeconds[channel] = total;
-            if (delta > 0) rows.push(['live_transcript', 'deepgram', SPEECH_MODEL, Math.round(delta * 1000) / 1000, 'audio_seconds', Math.round(delta * SPEECH_MICROS_PER_SECOND)]);
+            if (delta > 0)
+                rows.push([
+                    'live_transcript',
+                    'deepgram',
+                    SPEECH_MODEL,
+                    Math.round(delta * 1000) / 1000,
+                    'audio_seconds',
+                    Math.round(delta * SPEECH_MICROS_PER_SECOND),
+                ]);
         }
         await recordUsage(env.DB, meta.userId, rows);
     }
@@ -610,7 +629,11 @@ export class Call extends DurableObject<Env> {
         await this.#flushUsage().catch((error: unknown) => console.error('usage', error));
         const endedAt = Date.now();
         await env.DB.prepare('UPDATE call SET ended_at = ?, transcript = ? WHERE id = ?')
-            .bind(endedAt, JSON.stringify(this.#lines.map(({ channel, speaker, text, start, end }) => ({ channel, speaker, text, start, end }))), meta.callId)
+            .bind(
+                endedAt,
+                JSON.stringify(this.#lines.map(({ channel, speaker, text, start, end }) => ({ channel, speaker, text, start, end }))),
+                meta.callId,
+            )
             .run();
         this.#emit({ type: 'ended', lines: this.#lines.length });
         for (const socket of this.#sockets) {

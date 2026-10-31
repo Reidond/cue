@@ -16,11 +16,17 @@ export const summaries = new Elysia({ name: 'summaries', prefix: '/summaries' })
         const encoder = new TextEncoder();
         const body_ = new ReadableStream<Uint8Array>({
             async start(controller) {
-                const event = (name: string, data: object) => controller.enqueue(encoder.encode(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`));
+                const event = (name: string, data: object) =>
+                    controller.enqueue(encoder.encode(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`));
                 try {
                     // Claude may think first (the default): nobody waits on the first word here.
                     const result = await stream(
-                        { model: ANSWER_MODEL, max_tokens: 16000, system: body.system, messages: [{ role: 'user', content: `Transcript:\n\n${body.transcript}` }] },
+                        {
+                            model: ANSWER_MODEL,
+                            max_tokens: 16000,
+                            system: body.system,
+                            messages: [{ role: 'user', content: `Transcript:\n\n${body.transcript}` }],
+                        },
                         (text) => event('delta', { text }),
                         request.signal,
                     );
@@ -35,5 +41,9 @@ export const summaries = new Elysia({ name: 'summaries', prefix: '/summaries' })
         });
         return new Response(body_, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' } });
     },
-    { body: SummaryBody, response: { 401: ApiErrorBody }, detail: { summary: 'Writes a summary (server-sent events: delta, done, error)' } },
+    {
+        body: SummaryBody,
+        response: { 401: ApiErrorBody },
+        detail: { summary: 'Writes a summary (server-sent events: delta, done, error)' },
+    },
 );

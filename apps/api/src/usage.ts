@@ -53,6 +53,10 @@ export const TOMARKDOWN_MICROS_PER_FILE = 0;
 /** Records what a person used: one `usage` row each. */
 export async function recordUsage(db: D1Database, userId: string, rows: UsageRow[]): Promise<void> {
     if (rows.length === 0) return;
-    const insert = db.prepare('INSERT INTO usage (user_id, feature, provider, model, units, unit, cost_micros) VALUES (?, ?, ?, ?, ?, ?, ?)');
-    await db.batch(rows.map(([feature, provider, model, units, unit, cost]) => insert.bind(userId, feature, provider, model, units, unit, cost)));
+    const insert = db.prepare(
+        'INSERT INTO usage (user_id, feature, provider, model, units, unit, cost_micros) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    );
+    await db.batch(
+        rows.map(([feature, provider, model, units, unit, cost]) => insert.bind(userId, feature, provider, model, units, unit, cost)),
+    );
 }

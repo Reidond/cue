@@ -137,7 +137,10 @@ export class SpeechStream {
             this.ok = true;
             this.#events.onState(true, '');
         } catch {
-            this.#fail('Speech recognition stopped answering: it cannot be reached.', RECONNECT_MS[Math.min(this.#attempt++, RECONNECT_MS.length - 1)]!);
+            this.#fail(
+                'Speech recognition stopped answering: it cannot be reached.',
+                RECONNECT_MS[Math.min(this.#attempt++, RECONNECT_MS.length - 1)]!,
+            );
         } finally {
             this.#connecting = false;
         }
@@ -249,7 +252,8 @@ export class SpeechStream {
         const last = this.#finals.at(-1);
         // The voice that spoke most of the words, counted from 1.
         const counts = new Map<number, number>();
-        for (const speaker of [...this.#finals.flatMap((item) => item.speakers), ...this.#interimSpeakers]) counts.set(speaker, (counts.get(speaker) ?? 0) + 1);
+        for (const speaker of [...this.#finals.flatMap((item) => item.speakers), ...this.#interimSpeakers])
+            counts.set(speaker, (counts.get(speaker) ?? 0) + 1);
         const loudest = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
         return {
             text,

@@ -95,8 +95,7 @@ export class ClaudeSession {
         const question: Message = { role: 'user', content: text };
         const body = this.#request([...this.#history, question], this.#options.maxTokens, false);
         try {
-            const result =
-                this.#options.mode === 'stream' ? await stream(body, onText, signal) : await send(body);
+            const result = this.#options.mode === 'stream' ? await stream(body, onText, signal) : await send(body);
             this.#options.onTokens(this.#options.model, 'message', result.tokens);
             if (result.text !== '') {
                 this.#history.push(question, { role: 'assistant', content: result.text });

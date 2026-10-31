@@ -27,4 +27,3 @@ e2eCase(
         assertEq(again.closed, true, 'and that one ends as usual, with CloseStream');
     },
 );
-

@@ -39,7 +39,11 @@ e2eCase(
         await second.next('answer.done', (event) => event.questionId === missed.id, 10);
         assertEq(second.answerTo(missed.id), 'On six rooftops in Kyiv.');
         assertEq(second.of('question').length, 1, 'and nothing it had seen already');
-        assertEq(second.of('status').some((status) => status.part === 'speech' && status.state === 'starting'), false, 'speech recognition was not started again');
+        assertEq(
+            second.of('status').some((status) => status.part === 'speech' && status.state === 'starting'),
+            false,
+            'speech recognition was not started again',
+        );
 
         // The call goes on: audio over the new connection is heard, and a new question is answered with the conversation so far.
         const speech = pcmOf(readFileSync(await bursts(cue.path('call.wav'), 6, [[1, 3]])));
@@ -73,7 +77,11 @@ e2eCase('A call nobody comes back to is ended on its own, and what it heard is k
     await live.play('others', pcmOf(readFileSync(await bursts(cue.path('call.wav'), 5, [[1, 2.5]]))));
     await live.next('transcript.final', () => true, 20);
     live.drop();
-    await cue.waitFor('the abandoned call to be ended', 30, async () => (await backend.rows(`SELECT ended_at FROM call WHERE id = '${call.callId}'`))[0]?.['ended_at'] != null);
+    await cue.waitFor(
+        'the abandoned call to be ended',
+        30,
+        async () => (await backend.rows(`SELECT ended_at FROM call WHERE id = '${call.callId}'`))[0]?.['ended_at'] != null,
+    );
     const [row] = await backend.rows(`SELECT transcript FROM call WHERE id = '${call.callId}'`);
     assertEq(String(row?.['transcript']).includes('Is this recorded?'), true, 'its transcript is kept');
 });

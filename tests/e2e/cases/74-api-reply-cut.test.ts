@@ -4,7 +4,11 @@ e2eCase(
     "An answer Claude's connection breaks off partway is reported as failed, and isn't kept as part of the conversation the next question is asked in.",
     async (cue) => {
         await cue.project('Bees', { language: 'en' });
-        await cue.launch({ CUE_PROJECT: 'Bees', FAKE_ANTHROPIC_CUT: '1', FAKE_CLAUDE_ANSWER: 'We studied 48 hives on six rooftops over two summers.' });
+        await cue.launch({
+            CUE_PROJECT: 'Bees',
+            FAKE_ANTHROPIC_CUT: '1',
+            FAKE_CLAUDE_ANSWER: 'We studied 48 hives on six rooftops over two summers.',
+        });
         cue.control('start Bees');
         await cue.waitLog(/🧐 Question judge ready: Claude Haiku/, 30);
 

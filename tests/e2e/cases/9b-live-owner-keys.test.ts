@@ -35,10 +35,28 @@ e2eCase("The owner's keys reach Anthropic and Deepgram, and the user's token nev
     await backend.invite('bob@cue.test');
     const other = await startCall(backend, 'carol@cue.test');
     const bob = (await backend.tokensFor('bob@cue.test')).access_token;
-    await LiveClient.connect(backend, 'not-a-token', call.callId).then(() => fail('a bad token should be refused'), () => undefined);
-    await LiveClient.connect(backend, bob, other.callId).then(() => fail("another person's call should not open"), () => undefined);
+    await LiveClient.connect(backend, 'not-a-token', call.callId).then(
+        () => fail('a bad token should be refused'),
+        () => undefined,
+    );
+    await LiveClient.connect(backend, bob, other.callId).then(
+        () => fail("another person's call should not open"),
+        () => undefined,
+    );
     assertEq((await backend.call('POST', `/v1/calls/${other.callId}/end`, bob)).status, 404, 'another person cannot end it');
-    assertEq((await backend.call('POST', `/v1/calls/${other.callId}/questions`, bob, { body: { text: 'Hi?' } })).status, 404, 'nor ask in it');
-    assertEq((await backend.call('POST', '/v1/calls', bob, { body: { projectId: 'someone-elses' } })).status, 404, 'nor start one on a project that is not theirs');
-    assertEq((await backend.call('POST', '/v1/calls', 'not-a-token', { body: { projectId: 'x' } })).status, 401, 'a call needs a signed-in person');
+    assertEq(
+        (await backend.call('POST', `/v1/calls/${other.callId}/questions`, bob, { body: { text: 'Hi?' } })).status,
+        404,
+        'nor ask in it',
+    );
+    assertEq(
+        (await backend.call('POST', '/v1/calls', bob, { body: { projectId: 'someone-elses' } })).status,
+        404,
+        'nor start one on a project that is not theirs',
+    );
+    assertEq(
+        (await backend.call('POST', '/v1/calls', 'not-a-token', { body: { projectId: 'x' } })).status,
+        401,
+        'a call needs a signed-in person',
+    );
 });

@@ -16,7 +16,9 @@ const LEXICONS: Record<string, CallLexicon> = {
     en: {
         name: 'English',
         stopWords: new Set(
-            'what which that this these those with from your have does could would please about there their they were been into also tell'.split(' '),
+            'what which that this these those with from your have does could would please about there their they were been into also tell'.split(
+                ' ',
+            ),
         ),
         thanksPrefix: 'Thank you for the question. ',
         defaultOpener: 'Thank you for the question. Let me briefly explain.',
@@ -49,5 +51,12 @@ export function lexiconFor(code: string): CallLexicon {
         /* not a language code Intl knows */
     }
     const english = LEXICONS['en']!;
-    return { name, stopWords: new Set(), thanksPrefix: '', defaultOpener: '', numbersLabel: english.numbersLabel, sourceLabel: english.sourceLabel };
+    return {
+        name,
+        stopWords: new Set(),
+        thanksPrefix: '',
+        defaultOpener: '',
+        numbersLabel: english.numbersLabel,
+        sourceLabel: english.sourceLabel,
+    };
 }

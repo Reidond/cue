@@ -35,27 +35,41 @@ e2eCase(
         await live.play('others', speech);
         const asked = await live.next('question', () => true, 30);
         await live.next('answer.done', (event) => event.questionId === asked.id, 30);
-        const question = cue.serviceRequests('anthropic-request').find((request) => request.kind === 'answer' && request.maxTokens > 0) ?? fail('the question should reach Claude');
+        const question =
+            cue.serviceRequests('anthropic-request').find((request) => request.kind === 'answer' && request.maxTokens > 0) ??
+            fail('the question should reach Claude');
         assertEq(question.stream, true, 'the answer streams');
         assertEq(question.model, 'claude-sonnet-5-5');
         assertEq(JSON.stringify(question.systemCache), JSON.stringify({ type: 'ephemeral', ttl: '1h' }));
-        assertEq(JSON.stringify(question.cache), JSON.stringify({ type: 'ephemeral', ttl: '1h' }), 'the conversation up to it is cached too');
-        const judged = cue.serviceRequests('anthropic-request').find((request) => request.kind === 'judge' && request.maxTokens > 0) ?? fail('the judge should be asked');
+        assertEq(
+            JSON.stringify(question.cache),
+            JSON.stringify({ type: 'ephemeral', ttl: '1h' }),
+            'the conversation up to it is cached too',
+        );
+        const judged =
+            cue.serviceRequests('anthropic-request').find((request) => request.kind === 'judge' && request.maxTokens > 0) ??
+            fail('the judge should be asked');
         assertEq(judged.model, 'claude-haiku-5-5');
         assertEq(judged.stream, false);
 
         // Usage: what the call spent, per model, once it is over.
         await backend.call('POST', `/v1/calls/${call.callId}/end`, call.token);
-        const rows = await backend.rows('SELECT feature, provider, model, unit, units, cost_micros FROM usage ORDER BY feature, model, unit');
+        const rows = await backend.rows(
+            'SELECT feature, provider, model, unit, units, cost_micros FROM usage ORDER BY feature, model, unit',
+        );
         const sum = (feature: string, unit: string) =>
-            rows.filter((row) => row['feature'] === feature && row['unit'] === unit).reduce((total, row) => total + Number(row['units']), 0);
+            rows
+                .filter((row) => row['feature'] === feature && row['unit'] === unit)
+                .reduce((total, row) => total + Number(row['units']), 0);
         if (sum('answer', 'cache_write_tokens') <= 0) fail('the answer prompt written to the cache is recorded', JSON.stringify(rows));
         if (sum('answer', 'cache_read_tokens') <= 0) fail('and what the warm-ups and the question read from it', JSON.stringify(rows));
         if (sum('answer', 'output_tokens') <= 0) fail('and the answer’s own tokens', JSON.stringify(rows));
         if (sum('question_judge', 'input_tokens') <= 0) fail("the judge's tokens are recorded", JSON.stringify(rows));
         if (sum('live_transcript', 'audio_seconds') < 5) fail('audio seconds are recorded, both sides', JSON.stringify(rows));
         assertEq(
-            rows.some((row) => row['model'] === 'claude-haiku-5-5') && rows.some((row) => row['model'] === 'claude-sonnet-5-5') && rows.some((row) => row['provider'] === 'deepgram'),
+            rows.some((row) => row['model'] === 'claude-haiku-5-5') &&
+                rows.some((row) => row['model'] === 'claude-sonnet-5-5') &&
+                rows.some((row) => row['provider'] === 'deepgram'),
             true,
             'tokens per model, and the speech provider',
         );

@@ -8,7 +8,14 @@ import { basename, join } from 'node:path';
 import { Backend, type BackendOptions } from './backend.ts';
 import { closeBrowser } from './browser.ts';
 import { CUE_BIN, DEEPGRAM, E2E_CACHE, E2E_WORK, KEEP, REAL_SUPPORT } from './config.ts';
-import { FAKE_KEYS, startFakeProviders, type AnthropicRequest, type DeepgramRequest, type FakeProviders, type MarkdownRequest } from './fake-providers.ts';
+import {
+    FAKE_KEYS,
+    startFakeProviders,
+    type AnthropicRequest,
+    type DeepgramRequest,
+    type FakeProviders,
+    type MarkdownRequest,
+} from './fake-providers.ts';
 import {
     countLines,
     exists,
@@ -230,7 +237,9 @@ export class Cue {
                       ANTHROPIC_URL: providers.url,
                       ANTHROPIC_API_KEY: FAKE_KEYS.anthropic,
                       MARKDOWN_URL: `${providers.url}/markdown`,
-                      ...(DEEPGRAM === 'fake' ? { DEEPGRAM_URL: providers.url, DEEPGRAM_API_KEY: FAKE_KEYS.deepgram } : { DEEPGRAM_API_KEY: await keychainKey('deepgram') }),
+                      ...(DEEPGRAM === 'fake'
+                          ? { DEEPGRAM_URL: providers.url, DEEPGRAM_API_KEY: FAKE_KEYS.deepgram }
+                          : { DEEPGRAM_API_KEY: await keychainKey('deepgram') }),
                   }
                 : {};
             return Backend.start(this.dir, { ...options, env: { ...upstream, ...options.env } });
