@@ -146,7 +146,7 @@ private struct UsageBar: View {
             } currentValueLabel: {
                 Text("\(usage.usd.formatted(money)) of \(limit.formatted(money))").monospacedDigit()
             }
-            .tint(usage.limitReached ? .red : (usage.usd / limit > 0.8 ? .orange : .accentColor))
+            .tint(usage.limitReached ? Color.red : (usage.usd / limit > 0.8 ? Color.orange : Color.accentColor))
         } else {
             LabeledContent("Used this month", value: usage.usd.formatted(money))
         }
