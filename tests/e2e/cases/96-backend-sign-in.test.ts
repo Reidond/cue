@@ -31,7 +31,7 @@ e2eCase('Only an invited email that Google or GitHub vouches for signs in, and /
     // Not on the list: no code, and the page says whose email it was.
     const bob = await backend.signInAs('bob@cue.test');
     assertEq(JSON.stringify(bob), JSON.stringify({ kind: 'not_invited', email: 'bob@cue.test' }));
-    const page = await (await fetch(new URL('/invite-only?error=not_invited&email=bob%40cue.test', backend.url))).text();
+    const page = await (await fetch(new URL('/invite-only?email=bob%40cue.test', backend.url))).text();
     assertContains(cue.save('invite-only.html', page), /Cue is invite-only/);
 
     // On the list, but the provider has not verified the email.

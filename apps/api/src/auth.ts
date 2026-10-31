@@ -102,6 +102,8 @@ export function createAuth(env: AuthEnv, database: Parameters<typeof betterAuth>
         secret: env.BETTER_AUTH_SECRET,
         database,
         disabledPaths: ['/token'],
+        // Anything else that goes wrong in a sign-in (a disabled account, a provider that says no) ends at a page, not a JSON error.
+        onAPIError: { errorURL: '/sign-in-failed' },
         // Each request builds its own instance, which would otherwise re-read the whole schema (~19 D1 statements) every time;
         // the deploy applies the migrations, so the Worker never needs to check them.
         advanced: { database: { validateSchema: false } },

@@ -80,9 +80,8 @@ export async function signInThroughBrowser(base: string, provider: 'google' | 'g
         }
         next = new URL(location, next).toString();
         const landed = new URL(next);
-        if (landed.pathname === '/invite-only' && landed.searchParams.get('error') === 'not_invited') {
-            return { kind: 'not_invited', email: landed.searchParams.get('email') };
-        }
+        if (landed.pathname === '/invite-only') return { kind: 'not_invited', email: landed.searchParams.get('email') };
+        if (landed.pathname === '/sign-in-failed') return { kind: 'failed', detail: next };
     }
     return { kind: 'failed', detail: 'too many redirects' };
 }

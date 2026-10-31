@@ -6,7 +6,7 @@ import { CloudflareAdapter } from 'elysia/adapter/cloudflare-worker';
 import { env } from 'cloudflare:workers';
 import { adminEmails, createAuth, PROVIDERS, type Provider } from './auth.ts';
 import { ApiError, errorResponse } from './errors.ts';
-import { inviteOnlyPage, signInPage } from './pages.ts';
+import { inviteOnlyPage, signInFailedPage, signInPage } from './pages.ts';
 import { authenticate } from './token.ts';
 
 // `cf dev` imports the entry from inside a request-scoped callback, where workerd forbids `Function(...)`
@@ -31,7 +31,6 @@ async function signInCallback(request: Request): Promise<Response> {
     const invited = /^not_invited(?::(.*))?$/.exec(body?.message ?? '');
     if (!invited) return res;
     const to = new URL('/invite-only', request.url);
-    to.searchParams.set('error', 'not_invited');
     if (invited[1]) to.searchParams.set('email', invited[1]);
     return Response.redirect(to.toString(), 302);
 }
@@ -51,7 +50,7 @@ async function startSignIn(request: Request, provider: string): Promise<Response
         }),
     );
     const { url } = (await res.json()) as { url?: string };
-    if (!url) return inviteOnlyPage('failed', null);
+    if (!url) return signInFailedPage(null);
     const headers = new Headers({ location: url });
     for (const cookie of res.headers.getSetCookie()) headers.append('set-cookie', cookie);
     return new Response(null, { status: 302, headers });
@@ -90,7 +89,8 @@ const routes = new Elysia({ adapter: CloudflareAdapter, aot: !dev })
         return signInPage(resume, PROVIDERS);
     })
     .get('/login/:provider', ({ request, params }) => startSignIn(request, params.provider))
-    .get('/invite-only', ({ query }) => inviteOnlyPage(query.error ?? null, query.email ?? null))
+    .get('/invite-only', ({ query }) => inviteOnlyPage(query.email ?? null))
+    .get('/sign-in-failed', ({ query }) => signInFailedPage(query.error ?? null))
     .get(
         '/v1/me',
         async ({ request }) => {

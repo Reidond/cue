@@ -51,24 +51,37 @@ ${buttons}`,
     );
 }
 
-/** `/invite-only`: the person signed in with the identity provider but isn't on the list (or the provider didn't verify their email). */
-export function inviteOnlyPage(error: string | null, email: string | null): Response {
-    if (error !== 'not_invited') {
-        return page(
-            'Cue sign-in failed',
-            `<h1>Sign-in failed</h1><p>Something went wrong signing you in. Close this window and try again.</p>`,
-            400,
-        );
-    }
+/** The redirect back to the app that ends a sign-in which didn't work: the app says why. */
+function backToCue(error: string, description: string, email?: string | null): string {
     const back = new URL(OAUTH.macRedirectUri);
-    back.searchParams.set('error', 'access_denied');
-    back.searchParams.set('error_description', 'not_invited');
+    back.searchParams.set('error', error);
+    back.searchParams.set('error_description', description);
     if (email) back.searchParams.set('email', email);
+    return escapeHtml(back.toString());
+}
+
+/** `/invite-only`: the person signed in with the identity provider but isn't on the list (or the provider didn't verify their email). */
+export function inviteOnlyPage(email: string | null): Response {
     return page(
         'Cue is invite-only',
         `<h1>Cue is invite-only</h1>
 <p>${email ? `${escapeHtml(email)} isn't` : `This account isn't`} on the list. Ask whoever runs Cue to invite the email address of your Google or GitHub account.</p>
-<a class="button primary" href="${escapeHtml(back.toString())}">Return to Cue</a>`,
+<a class="button primary" href="${backToCue('access_denied', 'not_invited', email)}">Return to Cue</a>`,
         403,
+    );
+}
+
+/** `/sign-in-failed`: any other reason a sign-in ended; `error` is what Better Auth reported (a disabled account says it is banned). */
+export function signInFailedPage(error: string | null): Response {
+    const disabled = /ban|disabled/i.test(error ?? '');
+    const why = disabled
+        ? 'This account has been disabled. Ask whoever runs Cue about it.'
+        : 'Something went wrong signing you in. Try again.';
+    return page(
+        'Cue sign-in failed',
+        `<h1>Sign-in failed</h1>
+<p>${why}</p>
+<a class="button primary" href="${backToCue('access_denied', disabled ? 'account_disabled' : 'failed')}">Return to Cue</a>`,
+        disabled ? 403 : 400,
     );
 }
