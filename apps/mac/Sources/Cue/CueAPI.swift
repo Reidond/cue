@@ -174,8 +174,10 @@ private extension Data {
 final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
     enum Phase { case restoring, signedOut, signingIn, signedIn }
 
-    /// CUE_API_URL points the app at another backend (end-to-end cases run their own).
-    static let baseURL = URL(string: ProcessInfo.processInfo.environment["CUE_API_URL"] ?? "https://api.cue.app")!
+    /// The backend: CUE_API_URL points the app at another one (end-to-end cases run their own); otherwise the production address that
+    /// scripts/build.sh stamps into Info.plist from apps/api/production-url.txt (a binary run outside the bundle talks to `cf dev`).
+    static let baseURL = URL(string: ProcessInfo.processInfo.environment["CUE_API_URL"]
+        ?? Bundle.main.object(forInfoDictionaryKey: "CueAPIURL") as? String ?? "http://127.0.0.1:5173")!
     private static let redirectURI = "\(callbackScheme):/oauth/callback"
     private static let clientID = "cue-mac"
     /// The API's identifier in OAuth (RFC 8707 `resource`; the access token's `aud`). Never fetched.

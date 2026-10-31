@@ -8,10 +8,12 @@
   "scripts": {
     "dev": "cf dev",
     "build": "cf build",
+    "deploy": "cf deploy",
     "deploy:dry": "cf deploy --dry-run",
     "types": "cf workers types",
     "typecheck": "cf workers types && tsc",
     "migrate": "node scripts/migrate.ts",
+    "migrate:remote": "node scripts/migrate-remote.ts",
     "schema": "node tools/gen-schema.ts migrations/0002_better_auth.sql",
     "check-vite": "node scripts/check-vite.ts",
     "invite": "node scripts/invite.ts"

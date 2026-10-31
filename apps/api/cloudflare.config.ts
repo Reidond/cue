@@ -1,6 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { bindings, defineConfig, exports } from 'cf/config';
 import { DEV_DB_ID, DEV_KV_ID } from './dev-ids.ts';
 import * as entrypoint from './src/index.ts' with { type: 'cf-worker' };
+
+// The backend's address, kept in one place (production-url.txt): the Worker's issuer here, and the Mac app, whose build stamps it into Info.plist
+// (apps/mac/scripts/build.sh). `PUBLIC_URL` in the environment overrides it (a case's backend, a dry run elsewhere).
+const productionUrl = readFileSync(new URL('./production-url.txt', import.meta.url), 'utf8').trim();
 
 // Where sign-in with Google and GitHub goes. `IDP_URL` repoints both at a stand-in (the e2e harness' fake-idp.ts, which
 // serves both providers' endpoints under /google and /github); a real deploy leaves it unset.
@@ -15,7 +20,7 @@ const endpoints = {
     GITHUB_EMAILS_URL: idp ? `${idp}/github/user/emails` : 'https://api.github.com/user/emails',
 };
 
-// Secrets are Cloudflare secrets (set with `cf secrets`, never in the repository). Under `cf dev` they come from the environment `cf dev`
+// Secrets are Cloudflare secrets (set with `cf workers secrets`, never in the repository; docs/deploy.md lists them). Under `cf dev` they come from the environment `cf dev`
 // was started in, with throwaway defaults, so a case (or a developer) needs no .dev.vars file and concurrent backends cannot overwrite each other's.
 const secret = (mode: string | undefined, name: string) =>
     mode === 'development' ? bindings.text(process.env[name] ?? `dev-${name}-0123456789abcdef0123456789abcdef`) : bindings.secret();
@@ -34,6 +39,10 @@ export default defineConfig(({ mode }) => ({
         name: 'cue-api',
         compatibilityDate: '2026-10-23',
         entrypoint,
+        // Served on <name>.<account subdomain>.workers.dev for now (no custom domain, no previews), and watched in the dashboard.
+        workersDev: true,
+        previewUrls: false,
+        observability: { enabled: true },
         // The admin SPA (apps/admin) is Vite's client build, served under /admin with the single-page-app fallback. The fallback is not limited
         // to /admin, so everything the Worker itself answers is listed here: a navigation to it must never get the SPA's index.html, and under
         // `cf dev` an unlisted path gets Vite's own 404. Every new Worker route needs its prefix in this list.
@@ -86,9 +95,9 @@ export default defineConfig(({ mode }) => ({
             // The files people add to their projects (the originals; their text is in D1).
             MATERIALS: bindings.r2({ name: 'cue-materials' }),
             // Workers AI `toMarkdown` reads PDF and Word files. Workers AI always runs on Cloudflare, even under `cf dev`, where its binding
-            // stops the dev server for want of a token: so the binding is left out unless AI_BINDING=1, and MARKDOWN_URL (the e2e suite's
-            // stand-in, harness/fake-providers.ts) answers in `toMarkdown`'s shape instead. A real deploy sets AI_BINDING=1.
-            AI: process.env.AI_BINDING === '1' ? bindings.ai() : false,
+            // stops the dev server for want of a token: so under `cf dev` the binding is left out unless AI_BINDING=1, and MARKDOWN_URL (the e2e
+            // suite's stand-in, harness/fake-providers.ts) answers in `toMarkdown`'s shape instead. A deploy always has it.
+            AI: mode !== 'development' || process.env.AI_BINDING === '1' ? bindings.ai() : false,
             MARKDOWN_URL: bindings.text(process.env.MARKDOWN_URL ?? ''),
             // The owner's keys: the backend does all the AI and speech work, so these never reach a client (nor does the user's token reach them).
             ANTHROPIC_API_KEY: secret(mode, 'ANTHROPIC_API_KEY'),
@@ -108,7 +117,7 @@ export default defineConfig(({ mode }) => ({
             // The owner: comma-separated emails that are always invited and get the `admin` role.
             ADMIN_EMAILS: bindings.text(process.env.ADMIN_EMAILS ?? ''),
             // The issuer of the OAuth server, the origin the sign-in pages and the app's links go to.
-            PUBLIC_URL: bindings.text(process.env.PUBLIC_URL ?? 'http://127.0.0.1:5173'),
+            PUBLIC_URL: bindings.text(process.env.PUBLIC_URL ?? (mode === 'development' ? 'http://127.0.0.1:5173' : productionUrl)),
             // Seconds; 15 minutes in production, shorter in a case that waits for one to run out.
             ACCESS_TOKEN_SECONDS: bindings.text(process.env.ACCESS_TOKEN_SECONDS ?? '900'),
             GOOGLE_AUTHORIZE_URL: bindings.text(endpoints.GOOGLE_AUTHORIZE_URL),
