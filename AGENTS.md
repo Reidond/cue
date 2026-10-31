@@ -113,6 +113,36 @@ The owner's admin: usage and money, never content (no transcripts, no notes). `d
   patch, roll back on error, invalidate): a case that checks the server after one must wait for it (`cue.waitFor`), not read it at once.
 - Lint: oxlint's `react` (with the react-hooks rules) and `jsx-a11y` plugins are on for everything in the root `vite.config.ts`.
 
+## Live calls (`apps/api/src/call`, `apps/api/src/routes/calls.ts`, `apps/mac/Sources/Cue/LiveCall.swift`)
+
+A call is one stretch of listening (Start Cue, or a recording): the Mac streams the microphone and the call audio to a **Call Durable Object** and shows
+what its events say. `docs/backend.md` has the design; the shapes are `packages/contract/src/calls.ts` (the Swift side follows them by hand).
+
+- **Routes**: `POST /v1/calls` (project, optional event, speaker, auto, micQuestions, questions → `callId`), `POST /v1/calls/:id/questions` (the Ask field, SSE of the
+  same events), `POST /v1/calls/:id/end`, and the socket **`GET /v1/live?call=ID[&after=SEQ]`** (not `/v1/calls/:id/live`: see below). Calls are the user's: another
+  person's is `not_found`. `POST /v1/summaries` (system + transcript → SSE `delta`/`done`/`error`) is temporary: the Mac still writes notes' summaries
+  itself until PR 6's Workflow, but with the plan's key.
+- **The socket is `.mount`ed** (`routes/calls.ts` `live`, a fixed path with the call in the query) because Elysia rebuilds every `Response` a route returns and
+  that drops the Durable Object's `webSocket` under `cf dev`; `.mount` hands the request over untouched. A mounted handler runs before Elysia's hooks in
+  that mode, so it checks the bearer token and the plan itself, and no `:id` param is available (hence `?call=`). The Durable Object is called through RPC
+  (`begin`, `ask`, `end`); its `fetch` is only the upgrade. `src/call/stub.ts` types the namespace (the generated types cannot follow a Worker's binding to itself).
+- **In**: binary frames (one byte channel, 0 `me` / 1 `others`, then PCM16 LE mono 16 kHz, contiguous: the server's clock is the samples) and JSON commands
+  `config`, `ask`, `answerNow`, `prepare`. **Out**: `ready`, `status` (part `speech|claude|judge`), `speaking`, `transcript.partial|final`, `question`, `prepared`,
+  `answer.delta|done`, `error`, `ended`, each with a `seq`; the last 1000 are kept, and `after=SEQ` replays what a reconnecting client missed. A call with no client for
+  `CALL_GRACE_SECONDS` (120) ends by itself. The reading rules (`show`, `newest`, holding the view) stay on the Mac: they are UI.
+- **The Durable Object** (`call.ts`) wires: `deepgram.ts` (a live stream per channel, Nova-3, `diarize` on `others`, endpointing 700 ms, KeepAlive, reopened when it
+  drops), `detector.ts` / `judge.ts` (ports of `QuestionDetector` / `QuestionJudge`: the waiting rules, Haiku with `prompts/judge.md`), `knowledge.ts` (the system
+  prompt from `prompts/prompt.md`, the project's prepared answers and materials; `Matcher` is `KnowledgeBase.match`), `session.ts` (a Claude conversation:
+  system prompt cached for an hour and written before the first question with `max_tokens: 0`, the conversation cached too, history kept; `anthropic.ts` the Messages
+  client with the retries), `lexicon.ts` (language names, stop words, openers). Echo lines (the microphone hearing the call) are dropped before anyone sees them.
+- **Alarms** (`CACHE_TICK_SECONDS` 300): each tick warms a session quiet for `CACHE_REFRESH_SECONDS` (2700), records usage and ends an abandoned call.
+- **Usage** (`usage` table, flushed each tick and at the end): `answer` and `question_judge` rows per model for input / output / cache write / cache read tokens,
+  `live_transcript` audio seconds per stream (both channels are billed), `notes_summary` tokens. Prices are the table in `src/call/models.ts` (list prices, not checked
+  against an invoice; `SPEECH_MICROS_PER_SECOND`). Nothing enforces the limit yet (PR 7).
+- **Secrets**: `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, endpoints `ANTHROPIC_URL`, `DEEPGRAM_URL` (cases point them at `fake-providers.ts`). The user's token goes to neither.
+- **The Mac** (`LiveCall.swift`, `AppState`): `createCall` / `endCall` when capture starts / stops, the socket with reconnects (backoff, `after=`) and `AudioSink`
+  (frames; silence is filled by the host clock so the server's clock keeps up), events drive the same `Exchange` / `Answer` state as before.
+
 ## Cloud sandboxes (Boat)
 
 Use a Boat sandbox for builds, tests, untrusted code, Docker, and long jobs.
@@ -156,36 +186,27 @@ This rule is strict and has no exceptions.
 - **Every change is verified by an end-to-end case** in `tests/e2e/cases/`
   that runs the built `Cue.app` — the app itself, or its command-line modes
   (`--render`, …) — against real files, real audio, real
-  `whisper-server` and real child processes, and checks what a user would see:
+  `whisper-cli` and real child processes, and checks what a user would see:
   the notes on disk, the audio files, the session log, the rendered windows.
 - **The suite's browser is Playwright** (`playwright-core` in `tests/e2e`; it downloads nothing): `harness/browser.ts` drives the machine's Chrome
   headless (`E2E_BROWSER=path` names another; macOS CI has Chrome, a Boat sandbox has `/usr/bin/google-chrome`; a machine without one skips the
   case) for the cases that use the admin SPA as its owner does. Never for the Mac app, which is driven by `CUE_CONTROL`.
 - Stand-ins are allowed only at the outer boundary, never for Cue's own code:
-  - the paid external service: `tests/e2e/tools/fake-claude.ts` replaces
-    the `claude` CLI (through `CUE_CLAUDE_BIN`) so cases are fast and
-    deterministic (`FAKE_CLAUDE_ANSWER` sets its answer, `FAKE_CLAUDE_ANSWERS`
-    one per question matching a pattern; as the question judge it finds the
-    sentences ending in "?", or replies as `FAKE_CLAUDE_JUDGEMENTS` says, and
-    `FAKE_CLAUDE_JUDGE_FAILS=1` makes it fail, `FAKE_CLAUDE_JUDGE_DELAY` slow). Cases that judge Claude's actual writing run against the
-    real CLI with `node tests/e2e/run.ts --real-claude`;
-  - the paid cloud providers of Settings › Providers: `harness/fake-providers.ts`
-    serves the Anthropic Messages API (replying as the fake claude does;
-    `FAKE_ANTHROPIC_OVERLOADED=N` answers the judge's first N requests with a 529,
-    `FAKE_ANTHROPIC_CUT=N` breaks off the first N answers partway) and
-    Deepgram (a live WebSocket stream per utterance, answered with the next line
-    of `FAKE_DEEPGRAM_LIVE` or "Utterance N.", `FAKE_DEEPGRAM_DROP=N` dropping the
-    Nth; a recorded file, answered with one utterance per stretch of speech) from
-    the case's own process, through
-    `CUE_ANTHROPIC_URL` and `CUE_DEEPGRAM_URL`, and takes only the keys in
-    `FAKE_KEYS`. `--real-anthropic` and `--real-deepgram` use the real services
-    instead, with keys the runner reads from the login keychain (items
-    `Cue e2e Anthropic API key` and `Cue e2e Deepgram API key`, added with
-    `security add-generic-password -a "$USER" -s "…" -w`): never put a real key
-    in a case, a fixture, the control file or the chat. A recording of a real
-    call (someone's conversation) never goes into the repository either: case 84
-    reads one from `E2E_REAL_CALL=path` (any recording macOS can read, a screen
-    recording's `.mov` too) and skips without it;
+  - the paid cloud providers the backend calls: `harness/fake-providers.ts` serves the Anthropic Messages API and Deepgram's live speech-to-text
+    from the case's own process, as the backend's upstreams (`ANTHROPIC_URL`, `DEEPGRAM_URL`), and takes only the owner's keys in `FAKE_KEYS`
+    (the backend gets them as `ANTHROPIC_API_KEY` / `DEEPGRAM_API_KEY`). The Anthropic one answers as `FAKE_CLAUDE_ANSWER` sets (`FAKE_CLAUDE_ANSWERS`
+    one per question matching a pattern; as the question judge it finds the sentences ending in "?", or replies as `FAKE_CLAUDE_JUDGEMENTS` says,
+    and `FAKE_CLAUDE_JUDGE_FAILS=1` makes it fail, `FAKE_CLAUDE_JUDGE_DELAY` slow; `FAKE_ANTHROPIC_OVERLOADED=N` answers the judge's first N
+    requests with a 529, `FAKE_ANTHROPIC_CUT=N` breaks off the first N answers partway), simulates the prompt cache and reports `usage`. The
+    Deepgram one takes a continuous stream of PCM per channel, tells speech from silence by loudness, and answers each stretch of speech (an
+    utterance, ended by 700 ms of quiet) with the next line of `FAKE_DEEPGRAM_LIVE` (a JSON array in the order utterances start across both
+    channels; an entry is a string, or `{text, speaker}` for the call side) or "Utterance N."; `FAKE_DEEPGRAM_DROP=N` drops the connection of
+    the Nth utterance as it starts. The variables are read from the environment the app was launched with (`cue.launch({…})`) or from
+    `cue.standIns({…})` for a case with no app. `--real-deepgram` points the backend at the real Deepgram instead, with the key the runner
+    reads from the login keychain (item `Cue e2e Deepgram API key`, added with `security add-generic-password -a "$USER" -s "…" -w`): never
+    put a real key in a case, a fixture, the control file or the chat. A recording of a real call (someone's conversation) never goes into
+    the repository either: case 84 reads one from `E2E_REAL_CALL=path` (any recording macOS can read, a screen recording's `.mov` too) and
+    skips without it;
   - Google and GitHub sign-in: `tests/e2e/harness/fake-idp.ts` serves both providers' endpoints from the case's process (the backend
     reaches it through `IDP_URL`) and approves as whoever the case chose with `backend.idp.approveAs(email)`; nothing else of sign-in is
     faked;
@@ -199,17 +220,17 @@ This rule is strict and has no exceptions.
   cases) or `node tests/e2e/run.ts 20-` (cases whose name starts with `20-`).
   Report the PASS / FAIL / SKIP summary, with the failing output, in the PR
   description.
-- A case that needs something the machine lacks (the speech model, a voice,
+- A case that needs something the machine lacks (whisper-cli and its model for the second pass, a voice,
   a permission, the network) calls `skip('reason')` or a `need…` helper; it
   never fakes the missing piece.
 - Some Macs can't do what certain cases need: GitHub's runners have no GPU for
   speech recognition, and may not draw the overlay readably. Before the
   cases, `run.ts` probes the machine once (`harness/capabilities.ts`) for
-  three things: whisper-cli must hear a spoken test phrase within 20 s, the
+  three things: whisper-cli (the second pass over a recording) must hear a spoken test phrase within 20 s, the
   dashboard's snapshot must read as text, and so must the overlay's once Start
   Cue shows it. It prints what it found (`Speech recognition: yes — 1.4 s for
   1.9 s of speech`), and a case that depends on what's missing skips with that
-  reason: `needWhisper()` does it for speech, and the snapshot helpers
+  reason: `needWhisper()` does it for the second pass (the live transcript is the backend's, and needs none of it), and the snapshot helpers
   (`snapshotText`, `dashboardPage`, `dashboardShows`) for windows and the
   overlay. Call `needWindowSnapshots()` or `needOverlaySnapshots()` yourself
   before reading a snapshot another way.
@@ -220,7 +241,7 @@ Cue is for signed-in people, so every case that launches the app runs against th
 local D1 and KV, started by the case.
 
 - **Each case has its own backend** (`cue.backend()`, `tests/e2e/harness/backend.ts`; `cue.launch()` starts it for you): its own port,
-  its own database in the case's folder, its own stand-in sign-in and, from PR 5, the Anthropic and Deepgram stand-ins of
+  its own database in the case's folder, its own stand-in sign-in and the Anthropic and Deepgram stand-ins of
   `fake-providers.ts` as its upstreams (`ANTHROPIC_URL`, `DEEPGRAM_URL` in the Worker's environment). The alternative, one backend for
   the whole run, would fix what the backend calls upstream when it starts; a case could not say what Anthropic or Deepgram answer
   without a router in between that knows which user is which case. Per case it is simply what the stand-ins of that case say, and
@@ -239,6 +260,13 @@ local D1 and KV, started by the case.
   `backend.seedUsage(email, rows)` (rows of the `usage` table, as PR 7 will write them) and `AdminPage.signIn(backend, email, { scheme, viewport,
   shots })` (`harness/browser.ts`: the SPA in a browser, signed in through the stand-in provider; `.page` is Playwright's, `.shot(name)` writes a
   screenshot into the case's sandbox, `.assertClean()` fails on console errors, exceptions and 5xx, `.navigate('Users')` follows the navigation).
+- **Live calls without the app** (`9b-live-…`, also Linux-friendly): `startCall(backend, email, { materials, language, namesAndTerms, call })` signs in,
+  makes a project with the files as materials and starts a call; `LiveClient.connect(backend, token, callId, after?)` is the app's socket
+  (`play(channel, pcm)` streams audio in real time, `command({…})`, `next(type, check, seconds)` waits for an event, `of(type)`, `answerTo(questionId)`,
+  `drop()`); `bursts(out, seconds, [[from, to]…])` writes loud sound where the Deepgram stand-in should hear speech and silence elsewhere (no
+  voices needed), `pcmOf(wav)` its samples; `cue.standIns({…})` says how the stand-ins reply; `cue.backend({ env: {…} })` can shorten
+  `CACHE_TICK_SECONDS`, `CACHE_REFRESH_SECONDS` and `CALL_GRACE_SECONDS`. `cue.serviceRequests('anthropic-request' | 'deepgram-live')` and
+  `cue.claudeRequests(kind)` report what reached the stand-ins (a Deepgram stream is noted when it ends).
 
 ### Running the cases
 
@@ -249,8 +277,7 @@ itself: no build step, no transpiler, no runtime packages.
 node tests/e2e/run.ts                  # build the app, then run every case
 node tests/e2e/run.ts --no-build 4 5   # the existing build; cases whose name starts with 4 or 5
 node tests/e2e/run.ts --no-app 95-     # no app at all: only cases about the backend (they run on Linux, in a Boat sandbox)
-node tests/e2e/run.ts --real-claude 45 # the real claude CLI instead of the stand-in
-node tests/e2e/run.ts --real-anthropic --real-deepgram 7 8   # the real cloud providers, keys from the keychain
+node tests/e2e/run.ts --real-deepgram 83 84   # the backend's Deepgram is the real one, its key from the keychain
 node tests/e2e/run.ts --keep           # keep every sandbox (a failed case always keeps its own)
 pnpm install && vp check               # format, lint, type-check; run it before you commit
 ```
@@ -270,16 +297,21 @@ windows stay behind all others, where snapshots still capture them.
 Each case is a TypeScript file, `tests/e2e/cases/NN-name.test.ts`, numbered
 by feature area (`0x` CLI and launch, `1x` prompter and recording, `2x`
 projects and dashboard, `3x` call audio, `4x` second-pass transcript, `5x`
-speakers, `6x` calendar, `7x` the Anthropic API and Settings › Providers, `8x` Deepgram, `9x` signing in, the backend and the admin: the admin's are `9a-…`). It declares one test, whose title says the
+speakers, `6x` calendar, `7x` the backend's Anthropic calls, `8x` Deepgram through the backend, `9x` signing in, the backend and the admin: the admin's are `9a-…`, the live calls' `9b-…`). It declares one test, whose title says the
 behaviour it checks:
 
 ```ts
 import { assertContains, dialogue, e2eCase, fixture, needWhisper } from '../harness/index.ts';
 
 e2eCase('A two-sided rehearsal is recorded into notes with both sides.', async (cue) => {
-    needWhisper();
+    needWhisper(); // the second pass reads the recording with whisper-cli; the live transcript below is the stand-in's
     const call = await dialogue(fixture('dialogues', 'sync.txt'), cue.path('call'));
-    await cue.launch({ CUE_REHEARSE_RECORD: '1', CUE_REHEARSE_PARTICIPANT: call.wav('call'), CUE_REHEARSE_ME: call.wav('me') });
+    await cue.launch({
+        FAKE_DEEPGRAM_LIVE: call.live(),
+        CUE_REHEARSE_RECORD: '1',
+        CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+        CUE_REHEARSE_ME: call.wav('me'),
+    });
     await cue.waitLog(/Notes ready/, 180);
     assertContains(cue.readyNotes(), /^## Transcript/);
 });
@@ -293,17 +325,15 @@ anything that runs a process or waits returns a promise — await it. From
 
 - the sandbox, `cue`: `cue.home` (`CUE_HOME`, a fresh folder holding
   `Application Support/Cue` — `cue.support` — and `Documents` —
-  `cue.documents`), its own defaults domain and whisper-server port, all
+  `cue.documents`), its own defaults domain, all
   wiped after the case, so checkouts can run cases at the same time; the
   speech model is linked in, never copied, and so are the speaker models
   once they are downloaded (until then Cue downloads them on first use into
   the checkout's e2e cache, `CUE_SPEAKER_MODELS`); the calendar and the apps
   using the microphone are read from the case's own files, never from the
   Mac. `cue.path(…)` is a path in the case's folder, `cue.save(name, text)`
-  writes a file there, `cue.project(name, settings)` makes a project by hand,
-  `cue.apiKey(service, key?)` saves a provider's key where Cue keeps it under
-  `CUE_HOME` (`cue.keysFile`): the stand-in's, the one given, or with
-  `--real-…` the real one from the keychain (removed when the case ends);
+  writes a file there, `cue.project(name, settings)` makes a project by hand;
+  `cue.keysFile` is where Cue keeps its refresh token under `CUE_HOME`;
 - driving Cue: `cue.defaults(key, value)` (typed by the value: string, bool,
   number or array), `cue.launch({ VAR: 'value' })`, `cue.stop()`,
   `cue.alive()`, `cue.pid`, `cue.cli(…args)` (command-line modes),
@@ -315,9 +345,9 @@ anything that runs a process or waits returns a promise — await it. From
   optionally takes longer, and runs the real one);
 - waiting and reading what Cue did: `cue.waitFor(what, seconds, check)`,
   `cue.waitLog(regex, seconds)`, `cue.sessionLog()`, `cue.logCount(regex)`,
-  `cue.readyNotes()`, `cue.findNotes()`, `cue.claudeRequests(kind)` (what Cue
-  sent the fake claude, or the Anthropic API's stand-in), `cue.serviceRequests(kind)`
-  (how Cue called the cloud stand-ins: model, key, caching, Deepgram's query,
+  `cue.readyNotes()`, `cue.findNotes()`, `cue.claudeRequests(kind)` (what the backend
+  sent the Anthropic API's stand-in), `cue.serviceRequests(kind)`
+  (how the backend called the cloud stand-ins: model, key, caching, Deepgram's query,
   keyterms and audio), `cue.dashboardPage(page, regex)` and
   `cue.dashboardShows(regex)` (show a dashboard page and read its snapshot
   into `cue.page`), `cue.snapshotText(png)`; `summaryOf(notes)` (a note's
@@ -352,12 +382,8 @@ code paths and document new ones here and in `README.md` › Testing.
 
 | Variable | Effect |
 |---|---|
-| `CUE_HOME=dir` | All files under `dir`, settings in the `com.andriishafar.cue.e2e` domain (`apps/mac/Sources/Cue/Storage.swift`), API keys in `dir/Keychain.json` instead of the login keychain (`apps/mac/Sources/Cue/Providers.swift`); windows don't remember their frames (AppKit would keep them in the user's own settings). |
+| `CUE_HOME=dir` | All files under `dir`, settings in the `com.andriishafar.cue.e2e` domain (`apps/mac/Sources/Cue/Storage.swift`), the refresh token in `dir/Keychain.json` instead of the login keychain (`apps/mac/Sources/Cue/CueAPI.swift`); windows don't remember their frames (AppKit would keep them in the user's own settings). |
 | `CUE_DEFAULTS_DOMAIN=name` | With `CUE_HOME`, keep settings in this defaults domain. |
-| `CUE_WHISPER_PORT=n` | Run (or reuse) whisper-server on this port instead of 8178. |
-| `CUE_CLAUDE_BIN=path` | Use this binary instead of `claude`. |
-| `CUE_ANTHROPIC_URL=url` | Send Anthropic API requests (`ClaudeProvider.anthropicAPI`) here instead of `https://api.anthropic.com`. |
-| `CUE_DEEPGRAM_URL=url` | Send Deepgram requests (`SpeechProvider.deepgram`: the key check, live streams over `ws://`, recorded files) here instead of `https://api.deepgram.com`. |
 | `CUE_WHISPER_CLI=path` | Run this binary for the second pass over a recording instead of `whisper-cli` (a missing or failing one: the live transcript is kept). |
 | `CUE_SPEAKER_MODELS=dir` | Keep the speaker models (FluidAudio's `speaker-diarization/` folder) in `dir` instead of `Application Support/Cue/models` (an empty folder: Home offers the download; a file in the way: Finding speakers fails and the transcript is kept). |
 | `CUE_NO_LIVE_AUDIO=1` | Don't open the microphone or call audio. |
@@ -367,7 +393,7 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_SNAPSHOT_METHOD=m` | How `CUE_SNAPSHOT` takes them: `desktop` (the default: each window over the desktop picture alone, so its glass refracts real pixels yet no other window covers it or shows through), `window` (the window alone: the overlay's glass over nothing), `display` (what's on screen behind the window now, other apps included, minus whatever is in front of it) or `offscreen` (the fallback, forced). |
 | `CUE_APPEARANCE=light\|dark` | Use this appearance instead of the system's. |
 | `CUE_PROJECT=name` | Make this project active at launch, creating it if there is none by that name. |
-| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `download speakers` (Download on Home's Speaker models row), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|account\|providers\|calendar` (Settings on that tab), `provider NAME` (a provider picked in Settings › Providers: `claudeCode`, `anthropicAPI`, `whisper`, `deepgram`), `key anthropic\|deepgram [KEY]` (a key pasted into its field and saved; without one, Remove), `set PROJECT | occasion|language|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (a material's minus button), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes), `signin` (Sign In on Home) and `signout` (Sign Out in Settings › Account). Until someone is signed in only `signin`, `signout`, `settings`, `page`, `size`, `provider` and `key` do anything (the rest log `⚠︎ Sign in to Cue first (…)`). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
+| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `download speakers` (Download on Home's Speaker models row), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|account\|calendar` (Settings on that tab), `set PROJECT | occasion|language|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (a material's minus button), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes), `signin` (Sign In on Home) and `signout` (Sign Out in Settings › Account). Until someone is signed in only `signin`, `signout`, `settings`, `page` and `size` do anything (the rest log `⚠︎ Sign in to Cue first (…)`). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
 | `CUE_CALENDAR_EVENTS=file.json` | Read the calendar from this file instead of EventKit (no permission asked), again on every check: a JSON array of `{title, start, end}` (ISO 8601) with optional `id`, `series` (shared by a recurring event's occurrences), `calendar` (name), `url`, `location`, `notes`, `attendees` (names), `recurring`. |
 | `CUE_MIC_APPS=file` | The bundle IDs using the microphone right now, one per line, read on every check instead of Core Audio's process list. |
 | `CUE_MEETING_TICK=s` / `CUE_MIC_RELEASE=s` | Check for calls every `s` seconds instead of 5; stop a call's recording once the call app has been off the microphone for `s` seconds instead of 60. |
@@ -409,12 +435,11 @@ or `⚠︎ Couldn't improve the transcript: …`, `👥 Finding speakers…`,
 for every notification, `⚠︎ Nothing was recorded: …` for every alert,
 `🧐 Question judge ready: Claude Haiku` or
 `⚠︎ Question judge unavailable (…) — going by question marks`,
-`🤖 Claude: PROVIDER` and `🗣 Speech recognition: PROVIDER` at launch and on
-every change, `⚠︎ Speech recognition unavailable: …` and
-`🗣 Speech recognition ready again: Deepgram`, `📖 Waits while you read the answer in view: …`
-and `📖 Shown now that you've paused: …`,
-`🔑 Anthropic API key saved in the keychain` or `… removed` — never a key — and so
-on), and never rename existing lines without
+`🤖 Claude: Cue plan` and `🗣 Speech recognition: Cue plan` at launch,
+`⚠︎ Speech recognition unavailable: …` and
+`🗣 Speech recognition ready again: Cue plan` (all three from the live call's `status` events), `📖 Waits while you read the answer in view: …`
+and `📖 Shown now that you've paused: …`, `⚠︎ Couldn't start the live call: …` and `⚠︎ The live call stopped: …`
+— and so on), and never rename existing lines without
 updating the cases.
 
 ## Rules for changes
@@ -432,7 +457,8 @@ updating the cases.
 - `.github/workflows/ci.yml` runs on pull requests only: it builds the app
   (new warnings in `apps/mac/Sources/Cue` fail it), runs `vp check`
   and the end-to-end suite on GitHub's hosted macOS runner with the speech model and the
-  latest Node. That runner can't recognize speech in time, so speech cases
+  latest Node. That runner can't recognize speech in time (the second pass over a recording, whisper-cli, needs that; the live path does not,
+  it runs through the backend and the stand-ins), so those cases
   skip there with the probe's reason (as do overlay or window snapshot cases,
   if the probe finds those unreadable): CI covers the build, the
   command-line modes, the dashboard and the cases that need no speech. **Run the

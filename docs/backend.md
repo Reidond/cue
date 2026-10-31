@@ -88,9 +88,10 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
 | `GET /v1/me` | Account, plan, limits, usage this month |
 | `GET/POST/PATCH/DELETE /v1/projects[/:id]` | Projects and their settings (language, terms, notes on/off, …) |
 | `POST /v1/projects/:id/materials`, `DELETE …/:materialId` | Upload a file (to R2), its text extracted and its prepared answers parsed |
-| `POST /v1/calls` | Starts a call for a project (calendar event optional) → `callId` |
-| `GET /v1/calls/:id/live` (WebSocket) | In: audio frames tagged by channel (`me`, `others`), and commands (`ask`, `prepare`, `show`). Out: events `transcript.partial/final {channel, speaker, text, start, end}`, `question {id, text}`, `answer.delta/done {questionId}`, `prepared {questionId, answer}`, `error`. |
-| `POST /v1/calls/:id/questions` | Ask from the Ask field (also over the socket); SSE answer |
+| `POST /v1/calls` | Starts a call for a project (calendar event, speaker, Auto, questions optional) → `callId` |
+| `GET /v1/live?call=ID[&after=SEQ]` (WebSocket) | In: binary audio frames (a channel byte, `me` / `others`, then PCM16 mono 16 kHz) and commands (`config`, `ask`, `answerNow`, `prepare`). Out, each with a `seq`: `ready`, `status {part, state, detail}`, `speaking`, `transcript.partial/final {channel, speaker, text, start, end}`, `question {id, exchange, text, opener, requested, forced}`, `prepared {questionId, answer, source, score}`, `answer.delta/done {questionId}`, `error`, `ended`. `after` replays what a reconnecting client missed. At a fixed path rather than `/v1/calls/:id/live`: Elysia drops a route's 101 under `cf dev`, so the socket is `.mount`ed and has no params |
+| `POST /v1/calls/:id/questions` | Ask from the Ask field (also over the socket); SSE of the same events |
+| `POST /v1/summaries` | Temporary, until the notes Workflow: a summary from the system prompt and transcript the client sends (SSE `delta`, `done`, `error`) |
 | `POST /v1/calls/:id/end` | Ends the call: the live transcript is saved, uploads can start |
 | `PUT /v1/calls/:id/recording/:side` | Multipart upload of `me` / `others` audio to R2 (resumable) |
 | `POST /v1/calls/:id/notes` | Starts the notes Workflow once the uploads are in |
@@ -101,10 +102,12 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
 | `GET /v1/notes/:id/audio/:side` | Audio for playing from a timestamp (R2, range requests) |
 | `GET/PUT /v1/calendar/assignments` | Which calendar series records into which project |
 
-- **Call Durable Object**: builds the system prompt from the project's materials, writes the prompt
-  cache and keeps it warm with alarms, holds the Deepgram live streams (with `diarize`), runs the
-  question spotting and judge on each final line, matches prepared answers, answers questions, saves
-  the live transcript to D1 when the call ends, and goes away when idle.
+- **Call Durable Object** (`apps/api/src/call/`, PR 5): builds the system prompt from the project's materials, writes the prompt
+  cache and keeps it warm with alarms, holds the Deepgram live streams (Nova-3, `diarize` on the call side), runs the
+  question spotting and judge on each final line (the waiting rules of the Mac's `QuestionDetector`: wait for the participant to finish, answer
+  at once when the speaker starts talking, the room's microphone as `Room`), matches prepared answers, answers questions, records usage,
+  saves the live transcript to D1 when the call ends, and ends a call nobody has come back to. A dropped client resumes: events carry a `seq` and the
+  last thousand are replayed.
 - **Notes Workflow** (Cloudflare Workflows, each step retried on its own): transcribe the recording
   (Deepgram, `diarize`, the project's terms) → label call-side lines by voice → suggest names
   (Sonnet) → summary (Sonnet) → note stored → progress events. If a step fails for good, the note keeps
