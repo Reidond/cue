@@ -11,7 +11,7 @@ export {
 } from './assert.ts';
 export { afinfo, audioLength, audioSync, dialogue, excerpt, silence, speech, type Dialogue } from './audio.ts';
 export { e2eCase } from './case.ts';
-export { ANTHROPIC, CLAUDE, DEEPGRAM, FIXTURES, fixture } from './config.ts';
+export { DEEPGRAM, FIXTURES, fixture } from './config.ts';
 export { makeDocx, makePdf, makePptx, writeFile } from './documents.ts';
 export { FAKE_KEYS, type AnthropicRequest, type DeepgramRequest, type MarkdownRequest } from './fake-providers.ts';
 export {
@@ -31,13 +31,12 @@ export {
     sameFile,
     writeExecutable,
 } from './files.ts';
+export { bursts, LiveClient, pcmOf, startCall, type StartedCall } from './live.ts';
 export { labelsOf, summaryOf, turnSpeakers } from './notes.ts';
 export { exec, shellQuote, type Ran } from './process.ts';
 export {
     needOverlaySnapshots,
     needReachable,
-    needRealAnthropic,
-    needRealClaude,
     needRealDeepgram,
     needVoice,
     needWhisper,

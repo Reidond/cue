@@ -2,7 +2,7 @@
 // missing: nothing here fakes it.
 import { accessSync, constants, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ANTHROPIC, CLAUDE, DEEPGRAM, KEYCHAIN_ITEMS, REAL_SUPPORT } from './config.ts';
+import { DEEPGRAM, KEYCHAIN_ITEMS, REAL_SUPPORT } from './config.ts';
 import { exists, literal } from './files.ts';
 import { exec } from './process.ts';
 import { skip } from './results.ts';
@@ -37,10 +37,10 @@ function probed(name: keyof Capabilities): Capability | undefined {
     return found[name];
 }
 
-/** The speech model, whisper-server, and speech recognition fast enough for the cases' timeouts. */
+/** The second pass's speech model and whisper-cli, and speech recognition fast enough for the cases' timeouts (the live transcript is the backend's: no case needs this for it). */
 export function needWhisper(): void {
     if (!exists(join(REAL_SUPPORT, 'models', 'ggml-large-v3-turbo.bin'))) skip('speech model not downloaded');
-    if (!brewBins.some((bin) => executable(join(bin, 'whisper-server')))) skip('whisper-server not installed');
+    needWhisperCli();
     const speech = probed('speech');
     if (speech && !speech.ok) skip(speech.detail);
 }
@@ -64,11 +64,6 @@ export function needWhisperCli(): string {
     return found;
 }
 
-/** The real `claude` CLI (`run.ts --real-claude`). */
-export function needRealClaude(): void {
-    if (CLAUDE !== 'real') skip('needs --real-claude');
-}
-
 /**
  * A key for a real service, from the login keychain (KEYCHAIN_ITEMS); skips without one. Never print it:
  * the harness writes it only into the sandbox's key store, which goes when the case ends.
@@ -80,13 +75,7 @@ export async function keychainKey(service: keyof typeof KEYCHAIN_ITEMS): Promise
     return key;
 }
 
-/** The real Anthropic API (`run.ts --real-anthropic`), with its key in the keychain. */
-export async function needRealAnthropic(): Promise<void> {
-    if (ANTHROPIC !== 'real') skip('needs --real-anthropic');
-    await keychainKey('anthropic');
-}
-
-/** The real Deepgram (`run.ts --real-deepgram`), with its key in the keychain. */
+/** The real Deepgram behind the backend (`run.ts --real-deepgram`), with its key in the keychain. */
 export async function needRealDeepgram(): Promise<void> {
     if (DEEPGRAM !== 'real') skip('needs --real-deepgram');
     await keychainKey('deepgram');

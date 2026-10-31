@@ -1,5 +1,6 @@
 // Spoken audio for Cue to hear, made with macOS voices, and measurements of the audio it saved.
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { E2E_BIN, E2E_CACHE } from './config.ts';
@@ -68,6 +69,11 @@ export interface Dialogue {
     timeline: string;
     /** The side's audio: the lines of that side, silence while the others talk. */
     wav(side: string): string;
+    /**
+     * FAKE_DEEPGRAM_LIVE for the Deepgram stand-in: what each line says, in the order the lines start, so that the live transcript is the script (the
+     * stand-in tells speech from silence by loudness and has no ears). The voices of the `call` side are numbered from 0 in the order they first speak.
+     */
+    live(): string;
 }
 
 /** The voices a dialogue script uses: the middle field of its `side | voice | text` lines. */
@@ -92,7 +98,23 @@ export async function dialogue(script: string, out: string): Promise<Dialogue> {
     }
     await mkdir(out, { recursive: true });
     await cp(cache, out, { recursive: true });
-    return { dir: out, timeline: join(out, 'timeline.tsv'), wav: (side) => join(out, `${side}.wav`) };
+    const timeline = join(out, 'timeline.tsv');
+    const live = (): string => {
+        const voices: string[] = [];
+        const rows = linesOf(readFileSync(timeline, 'utf8'))
+            .map((line) => line.split('\t'))
+            .filter((fields) => fields.length >= 5)
+            .map(([start, , side, voice, ...text]) => ({ start: Number(start), side: side!, voice: voice!, text: text.join('\t') }))
+            .sort((a, b) => a.start - b.start);
+        return JSON.stringify(
+            rows.map((row) => {
+                if (row.side === 'me') return row.text;
+                if (!voices.includes(row.voice)) voices.push(row.voice);
+                return { text: row.text, speaker: voices.indexOf(row.voice) };
+            }),
+        );
+    };
+    return { dir: out, timeline, wav: (side) => join(out, `${side}.wav`), live };
 }
 
 /** What `afinfo` says about an audio file. */

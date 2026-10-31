@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 // Runs Cue's end-to-end cases against the built app.
 //
-//   node tests/e2e/run.ts [--no-build] [--no-app] [--real-claude] [--real-anthropic] [--real-deepgram] [--keep] [PREFIX…]
+//   node tests/e2e/run.ts [--no-build] [--no-app] [--real-deepgram] [--keep] [PREFIX…]
 //
 //   --no-build        use the existing apps/mac/build/Cue.app
 //   --no-app          don't build or need Cue.app: only the cases about the backend run (no Swift tools; any case that launches Cue fails)
-//   --real-claude     use the real `claude` CLI instead of tools/fake-claude.ts
-//   --real-anthropic  use the real Anthropic API (its key from the keychain) instead of the stand-in
-//   --real-deepgram   use the real Deepgram (its key from the keychain) instead of the stand-in
+//   --real-deepgram   the backend talks to the real Deepgram (its key from the keychain) instead of the stand-in
 //   --keep            keep every case's sandbox (failed cases are always kept)
 //   PREFIX…           run only cases whose file name starts with one of these
 //
@@ -45,16 +43,12 @@ function modified(path: string): number {
 
 let build = true,
     withApp = true,
-    claude = 'fake',
-    anthropic = 'fake',
     deepgram = 'fake',
     keep = false;
 const prefixes: string[] = [];
 for (const arg of process.argv.slice(2)) {
     if (arg === '--no-build') build = false;
     else if (arg === '--no-app') withApp = false;
-    else if (arg === '--real-claude') claude = 'real';
-    else if (arg === '--real-anthropic') anthropic = 'real';
     else if (arg === '--real-deepgram') deepgram = 'real';
     else if (arg === '--keep') keep = true;
     else if (arg === '-h' || arg === '--help') {
@@ -76,12 +70,6 @@ if (withApp && !executable(join(app, 'Contents', 'MacOS', 'Cue'))) {
     console.log(`No ${app} — run without --no-build`);
     process.exit(1);
 }
-const fakeClaude = join(E2E, 'tools', 'fake-claude.ts');
-if (claude === 'fake' && !executable(fakeClaude)) {
-    console.log(`${fakeClaude} must be executable: Cue runs it as the claude CLI`);
-    process.exit(1);
-}
-
 // One work folder per checkout, so worktrees running cases at once keep their own tools.
 const checkout = createHash('sha1').update(`${ROOT}\n`).digest('hex').slice(0, 8);
 const work = process.env['E2E_WORK'] || join(process.env['TMPDIR'] || tmpdir(), `cue-e2e-${checkout}`);
@@ -117,8 +105,6 @@ if (cases.length === 0) {
 Object.assign(process.env, {
     CUE_APP: app,
     E2E_WORK: work,
-    E2E_CLAUDE: claude,
-    E2E_ANTHROPIC: anthropic,
     E2E_DEEPGRAM: deepgram,
     E2E_KEEP: keep ? '1' : '0',
 });
@@ -200,7 +186,7 @@ function finish(file: string, seconds: number, outcome: Outcome): void {
     }
 }
 
-console.log(`Running ${cases.length} case(s), Claude: ${claude}, Anthropic API: ${anthropic}, Deepgram: ${deepgram}`);
+console.log(`Running ${cases.length} case(s), Deepgram: ${deepgram}`);
 const done = new Set<string>();
 for await (const event of run({ files, concurrency: 1, signal: stop.signal })) {
     if (
