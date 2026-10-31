@@ -48,8 +48,13 @@ e2eCase(
         await pause.click();
         await page.getByRole('alertdialog').getByRole('button', { name: 'Pause the plan' }).click();
         await page.getByText('The plan is paused').waitFor();
+        // The banner shows at once; the server's pause follows.
+        await cue.waitFor(
+            '/v1/me to answer plan_paused',
+            15,
+            async () => (await backend.get('/v1/me', tokens.access_token)).status === 503,
+        );
         const paused = await backend.get('/v1/me', tokens.access_token);
-        assertEq(paused.status, 503, '/v1/me while paused');
         const body = (await paused.json()) as Failure;
         assertEq(body.error.code, 'plan_paused');
         assertEq(body.error.retryable, true);
@@ -61,7 +66,7 @@ e2eCase(
         await admin.navigate('Settings');
         await page.getByRole('switch', { name: 'Pause the plan' }).click();
         await page.getByText('The plan is paused').waitFor({ state: 'detached' });
-        assertEq((await backend.get('/v1/me', tokens.access_token)).status, 200, '/v1/me after resuming');
+        await cue.waitFor('/v1/me to work again', 15, async () => (await backend.get('/v1/me', tokens.access_token)).status === 200);
         admin.assertClean();
     },
 );

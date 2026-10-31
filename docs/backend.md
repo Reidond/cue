@@ -122,6 +122,22 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
 change limit), invites (add, list pending / accepted, revoke), settings (default limit, audio
 retention, pause the whole plan). No transcripts or notes: the admin sees usage, not content.
 
+| Route | Does |
+|---|---|
+| `GET /admin/v1/session` | Who the cookie belongs to (any signed-in account: the SPA shows "Not allowed" to a member) |
+| `GET /admin/v1/overview[?month]` | The month's spend against the sum of everyone's limits, per day, per feature, top ten spenders |
+| `GET /admin/v1/users[?q&status&sort&page]`, `GET …/users/:id[?month]` | Users with spend, limit, last activity and status; one user with spend per day and per feature |
+| `POST …/users/:id/disable`, `…/enable`, `PATCH …/users/:id/limit` | Disable (ban, tokens revoked, KV denylist) and enable; a monthly limit, or `null` for the default |
+| `GET/POST /admin/v1/invites`, `DELETE …/invites/:email` | Pending, accepted and disabled invites; add; withdraw one nobody has used |
+| `GET/PATCH /admin/v1/settings` | Default monthly limit (20 USD), audio retention (30 days), pausing the plan |
+
+Writes need this origin's `Origin` header. Money is millionths of a dollar in the `usage` table
+(`user_id, feature, provider, model, units, unit, cost_micros, created_at`, which PR 7 fills), and the
+limits are dollars: `user_limit` per person, else the `default_monthly_limit_usd` setting. A paused plan
+(`plan_paused`, 503) is checked once per `/v1` request (`src/routes/v1.ts`); the admin is not under `/v1`.
+Invite, enable, disable and revoke are one set of SQL statements (`src/accounts.ts`) shared by the admin
+API and the owner's script.
+
 ## Admin SPA (`apps/admin`)
 
 For the owner only, served by the api Worker as static assets at `/admin` (SPA fallback), so the
@@ -134,7 +150,10 @@ admin API is same-origin.
   `prefers-reduced-motion`; oxlint's react, react-hooks and jsx-a11y plugins.
 - Designed with the `better-ui` and `emil-design-eng` skills: concentric radii, optical alignment,
   real hit areas, restrained purposeful motion with proper easing, no layout shift.
-- Pages: Overview, Users (and one user), Invites, Settings. Sign in with Google / GitHub.
+- Pages: Overview, Users (and one user), Invites, Settings. Sign in with Google / GitHub (`/login/PROVIDER?next=admin`
+  comes back to `/admin/`); a signed-in member sees "Not allowed".
+- Built as the *client environment* of the api's Vite project (`apps/api/index.html` → `admin-entry.ts` → the SPA); `assets` in
+  `cloudflare.config.ts` serves it at `/admin` with the SPA fallback, so every prefix the Worker answers is listed in `runWorkerFirst`.
 
 ## The Mac app becomes a client
 

@@ -15,6 +15,7 @@ package.json, pnpm-workspace.yaml   # apps/*, packages/*, tests/e2e; pnpm-lock.y
 vite.config.ts                      # the one lint (oxlint) and fmt (oxfmt) configuration, overrides per package
 apps/mac/                           # the Swift app: Package.swift, Sources/Cue, Resources, scripts/build.sh
 apps/api/                           # the Cue API: an Elysia Worker on Cloudflare (cloudflare.config.ts, src/, migrations/, scripts/)
+apps/admin/                         # the owner's admin SPA (React): built as the api Worker's client assets, served at /admin
 packages/contract/                  # TypeBox schemas of the API's requests and responses
 tests/e2e/                          # the end-to-end suite, a workspace package
 scripts/changelog.sh                # release notes; repo-wide, used by the release workflow
@@ -62,6 +63,29 @@ the only way to use the app. Work on it in a Boat sandbox like everything else (
   when that fails). The remote path has not run against a real account yet. A user is invited or an `ADMIN_EMAILS` address
   (always invited, the `admin` role); only a provider-verified email may sign in.
 
+## The admin (`apps/api` `/admin/v1`, `apps/admin`)
+
+The owner's admin: usage and money, never content (no transcripts, no notes). `docs/backend.md` › Admin API says what it covers.
+
+- **API**: `src/routes/admin.ts`, a plugin under `/admin/v1`, authorized by a Better Auth session cookie whose user is an owner (`admin` role or
+  `ADMIN_EMAILS`): no session `401`, a member `403` (`GET /admin/v1/session` alone answers a member, so the SPA can say "Not allowed"). A write
+  must carry this origin's `Origin` header. Schemas are in `packages/contract/src/admin.ts`; money is dollars in the contract and millionths of a
+  dollar in the `usage` table; times are milliseconds. Settings (default monthly limit, audio retention, pausing the plan) are rows of `setting`;
+  `src/routes/v1.ts` is the `/v1` group (the plan gate, then each feature's plugin: `me`, PR 4's projects, …), and a paused plan makes every route in
+  it answer `plan_paused` (503). `/v1/me` reads the limit (`user_limit`, else the default) and the month's usage from `usage`; PR 7 writes that table.
+- **One code path for who may use Cue**: `src/accounts.ts` holds the SQL of invite, enable, disable and revoke (plain TypeScript, no
+  `cloudflare:workers`); the admin API runs it through `env.DB.batch`, the owner's script (`scripts/invite.ts`) through `cf d1 raw`. Disabling also
+  puts the user on the KV denylist (`denylistKey`).
+- **The SPA** (`apps/admin`: React 19 with the React Compiler, TanStack Router file routes and Query, Eden typed from the api's `App`, Base UI, plain
+  CSS tokens in `src/styles/tokens.css`) is the *client environment* of the api's Vite project: `apps/api/index.html` and `admin-entry.ts` are the
+  entry, `apps/admin/vite.preset.ts` the plugins, `assets` in `cloudflare.config.ts` serve it under `/admin` with the SPA fallback. The fallback
+  is not limited to `/admin`: **every prefix the Worker itself answers must be in `assets.runWorkerFirst`** (`/`, `/v1/*`, `/admin/v1/*`, `/api/*`,
+  `/login*`, …), or a navigation gets the SPA's `index.html` (and `cf dev` Vite's own 404). `src/routeTree.gen.ts` is generated (by `cf dev` or
+  `cf build`) and committed. Signing in is the Worker's `/login/PROVIDER?next=admin`, which comes back to `/admin/`.
+- Eden turns date-looking strings into `Date`s; the client is made with `parseDate: false`. Toggles are optimistic (`src/lib/queries.ts`: snapshot,
+  patch, roll back on error, invalidate): a case that checks the server after one must wait for it (`cue.waitFor`), not read it at once.
+- Lint: oxlint's `react` (with the react-hooks rules) and `jsx-a11y` plugins are on for everything in the root `vite.config.ts`.
+
 ## Cloud sandboxes (Boat)
 
 Use a Boat sandbox for builds, tests, untrusted code, Docker, and long jobs.
@@ -107,6 +131,9 @@ This rule is strict and has no exceptions.
   (`--inspect`, `--render`, …) — against real files, real audio, real
   `whisper-server` and real child processes, and checks what a user would see:
   the notes on disk, the audio files, the session log, the rendered windows.
+- **The suite's browser is Playwright** (`playwright-core` in `tests/e2e`; it downloads nothing): `harness/browser.ts` drives the machine's Chrome
+  headless (`E2E_BROWSER=path` names another; macOS CI has Chrome, a Boat sandbox has `/usr/bin/google-chrome`; a machine without one skips the
+  case) for the cases that use the admin SPA as its owner does. Never for the Mac app, which is driven by `CUE_CONTROL`.
 - Stand-ins are allowed only at the outer boundary, never for Cue's own code:
   - the paid external service: `tests/e2e/tools/fake-claude.ts` replaces
     the `claude` CLI (through `CUE_CLAUDE_BIN`) so cases are fast and
@@ -177,10 +204,14 @@ local D1 and KV, started by the case.
   itself. `cue.launch({…}, { signIn: false })` launches signed out, for a case that drives the sign-in; `{ backend: {…} }` gives
   `cue.backend()` its options (`accessTokenSeconds`, `adminEmails`, `env`). `cue.refreshToken` is the token Cue keeps, `cue.signedIn`
   whether it has one.
-- The backend's own cases need no app: `node tests/e2e/run.ts --no-app 95 96 97` builds nothing, needs no Swift tools, and runs on
-  Linux (a Boat sandbox) too. They use `backend.tokensFor(email)`, `backend.signInAs(email, { provider, verified })`,
+- The backend's own cases need no app: `node tests/e2e/run.ts --no-app 95 96 97 9a-` builds nothing, needs no Swift tools, and runs on
+  Linux (a Boat sandbox) too (all of `9a-` but `9a-admin-disable-app`, which signs the Mac app out). They use `backend.tokensFor(email)`, `backend.signInAs(email, { provider, verified })`,
   `backend.refresh(token)`, `backend.revoke(token)`, `backend.get(path, accessToken)`, `backend.invite(email)` and
-  `backend.disable(email)` (the owner's script), the stand-in `backend.idp` and `backend.log` (the Worker's output).
+  `backend.disable(email)` (the owner's script), the stand-in `backend.idp` and `backend.log` (the Worker's output). The admin's:
+  `backend.adminAs(email)` (an `AdminClient` with the session cookie a browser would get: `get`, `call(method, path, body, origin)`),
+  `backend.seedUsage(email, rows)` (rows of the `usage` table, as PR 7 will write them) and `AdminPage.signIn(backend, email, { scheme, viewport,
+  shots })` (`harness/browser.ts`: the SPA in a browser, signed in through the stand-in provider; `.page` is Playwright's, `.shot(name)` writes a
+  screenshot into the case's sandbox, `.assertClean()` fails on console errors, exceptions and 5xx, `.navigate('Users')` follows the navigation).
 
 ### Running the cases
 
@@ -212,7 +243,7 @@ windows stay behind all others, where snapshots still capture them.
 Each case is a TypeScript file, `tests/e2e/cases/NN-name.test.ts`, numbered
 by feature area (`0x` CLI and launch, `1x` prompter and recording, `2x`
 projects and dashboard, `3x` call audio, `4x` second-pass transcript, `5x`
-speakers, `6x` calendar, `7x` the Anthropic API and Settings › Providers, `8x` Deepgram, `9x` signing in and the backend). It declares one test, whose title says the
+speakers, `6x` calendar, `7x` the Anthropic API and Settings › Providers, `8x` Deepgram, `9x` signing in, the backend and the admin: the admin's are `9a-…`). It declares one test, whose title says the
 behaviour it checks:
 
 ```ts
