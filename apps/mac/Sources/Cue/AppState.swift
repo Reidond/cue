@@ -545,7 +545,8 @@ final class AppState: ObservableObject {
         guard let path = ProcessInfo.processInfo.environment["CUE_REHEARSE_PARTICIPANT"], !rehearsalStarted else { return }
         rehearsalStarted = true
         Task {
-            while !claude.ok || judge.state == .starting { try? await Task.sleep(for: .milliseconds(300)) }
+            // Nothing is heard before someone is signed in (and Cue running, which signing in starts for a rehearsal).
+            while !claude.ok || judge.state == .starting || !api.isSignedIn || !cueRunning { try? await Task.sleep(for: .milliseconds(300)) }
             do {
                 // CUE_REHEARSE_RECORD=1 also records the rehearsal and writes its notes.
                 let record = ProcessInfo.processInfo.environment["CUE_REHEARSE_RECORD"] == "1"
