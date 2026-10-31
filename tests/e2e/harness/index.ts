@@ -35,6 +35,8 @@ export {
     needWindowSnapshots,
 } from './requirements.ts';
 export { fail, print, skip } from './results.ts';
+export { Backend, type BackendOptions } from './backend.ts';
+export { type FakeIdp } from './fake-idp.ts';
 export { Cue, SPEAKER_FILES, type CalendarEvent, type ClaudeRequest } from './sandbox.ts';
 export { appWindows, ocr, type AppWindows } from './screen.ts';
 export { minutesFromNow, sleep, tomorrowAt } from './time.ts';

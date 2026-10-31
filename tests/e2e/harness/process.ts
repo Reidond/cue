@@ -13,6 +13,8 @@ export interface Ran {
 
 export interface RunOptions {
     env?: NodeJS.ProcessEnv;
+    /** The folder it runs in; the current one by default. */
+    cwd?: string;
     /** Written to its stdin, which is then closed; without it, stdin is empty. */
     input?: string;
     /** Seconds after which it is killed (its code is then 137). */
@@ -24,6 +26,7 @@ export function exec(command: string, args: readonly string[] = [], options: Run
     return new Promise((resolve) => {
         const child = spawn(command, args, {
             env: options.env ?? process.env,
+            cwd: options.cwd,
             stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         });
         let stdout = '',

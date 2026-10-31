@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Runs Cue's end-to-end cases against the built app.
 //
-//   node tests/e2e/run.ts [--no-build] [--real-claude] [--real-anthropic] [--real-deepgram] [--keep] [PREFIX…]
+//   node tests/e2e/run.ts [--no-build] [--no-app] [--real-claude] [--real-anthropic] [--real-deepgram] [--keep] [PREFIX…]
 //
 //   --no-build        use the existing apps/mac/build/Cue.app
+//   --no-app          don't build or need Cue.app: only the cases about the backend run (no Swift tools; any case that launches Cue fails)
 //   --real-claude     use the real `claude` CLI instead of tools/fake-claude.ts
 //   --real-anthropic  use the real Anthropic API (its key from the keychain) instead of the stand-in
 //   --real-deepgram   use the real Deepgram (its key from the keychain) instead of the stand-in
@@ -24,7 +25,7 @@ const ROOT = resolve(E2E, '..', '..');
 function usage(): string {
     return readFileSync(import.meta.filename, 'utf8')
         .split('\n')
-        .slice(1, 13)
+        .slice(1, 14)
         .map((line) => line.replace(/^\/\/ ?/, ''))
         .join('\n');
 }
@@ -43,6 +44,7 @@ function modified(path: string): number {
 }
 
 let build = true,
+    withApp = true,
     claude = 'fake',
     anthropic = 'fake',
     deepgram = 'fake',
@@ -50,6 +52,7 @@ let build = true,
 const prefixes: string[] = [];
 for (const arg of process.argv.slice(2)) {
     if (arg === '--no-build') build = false;
+    else if (arg === '--no-app') withApp = false;
     else if (arg === '--real-claude') claude = 'real';
     else if (arg === '--real-anthropic') anthropic = 'real';
     else if (arg === '--real-deepgram') deepgram = 'real';
@@ -60,7 +63,7 @@ for (const arg of process.argv.slice(2)) {
     } else prefixes.push(arg);
 }
 
-if (build) {
+if (build && withApp) {
     console.log('Building Cue…');
     const built = spawnSync(join(ROOT, 'apps', 'mac', 'scripts', 'build.sh'), { stdio: ['inherit', 'ignore', 'inherit'] });
     if (built.status !== 0) {
@@ -69,7 +72,7 @@ if (build) {
     }
 }
 const app = join(ROOT, 'apps', 'mac', 'build', 'Cue.app');
-if (!executable(join(app, 'Contents', 'MacOS', 'Cue'))) {
+if (withApp && !executable(join(app, 'Contents', 'MacOS', 'Cue'))) {
     console.log(`No ${app} — run without --no-build`);
     process.exit(1);
 }
@@ -88,7 +91,7 @@ mkdirSync(join(work, 'cache'), { recursive: true });
 
 // The helpers that need Apple's frameworks, rebuilt when their source changes.
 for (const source of readdirSync(join(E2E, 'tools'))
-    .filter((name) => name.endsWith('.swift'))
+    .filter((name) => withApp && name.endsWith('.swift'))
     .sort()) {
     const path = join(E2E, 'tools', source),
         tool = join(bin, basename(source, '.swift'));

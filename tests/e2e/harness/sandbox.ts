@@ -4,7 +4,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, closeSync, openSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { Backend, type BackendOptions } from './backend.ts';
 import { ANTHROPIC, CLAUDE, CUE_BIN, DEEPGRAM, E2E_CACHE, E2E_WORK, FAKE_CLAUDE, KEEP, REAL_SUPPORT } from './config.ts';
 import { FAKE_KEYS, startFakeProviders, type AnthropicRequest, type DeepgramRequest, type FakeProviders } from './fake-providers.ts';
 import {
@@ -113,10 +114,14 @@ export class Cue {
     /** The environment of the Cue running, for the services' stand-ins to reply by. */
     #launched: NodeJS.ProcessEnv = {};
     #providers: FakeProviders | undefined;
+    #backend: Promise<Backend> | undefined;
     #closing: Promise<void> | undefined;
+    /** The name of the case, for the email of its user. */
+    readonly #name: string;
 
     private constructor(dir: string, domain: string, port: number) {
         this.dir = dir;
+        this.#name = basename(dir).replace(/\.[^.]*$/, '');
         this.home = join(dir, 'home');
         this.support = join(this.home, 'Application Support', 'Cue');
         this.documents = join(this.home, 'Documents');
@@ -172,6 +177,7 @@ export class Cue {
     close(succeeded: boolean): Promise<void> {
         this.#closing ??= (async () => {
             await this.stop();
+            await (await this.#backend?.catch(() => undefined))?.stop();
             await this.#providers?.close();
             // A real key never stays behind, not even in a kept sandbox.
             await rm(this.keysFile, { force: true });
@@ -244,12 +250,44 @@ export class Cue {
     }
 
     /**
+     * The case's own backend (apps/api under `cf dev`, with its own database and stand-in sign-in; harness/backend.ts), started on the
+     * first call and stopped with the case. `options` apply to that first call. `launch` starts it for you, and invites `email`.
+     */
+    backend(options: BackendOptions = {}): Promise<Backend> {
+        this.#backend ??= Backend.start(this.dir, {
+            ...options,
+            // What the backend calls upstream is what this case's stand-ins answer.
+            env: { ...(this.#providers ? { ANTHROPIC_URL: this.#providers.url, DEEPGRAM_URL: this.#providers.url } : {}), ...options.env },
+        });
+        return this.#backend;
+    }
+
+    /** The email of the case's user: invited at the first signed-in `launch`, and the one the stand-in sign-in approves. */
+    get email(): string {
+        return `${this.#name}-${process.pid}@cue.test`.toLowerCase().replace(/[^a-z0-9@.-]/g, '-');
+    }
+
+    /** Whether Cue has a refresh token saved (it signed in, and has not signed out), where it keeps it under CUE_HOME. */
+    get signedIn(): boolean {
+        return Boolean(existsJson(this.keysFile)['cueRefreshToken']);
+    }
+
+    /**
      * Starts the app in the background with live audio off (pass CUE_NO_LIVE_AUDIO: '0' to override),
      * out of the user's way (CUE_BACKGROUND: never in front, never taking focus), the calendar read
      * from `events` and the microphone users from `micAppsFile`, and waits for its session log. Its
      * output goes to cue.out.
+     *
+     * Cue is for invited people who have signed in, so by default this also starts the case's backend, invites `email` and signs in
+     * (headless, `CUE_WEB_AUTH`), waiting for `🔑 Signed in to Cue as …`; a relaunch finds its refresh token and signs in on its own.
+     * `signIn: false` launches signed out (still pointed at the backend, in headless mode), for a case that drives the sign-in itself.
      */
-    async launch(env: LaunchEnv = {}): Promise<void> {
+    async launch(env: LaunchEnv = {}, options: { signIn?: boolean; backend?: BackendOptions } = {}): Promise<void> {
+        const backend = await this.backend(options.backend);
+        if (options.signIn !== false) {
+            await backend.invite(this.email);
+            backend.idp.approveAs(this.email);
+        }
         const previous = this.#newestSessionLog();
         writeFileSync(this.path('control'), '');
         const out = openSync(this.path('cue.out'), 'a');
@@ -260,6 +298,8 @@ export class Cue {
             CUE_CONTROL: this.path('control'),
             CUE_CALENDAR_EVENTS: this.events,
             CUE_MIC_APPS: this.micAppsFile,
+            CUE_API_URL: backend.url,
+            CUE_WEB_AUTH: 'headless',
             ...env,
         };
         const app = spawn(CUE_BIN, [], { env: this.#launched, stdio: ['ignore', out, out] });
@@ -271,6 +311,13 @@ export class Cue {
             const log = this.#newestSessionLog();
             return log !== undefined && log !== previous;
         });
+        if (options.signIn !== false) await this.signIn();
+    }
+
+    /** Signs in, as a click on Sign in would, and waits for it (unless Cue signed in on its own from the refresh token it kept). */
+    async signIn(): Promise<void> {
+        if (!this.signedIn) this.control('signin');
+        await this.waitLog(/🔑 Signed in to Cue as /, 60);
     }
 
     /** Quits the app the way Ctrl-C does (a clean shutdown), then makes sure. */
