@@ -3,7 +3,8 @@
 // backend rather than sharing one with the run, so that what the backend calls upstream is exactly what that case's stand-ins answer,
 // and cases stay independent and safe to run from several checkouts at once (see AGENTS.md › Testing).
 import { type ChildProcess, spawn } from 'node:child_process';
-import { closeSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { basename, extname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -24,6 +25,7 @@ import { sleep, within } from './time.ts';
 
 const API = join(E2E_ROOT, '..', '..', 'apps', 'api');
 const CF = join(API, 'node_modules', '.bin', 'cf');
+const VP = join(E2E_ROOT, '..', '..', 'node_modules', '.bin', 'vp');
 const CONTENT_TYPES: Record<string, string> = {
     '.pdf': 'application/pdf',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -101,9 +103,18 @@ export class Backend {
             });
             if (migrated.code !== 0) fail("the backend's migrations failed", migrated.output);
 
+            // E2E_BACKEND=preview runs the compiled Worker (`cf build --mode development`, served by `vp preview`) instead of `cf dev`: Elysia
+            // compiles its routes ahead of time there, as in production, and under `cf dev` it does not (AGENTS.md › The backend).
+            const preview = process.env['E2E_BACKEND'] === 'preview';
+            if (preview) {
+                const built = await exec(CF, ['build', '--mode', 'development'], { env, cwd: API, timeout: 300 });
+                if (built.code !== 0) fail('building the backend failed', built.output);
+            }
             const out = openSync(log, 'a');
             // Its own process group: `cf dev` leaves `cf-vite` and `workerd` behind when only it is killed.
-            const child = spawn(CF, ['dev'], { cwd: API, env, stdio: ['ignore', out, out], detached: true });
+            const child = preview
+                ? spawn(VP, ['preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { cwd: API, env, stdio: ['ignore', out, out], detached: true })
+                : spawn(CF, ['dev'], { cwd: API, env, stdio: ['ignore', out, out], detached: true });
             closeSync(out);
             backend = new Backend(url, idp, log, state, child);
             await backend.#waitUntilReady();
@@ -246,6 +257,20 @@ export class Backend {
         const [first] = JSON.parse(ran.output.slice(ran.output.indexOf('['))) as { results: { columns: string[]; rows: unknown[][] } }[];
         const { columns = [], rows = [] } = first?.results ?? {};
         return rows.map((row) => Object.fromEntries(columns.map((column, index) => [column, row[index]])));
+    }
+
+    /** The keys of the objects in the backend's R2 (local, a SQLite file under the case's folder): what was stored, which the API does not list. */
+    objects(): string[] {
+        const folder = join(this.state, 'v3', 'r2', 'miniflare-R2BucketObject');
+        const files = existsSync(folder) ? readdirSync(folder).filter((name) => name.endsWith('.sqlite') && name !== 'metadata.sqlite') : [];
+        return files.flatMap((name) => {
+            const database = new DatabaseSync(join(folder, name), { readOnly: true });
+            try {
+                return (database.prepare('SELECT key FROM _mf_objects').all() as { key: string }[]).map((row) => row.key);
+            } finally {
+                database.close();
+            }
+        });
     }
 
     /** Signs `email` in and returns their view of the account, to check from outside what the app put there. */

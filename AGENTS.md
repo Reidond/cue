@@ -86,8 +86,9 @@ A person's projects (name, occasion, language, names and terms) and their materi
   account's projects, makes a folder for the ones this Mac hasn't seen, and uploads every folder without a `serverID` once (`📦 Imported N projects from this Mac`).
   Create, rename, delete and adding or removing a file wait for the server; field edits are saved here at once and to the account after 0.8 s (`☁️ Saved “NAME” to your account`).
   `CUE_CONTROL` commands run one after another, so `new` and `add` finish before the next line. `KnowledgeBase` builds Claude's prompt from the server's text.
+- **AoT**: `E2E_BACKEND=preview node tests/e2e/run.ts --no-app 26 27` runs the same cases against the compiled Worker (`cf build --mode development`, `vp preview`), where Elysia compiles its routes ahead of time.
 - **In a case**: `backend.call(method, path, token, { body | file })`, `backend.accountOf(email)` (`Account`: `projects()`, `materials()`, `text()`, `answers()`) and
-  `backend.rows(sql)` check the account from outside the app; `makeDocx`/`makePdf`/`makePptx`/`writeFile` build the files.
+  `backend.rows(sql)` and `backend.objects()` (R2 keys) check the account from outside the app; `makeDocx`/`makePdf`/`makePptx`/`writeFile` build the files.
 
 ## The admin (`apps/api` `/admin/v1`, `apps/admin`)
 

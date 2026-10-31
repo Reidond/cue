@@ -126,8 +126,15 @@ e2eCase('Files added to a project are stored, read on the server, and their prep
     assertEq((await answers()).length, 4 + 2 + 1 + 1, 'and the English ones still are');
 
     // Removing a file.
+    assertEq(backend.objects().length, 7, 'the originals are in R2');
     assertEq((await backend.call('DELETE', `${base}/materials/${talk.body.id}`, token)).status, 200);
     assertEq((await backend.call('GET', `${base}/materials/${talk.body.id}`, token)).status, 404, 'the removed file is gone');
     assertEq((await answers()).some((item) => item.source === 'talk.md'), false, 'and so are its prepared answers');
     assertEq(((await backend.call('GET', `${base}/materials`, token)).body.materials as Material[]).length, 6, 'five left, and the Ukrainian one');
+    assertEq(backend.objects().length, 6, 'the original of the removed file is gone from R2');
+
+    // Deleting the project takes the rest with it.
+    assertEq((await backend.call('DELETE', base, token)).status, 200);
+    assertEq(backend.objects().length, 0, "the project's files are gone from R2");
+    assertEq(Number((await backend.rows('SELECT COUNT(*) AS n FROM material'))[0]?.['n']), 0, 'and from the database');
 });
