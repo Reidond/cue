@@ -3,8 +3,9 @@ import { openapi } from '@elysiajs/openapi';
 import { Elysia } from 'elysia';
 import { CloudflareAdapter } from 'elysia/adapter/cloudflare-worker';
 import { ApiError, errorResponse } from './errors.ts';
-import { me } from './routes/me.ts';
+import { admin } from './routes/admin.ts';
 import { signIn } from './routes/sign-in.ts';
+import { v1 } from './routes/v1.ts';
 
 // `cf dev` imports the entry from inside a request-scoped callback, where workerd forbids `Function(...)`
 // (what Elysia's AoT compiler uses). Production evaluates it at startup, where it's allowed.
@@ -30,7 +31,8 @@ const routes = new Elysia({ adapter: CloudflareAdapter, aot: !dev })
     )
     .get('/', () => ({ name: 'Cue API', version: 1 }))
     .use(signIn)
-    .use(me);
+    .use(v1)
+    .use(admin);
 
 export type App = typeof routes;
 export default dev ? routes : routes.compile();

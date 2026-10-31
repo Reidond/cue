@@ -43,9 +43,10 @@ export function signInPage(resume: URLSearchParams, providers: readonly Provider
                 `<a class="button" data-provider="${provider}" href="/login/${provider}?${escapeHtml(resume.toString())}">Continue with ${PROVIDER_TITLES[provider]}</a>`,
         )
         .join('\n');
+    const title = resume.get('next') === 'admin' ? 'Sign in to Cue admin' : 'Sign in to Cue';
     return page(
-        'Sign in to Cue',
-        `<h1>Sign in to Cue</h1>
+        title,
+        `<h1>${title}</h1>
 <p>Cue is invite-only. Use the Google or GitHub account your invitation went to.</p>
 ${buttons}`,
     );

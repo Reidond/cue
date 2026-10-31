@@ -21,7 +21,7 @@ e2eCase('Only an invited email that Google or GitHub vouches for signs in, and /
     assertEq(body.account.role, 'user');
     assertEq(body.plan.id, 'cue');
     assertEq(body.usage.audioSeconds, 0);
-    assertEq(String(body.limits.monthlyUsd), 'null');
+    assertEq(body.limits.monthlyUsd, 20, 'the default monthly limit');
 
     // The same person with GitHub is the same user.
     const viaGithub = await backend.tokensFor(alice, { provider: 'github' });

@@ -119,3 +119,37 @@ export async function revokeToken(base: string, token: string): Promise<number> 
     });
     return response.status;
 }
+
+/**
+ * Signing in to the admin as a browser does it (`/login/PROVIDER?next=admin`, the provider's page, the callback): the session cookie of the
+ * admin SPA's API, or why it did not come. A cookie jar stands in for the browser, as in `signInThroughBrowser`.
+ */
+export async function signInToAdmin(
+    base: string,
+    provider: 'google' | 'github' = 'google',
+): Promise<{ kind: 'session'; cookie: string } | { kind: 'not_invited'; email: string | null } | { kind: 'failed'; detail: string }> {
+    const jar = new Map<string, string>();
+    let next = new URL(`/login/${provider}?next=admin`, base).toString();
+    for (let hop = 0; hop < 15; hop++) {
+        const response = await fetch(next, {
+            redirect: 'manual',
+            headers: { cookie: [...jar].map(([name, value]) => `${name}=${value}`).join('; '), accept: 'text/html' },
+        });
+        for (const line of response.headers.getSetCookie()) {
+            const [pair = ''] = line.split(';');
+            const eq = pair.indexOf('=');
+            const name = pair.slice(0, eq),
+                value = pair.slice(eq + 1);
+            if (value === '' || /max-age=0/i.test(line)) jar.delete(name);
+            else jar.set(name, value);
+        }
+        const location = response.headers.get('location');
+        if (!location) return { kind: 'failed', detail: `${response.status} ${(await response.text()).slice(0, 200)}` };
+        next = new URL(location, next).toString();
+        const landed = new URL(next);
+        if (landed.pathname === '/invite-only') return { kind: 'not_invited', email: landed.searchParams.get('email') };
+        if (landed.pathname === '/sign-in-failed') return { kind: 'failed', detail: next };
+        if (landed.pathname.startsWith('/admin')) return { kind: 'session', cookie: [...jar].map(([name, value]) => `${name}=${value}`).join('; ') };
+    }
+    return { kind: 'failed', detail: 'too many redirects' };
+}

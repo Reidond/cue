@@ -53,6 +53,12 @@ tests/e2e/                          # the end-to-end suite as a workspace packag
 
 ## Backend (`apps/api`)
 
+**Routing rule:** Elysia owns all routing. Every route is an Elysia route with typed params and
+TypeBox schemas, grouped by feature; the Worker's `fetch` is the Elysia app's; Better Auth is mounted
+through Elysia; Durable Objects are called through RPC methods on their stubs, and a DO's `fetch`
+exists only for a WebSocket upgrade. No hand-written path matching (`pathname.endsWith`, regexes,
+pre-Elysia dispatch) anywhere.
+
 Elysia (`CloudflareAdapter`, `.compile()`), D1, R2, Durable Objects, Workflows, Workers AI
 (`toMarkdown`), KV, Rate Limiting. Secrets: `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`,
 `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID/SECRET`, `GITHUB_CLIENT_ID/SECRET`. Vars: `ANTHROPIC_URL`,

@@ -8,7 +8,15 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { E2E_ROOT } from './config.ts';
 import { type FakeIdp, startFakeIdp } from './fake-idp.ts';
-import { exchangeCode, refreshTokens, revokeToken, signInThroughBrowser, type SignInResult, type TokenResult } from './oauth-client.ts';
+import {
+    exchangeCode,
+    refreshTokens,
+    revokeToken,
+    signInThroughBrowser,
+    signInToAdmin,
+    type SignInResult,
+    type TokenResult,
+} from './oauth-client.ts';
 import { exec } from './process.ts';
 import { fail } from './results.ts';
 import { sleep, within } from './time.ts';
@@ -185,5 +193,75 @@ export class Backend {
     /** `GET path` with a bearer token (or none). */
     get(path: string, accessToken?: string): Promise<Response> {
         return fetch(new URL(path, this.url), { headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {} });
+    }
+
+    // MARK: The admin API, as the admin SPA's browser calls it
+
+    /** Signs `email` in to the admin (the session cookie a browser would get) and returns a client for `/admin/v1`; fails the case if the sign-in does not end there. */
+    async adminAs(email: string, options: { provider?: 'google' | 'github' } = {}): Promise<AdminClient> {
+        this.idp.approveAs(email);
+        const result = await signInToAdmin(this.url, options.provider);
+        if (result.kind !== 'session') return fail(`signing in to the admin as ${email} did not end in a session`, JSON.stringify(result));
+        return new AdminClient(this.url, result.cookie);
+    }
+
+    /** Spend the admin should show: priced calls of `email`, as PR 7 will record them (`usage` table); `at` is the time of each, default now. */
+    async seedUsage(
+        email: string,
+        rows: { feature: string; provider?: string; model?: string; usd: number; at?: Date; units?: number; unit?: string }[],
+    ): Promise<void> {
+        const quote = (text: string) => `'${text.replaceAll("'", "''")}'`;
+        const values = rows.map(
+            (row) =>
+                `((SELECT id FROM user WHERE email = ${quote(email)}), ${quote(row.feature)}, ${quote(row.provider ?? 'anthropic')}, ${quote(row.model ?? 'test-model')}, ${row.units ?? 1000}, ${quote(row.unit ?? 'input_tokens')}, ${Math.round(row.usd * 1e6)}, ${Math.floor((row.at ?? new Date()).getTime() / 1000)})`,
+        );
+        const ran = await exec(
+            CF,
+            [
+                'd1',
+                'raw',
+                DEV_DB_ID,
+                '--local',
+                '--persist-to',
+                this.state,
+                '--sql',
+                `INSERT INTO usage (user_id, feature, provider, model, units, unit, cost_micros, created_at) VALUES ${values.join(', ')}`,
+            ],
+            { env: { ...process.env, CI: '1' }, cwd: API, timeout: 60 },
+        );
+        if (ran.code !== 0) fail('seeding usage failed', ran.output);
+    }
+}
+
+/** `/admin/v1` with a session cookie, as the admin SPA's `fetch` sends it (a write also carries the `Origin` of the page). */
+export class AdminClient {
+    readonly #base: string;
+    readonly #cookie: string;
+
+    constructor(base: string, cookie: string) {
+        this.#base = base;
+        this.#cookie = cookie;
+    }
+
+    async call(method: string, path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
+        const response = await fetch(new URL(`/admin/v1${path}`, this.#base), {
+            method,
+            headers: {
+                cookie: this.#cookie,
+                ...(method === 'GET' ? {} : { origin: this.#base }),
+                ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+            },
+            body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        const text = await response.text();
+        try {
+            return { status: response.status, body: JSON.parse(text) as unknown };
+        } catch {
+            return { status: response.status, body: text };
+        }
+    }
+
+    get(path: string) {
+        return this.call('GET', path);
     }
 }

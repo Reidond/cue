@@ -5,10 +5,13 @@
 //   pnpm --filter api invite EMAIL --disable    disable EMAIL: sign them out everywhere, refuse them from now on
 //   pnpm --filter api invite --list             who is invited, and who has signed in
 //
+// The statements are the admin API's (src/accounts.ts): the same SQL runs from here and from the admin SPA.
+//
 // Local databases need their migrations first (`pnpm --filter api migrate`). `--remote` finds the deployed database and the denylist by
 // name; if that fails, give their ids in CUE_D1_ID and CUE_KV_ID.
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { disableAccount, denylistKey, enableAccount, inviteState, LIST_INVITES, normalizeEmail, type Statement } from '../src/accounts.ts';
 import { DEV_DB_ID, DEV_KV_ID } from '../dev-ids.ts';
 
 const root = join(import.meta.dirname, '..');
@@ -61,36 +64,33 @@ function sql(statement: string): Record<string, unknown>[] {
     return (results?.rows ?? []).map((row) => Object.fromEntries((results?.columns ?? []).map((column, index) => [column, row[index]])));
 }
 
-const quote = (text: string) => `'${text.replaceAll("'", "''")}'`;
+const quote = (value: string | number | null) => (typeof value === 'string' ? `'${value.replaceAll("'", "''")}'` : String(value));
+
+/** A shared statement with its parameters written in, for `cf d1 raw`. */
+const render = ({ sql: text, params }: Statement) => {
+    let next = 0;
+    return text.replace(/\?/g, () => quote(params[next++] ?? null));
+};
 
 if (flag('--list')) {
-    const rows = sql(
-        `SELECT i.email AS email, i.disabled AS disabled, u.id AS user FROM invite i LEFT JOIN user u ON lower(u.email) = i.email ORDER BY i.created_at`,
-    );
-    for (const row of rows) console.log(`${String(row.email)}\t${row.disabled ? 'disabled' : row.user ? 'signed in' : 'invited'}`);
+    for (const row of sql(LIST_INVITES.sql)) {
+        const state = inviteState({ disabled: row.disabled, user_id: row.user_id });
+        console.log(`${String(row.email)}\t${state === 'accepted' ? 'signed in' : state === 'pending' ? 'invited' : 'disabled'}`);
+    }
     process.exit(0);
 }
 
-if (!email || !/^[^\s@'";]+@[^\s@'";]+\.[^\s@'";]+$/.test(email)) usage('Give the email address to invite.');
-const known = sql(`SELECT id FROM user WHERE email = ${quote(email)}`)[0]?.id as string | undefined;
-const denylisted = `disabled:${known}`;
+const address = email ? normalizeEmail(email) : null;
+if (!address) usage('Give the email address to invite.');
+const known = sql(`SELECT id FROM user WHERE email = ${quote(address)}`)[0]?.id as string | undefined;
 
 if (flag('--disable')) {
     // Revoking everything first, then the denylist: a disabled person's access tokens (valid for up to 15 minutes) stop working at once.
-    sql(
-        `INSERT INTO invite (email, disabled) VALUES (${quote(email)}, 1) ON CONFLICT(email) DO UPDATE SET disabled = 1;
-UPDATE user SET banned = 1, banReason = 'disabled by the owner' WHERE email = ${quote(email)};
-DELETE FROM oauthRefreshToken WHERE userId IN (SELECT id FROM user WHERE email = ${quote(email)});
-DELETE FROM oauthAccessToken WHERE userId IN (SELECT id FROM user WHERE email = ${quote(email)});
-DELETE FROM session WHERE userId IN (SELECT id FROM user WHERE email = ${quote(email)})`,
-    );
-    if (known) run('kv', 'keys', 'put', denylisted, '--namespace-id', denylistId, ...place, '--body', '1');
-    console.log(`disabled ${email}${known ? '' : ' (not signed in before)'}`);
+    sql(disableAccount(address).map(render).join(';\n'));
+    if (known) run('kv', 'keys', 'put', denylistKey(known), '--namespace-id', denylistId, ...place, '--body', '1');
+    console.log(`disabled ${address}${known ? '' : ' (not signed in before)'}`);
 } else {
-    sql(
-        `INSERT INTO invite (email, disabled) VALUES (${quote(email)}, 0) ON CONFLICT(email) DO UPDATE SET disabled = 0;
-UPDATE user SET banned = 0, banReason = NULL, banExpires = NULL WHERE email = ${quote(email)}`,
-    );
-    if (known) run('kv', 'keys', 'delete', denylisted, '--namespace-id', denylistId, ...place, '--force');
-    console.log(`invited ${email}`);
+    sql(enableAccount(address).map(render).join(';\n'));
+    if (known) run('kv', 'keys', 'delete', denylistKey(known), '--namespace-id', denylistId, ...place, '--force');
+    console.log(`invited ${address}`);
 }

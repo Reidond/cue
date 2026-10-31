@@ -1,4 +1,5 @@
 import { type Static, Type } from '@sinclair/typebox';
+import { Role } from './role.ts';
 
 // The Cue API v1 (docs/backend.md): every client, the Mac app now and the Windows one later, speaks these shapes.
 // Elysia validates and documents (OpenAPI) with them; the Swift `Codable` types in apps/mac follow them by hand.
@@ -14,9 +15,13 @@ export const ErrorCode = Type.Union(
         Type.Literal('rate_limited'),
         Type.Literal('upstream_unavailable'),
         Type.Literal('upgrade_required'),
+        Type.Literal('plan_paused'),
         Type.Literal('internal'),
     ],
-    { description: 'unauthorized 401, forbidden 403, not_invited 403, limit_reached 402, rate_limited 429, upgrade_required 426' },
+    {
+        description:
+            'unauthorized 401, forbidden 403, not_invited 403, limit_reached 402, rate_limited 429, upgrade_required 426, plan_paused 503',
+    },
 );
 export type ErrorCode = Static<typeof ErrorCode>;
 
@@ -41,11 +46,9 @@ export const errorStatus: Record<ErrorCode, number> = {
     rate_limited: 429,
     upstream_unavailable: 502,
     upgrade_required: 426,
+    plan_paused: 503,
     internal: 500,
 };
-
-export const Role = Type.Union([Type.Literal('user'), Type.Literal('admin')]);
-export type Role = Static<typeof Role>;
 
 /** `GET /v1/me`: who is signed in, on which plan, within which limits, having used how much this month. */
 export const Me = Type.Object({
@@ -59,9 +62,10 @@ export const Me = Type.Object({
         id: Type.Literal('cue'),
         name: Type.String(),
     }),
-    // Placeholders until PR 7 (limits and the usage display) prices usage and enforces the limit.
     limits: Type.Object({
-        monthlyUsd: Type.Union([Type.Number(), Type.Null()], { description: 'The monthly spend limit in US dollars; null: none set' }),
+        monthlyUsd: Type.Union([Type.Number(), Type.Null()], {
+            description: 'The monthly spend limit in US dollars that applies to this account',
+        }),
     }),
     usage: Type.Object({
         month: Type.String({ description: 'UTC month, YYYY-MM' }),
@@ -79,3 +83,6 @@ export const OAUTH = {
     audience: 'https://api.cue.test',
     scope: 'openid profile email offline_access',
 } as const;
+
+export { Role } from './role.ts';
+export * from './admin.ts';
