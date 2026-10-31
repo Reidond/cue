@@ -7,11 +7,9 @@
     "node": ">=26"
   },
   "scripts": {
-    "test": "node run.ts",
-    "typecheck": "tsc --noEmit"
+    "test": "node run.ts"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
-    "typescript": "^7.0.2"
+    "@types/node": "^26.6.5"
   }
 }

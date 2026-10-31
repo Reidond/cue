@@ -1,5 +1,5 @@
 {
-  // Type-checking only (`npm run typecheck`): Node runs the .ts files itself by stripping their types,
+  // Type-checking only (`vp check` from the repository root): Node runs the .ts files itself by stripping their types,
   // so there is no build step and every file must be plain JavaScript once its types are removed.
   "compilerOptions": {
     "target": "esnext",
