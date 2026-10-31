@@ -1,4 +1,4 @@
-import { bindings, defineConfig } from 'cf/config';
+import { bindings, defineConfig, exports } from 'cf/config';
 import { DEV_DB_ID, DEV_KV_ID } from './dev-ids.ts';
 import * as entrypoint from './src/index.ts' with { type: 'cf-worker' };
 
@@ -46,7 +46,10 @@ export default defineConfig(({ mode }) => ({
                 '/.well-known/*',
             ],
         },
+        // One Call per live call: Deepgram's streams, the question judge and Claude's answers live in it (src/call/).
+        exports: { Call: exports.durableObject({ storage: 'sqlite' }) },
         env: {
+            CALL: bindings.durableObject({ worker: 'cue-api', exportName: 'Call' }),
             DB: bindings.d1(mode === 'development' ? { name: 'cue', id: DEV_DB_ID } : { name: 'cue' }),
             // User ids of disabled users: their access tokens (valid for up to 15 minutes) stop working at once.
             DENYLIST: bindings.kv(mode === 'development' ? { id: DEV_KV_ID } : {}),
@@ -57,6 +60,16 @@ export default defineConfig(({ mode }) => ({
             // stand-in, harness/fake-providers.ts) answers in `toMarkdown`'s shape instead. A real deploy sets AI_BINDING=1.
             AI: process.env.AI_BINDING === '1' ? bindings.ai() : false,
             MARKDOWN_URL: bindings.text(process.env.MARKDOWN_URL ?? ''),
+            // The owner's keys: the backend does all the AI and speech work, so these never reach a client (nor does the user's token reach them).
+            ANTHROPIC_API_KEY: secret(mode, 'ANTHROPIC_API_KEY'),
+            DEEPGRAM_API_KEY: secret(mode, 'DEEPGRAM_API_KEY'),
+            ANTHROPIC_URL: bindings.text(process.env.ANTHROPIC_URL ?? 'https://api.anthropic.com'),
+            DEEPGRAM_URL: bindings.text(process.env.DEEPGRAM_URL ?? 'https://api.deepgram.com'),
+            // Seconds: how often a live call looks whether its prompt caches (an hour long) need refreshing, how long a call must be quiet before
+            // they are, and how long a call with no client connected is kept for it to come back. A case shortens them.
+            CACHE_TICK_SECONDS: bindings.text(process.env.CACHE_TICK_SECONDS ?? '300'),
+            CACHE_REFRESH_SECONDS: bindings.text(process.env.CACHE_REFRESH_SECONDS ?? '2700'),
+            CALL_GRACE_SECONDS: bindings.text(process.env.CALL_GRACE_SECONDS ?? '120'),
             BETTER_AUTH_SECRET: secret(mode, 'BETTER_AUTH_SECRET'),
             GOOGLE_CLIENT_ID: secret(mode, 'GOOGLE_CLIENT_ID'),
             GOOGLE_CLIENT_SECRET: secret(mode, 'GOOGLE_CLIENT_SECRET'),

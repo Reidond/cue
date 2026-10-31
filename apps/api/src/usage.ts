@@ -1,3 +1,4 @@
+import type { UsageRow } from './call/models.ts';
 import { DEFAULTS } from './settings.ts';
 
 // Months, days and what a person has spent: the arithmetic shared by `/v1/me` and the admin API. The `usage` table holds seconds since the epoch
@@ -48,3 +49,10 @@ export const fillDays = (month: string, spent: Map<string, number>) =>
 
 /** What reading one file with Workers AI `toMarkdown` costs, in millionths of a dollar: PDFs and Office files are free (images are not, and are not accepted). */
 export const TOMARKDOWN_MICROS_PER_FILE = 0;
+
+/** Records what a person used: one `usage` row each. */
+export async function recordUsage(db: D1Database, userId: string, rows: UsageRow[]): Promise<void> {
+    if (rows.length === 0) return;
+    const insert = db.prepare('INSERT INTO usage (user_id, feature, provider, model, units, unit, cost_micros) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    await db.batch(rows.map(([feature, provider, model, units, unit, cost]) => insert.bind(userId, feature, provider, model, units, unit, cost)));
+}

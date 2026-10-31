@@ -2,9 +2,11 @@ import { env } from 'cloudflare:workers';
 import { Elysia } from 'elysia';
 import { ApiError } from '../errors.ts';
 import { planPaused } from '../settings.ts';
+import { calls } from './calls.ts';
 import { materials } from './materials.ts';
 import { me } from './me.ts';
 import { projects } from './projects.ts';
+import { summaries } from './summaries.ts';
 
 /** Everything under `/v1`: the owner can pause the whole plan (admin › Settings), and then each of these routes answers `plan_paused`. */
 export const v1 = new Elysia({ name: 'v1', prefix: '/v1' })
@@ -13,4 +15,6 @@ export const v1 = new Elysia({ name: 'v1', prefix: '/v1' })
     })
     .use(me)
     .use(projects)
-    .use(materials);
+    .use(materials)
+    .use(calls)
+    .use(summaries);

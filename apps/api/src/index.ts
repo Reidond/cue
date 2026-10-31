@@ -4,6 +4,7 @@ import { Elysia } from 'elysia';
 import { CloudflareAdapter } from 'elysia/adapter/cloudflare-worker';
 import { ApiError, errorResponse } from './errors.ts';
 import { admin } from './routes/admin.ts';
+import { liveSocket } from './routes/calls.ts';
 import { signIn } from './routes/sign-in.ts';
 import { v1 } from './routes/v1.ts';
 
@@ -32,7 +33,11 @@ const routes = new Elysia({ adapter: CloudflareAdapter, aot: !dev })
     .get('/', () => ({ name: 'Cue API', version: 1 }))
     .use(signIn)
     .use(v1)
+    .use(liveSocket)
     .use(admin);
 
 export type App = typeof routes;
 export default dev ? routes : routes.compile();
+
+// The Durable Object class of live calls, bound as `CALL` (cloudflare.config.ts).
+export { Call } from './call/call.ts';
