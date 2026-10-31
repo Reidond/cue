@@ -96,6 +96,8 @@ final class AppState: ObservableObject {
     /// Plays the audio of the note open in the dashboard.
     let player: NotePlayer
     let calendar: MeetingCalendar
+    /// The Cue API and who is signed in: Cue works only while someone is.
+    let api: CueAPI
     private(set) lazy var meetings = MeetingMonitor(state: self)
 
     /// The project Cue answers from and records into.
@@ -198,6 +200,7 @@ final class AppState: ObservableObject {
         self.preferences = preferences
         let log = SessionLog()
         self.log = log
+        api = CueAPI(log: log)
         projects = ProjectStore(preferences: preferences)
         projects.migrateLegacySettings(log: log)
         speakerModels = SpeakerModels(log: log)
@@ -236,6 +239,9 @@ final class AppState: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
+        api.start()
+        // Signing out (or losing the session) ends listening: the overlay goes, and so does anything that would answer.
+        api.$phase.removeDuplicates().sink { [weak self] phase in if phase == .signedOut { self?.stopCue() } }.store(in: &subscriptions)
         // With Auto off, the questions are listed for Prepare Answer instead of answered.
         detector.onQuestions = { [weak self] questions in
             guard let self else { return }
@@ -657,8 +663,22 @@ final class AppState: ObservableObject {
         startListening()
     }
 
+    /// Everything that listens, answers or records needs a signed-in account: without one, the dashboard shows the sign-in.
+    private func requireSignIn() -> Bool {
+        guard !api.isSignedIn else { return true }
+        log.write("⚠︎ Sign in to Cue first")
+        openDashboard()
+        return false
+    }
+
+    /// A rehearsal runs once the person has signed in.
+    func startListeningOnceSignedIn() {
+        api.$phase.filter { $0 == .signedIn }.first().sink { [weak self] _ in self?.startListening() }.store(in: &subscriptions)
+    }
+
     /// Shows the overlay and listens, with the current project (a rehearsal, ⌃⌥H).
     func startListening() {
+        guard requireSignIn() else { return }
         showOverlay()
         guard !cueRunning else { return }
         cueRunning = true
@@ -714,6 +734,7 @@ final class AppState: ObservableObject {
 
     /// Records into a given project, e.g. a calendar event's, named after the event when there is one.
     func startRecording(into project: Project?, meeting: MeetingDetails? = nil, by trigger: RecordingTrigger) {
+        guard requireSignIn() else { return }
         recordingProject = project
         recordingMeeting = meeting
         audioRecorder.start(at: recorder.start())
@@ -805,7 +826,7 @@ final class AppState: ObservableObject {
     /// Questions asked in one go, answered each on its own and listed together. `force` when the user
     /// asked for it: shown at once. Without `request` they are only listed, for Prepare Answer.
     func ask(_ questions: [String], force: Bool = false, request: Bool = true) {
-        guard claudeService != nil || !request else { return }
+        guard api.isSignedIn, claudeService != nil || !request else { return }
         let lexicon = self.lexicon
         let exchange = Exchange(answers: questions.map { question in
             let match = knowledge?.match(question)

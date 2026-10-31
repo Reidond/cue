@@ -47,6 +47,10 @@ struct DashboardView: View {
     @State private var deleting: Project?
 
     var body: some View {
+        SignInGate(api: state.api) { content }
+    }
+
+    private var content: some View {
         NavigationSplitView {
             List(selection: $model.selection) {
                 Section {

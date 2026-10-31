@@ -4,13 +4,14 @@ import SwiftUI
 /// The panes of the Settings window (⌘,), one per toolbar tab. Everything about a particular talk
 /// lives on its project page.
 enum SettingsTab: String, CaseIterable {
-    case general, providers, calendar
+    case general, account, providers, calendar
 
     var title: String { rawValue.capitalized }
     /// Each pane's window size: the window takes it when its tab is picked.
     var size: CGSize {
         switch self {
         case .general: CGSize(width: 500, height: 660)
+        case .account: CGSize(width: 500, height: 440)
         case .providers: CGSize(width: 500, height: 700)
         case .calendar: CGSize(width: 500, height: 440)
         }
@@ -18,6 +19,7 @@ enum SettingsTab: String, CaseIterable {
     var symbol: String {
         switch self {
         case .general: "gearshape"
+        case .account: "person.crop.circle"
         case .providers: "cpu"
         case .calendar: "calendar"
         }

@@ -100,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // The dashboard opens first; Start Cue shows the overlay. A rehearsal is a run-through
         // of the talk, so it shows the overlay straight away.
         showDashboard()
-        if environment["CUE_REHEARSE_PARTICIPANT"] != nil { state.startListening() }
+        if environment["CUE_REHEARSE_PARTICIPANT"] != nil { state.startListeningOnceSignedIn() }
         if environment["CUE_SHOW_SETTINGS"] == "1" { showSettings() }
         if let path = environment["CUE_SNAPSHOT"] { startSnapshots(to: path) }
         if let path = environment["CUE_CONTROL"] { startControl(from: path) }
@@ -129,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             for pane in SettingsTab.allCases {
                 let content: AnyView = switch pane {
                 case .general: AnyView(GeneralSettings(preferences: preferences))
+                case .account: AnyView(AccountSettings(api: state.api))
                 case .providers: AnyView(ProviderSettings(preferences: preferences, state: state))
                 case .calendar: AnyView(CalendarSettings(preferences: preferences, calendar: state.calendar))
                 }
@@ -361,10 +362,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// speaker models), `show TEXT` (the overlay's row of the question with TEXT in it), `newest`
     /// (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions
     /// waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's
-    /// menu), `settings general|providers|calendar` (a Settings tab), `provider NAME` (a provider
+    /// menu), `settings general|account|providers|calendar` (a Settings tab), `provider NAME` (a provider
     /// picked in Settings › Providers: claudeCode, anthropicAPI, whisper or deepgram),
     /// `key anthropic|deepgram [KEY]` (a key pasted into its field and saved; without one, Remove) and
-    /// `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes).
+    /// `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes),
+    /// `signin` (Sign In on the sign-in screen) and `signout` (Sign Out in Settings › Account). Until someone is signed in, only these,
+    /// `page`, `size` and the Settings ones do anything.
     private func startControl(from path: String) {
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -379,7 +382,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func control(_ line: String) {
         let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
         let command = parts.first ?? "", argument = parts.count > 1 ? parts[1] : ""
+        if !state.api.isSignedIn, !["signin", "signout", "settings", "page", "size", "provider", "key"].contains(command) {
+            state.log.write("⚠︎ Sign in to Cue first (\(command) ignored)")
+            return
+        }
         switch command {
+        case "signin":
+            Task { await state.api.signIn() }
+        case "signout":
+            Task { await state.api.signOut() }
         case "new":
             showDashboard()
             if let project = try? state.projects.create(named: argument) { dashboard.open(project) }
