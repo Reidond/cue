@@ -1,7 +1,7 @@
 import Foundation
 
-/// Spoken languages Cue can listen to. Whisper understands all of them; question
-/// cues and spoken openers come from Resources/lexicons/<code>.json when present.
+/// Spoken languages Cue can listen to. Deepgram and Whisper understand all of them; the second pass's
+/// artefacts and the summary's labels come from Resources/lexicons/<code>.json when present.
 struct SpokenLanguage: Identifiable, Hashable {
     let code: String
     let name: String
@@ -29,15 +29,6 @@ final class Preferences: ObservableObject {
     private let defaults = appDefaults
 
     @Published var speakerName: String { didSet { defaults.set(speakerName, forKey: "speakerName") } }
-    @Published var model: ClaudeService.Model { didSet { defaults.set(model.rawValue, forKey: "model") } }
-    /// Who answers, judges questions and writes summaries: Claude Code, or the Anthropic API with a key.
-    @Published var claudeProvider: ClaudeProvider { didSet { defaults.set(claudeProvider.rawValue, forKey: "claudeProvider") } }
-    /// Who turns speech into text: Whisper on this Mac, or Deepgram with a key.
-    @Published var speechProvider: SpeechProvider { didSet { defaults.set(speechProvider.rawValue, forKey: "speechProvider") } }
-    /// The providers whose API key is in the keychain.
-    @Published private(set) var savedKeys: Set<APIKey>
-    /// After a key is saved (true) or removed (false).
-    var onKeyChange: (APIKey, Bool) -> Void = { _, _ in }
     @Published var autoAnswer: Bool { didSet { defaults.set(autoAnswer, forKey: "autoAnswer") } }
     /// Also treat questions the microphone picks up (people in the room) as questions.
     @Published var micQuestions: Bool { didSet { defaults.set(micQuestions, forKey: "micQuestions") } }
@@ -58,10 +49,6 @@ final class Preferences: ObservableObject {
 
     init() {
         speakerName = defaults.string(forKey: "speakerName") ?? NSFullUserName()
-        model = ClaudeService.Model(rawValue: defaults.string(forKey: "model") ?? "") ?? .sonnet
-        claudeProvider = ClaudeProvider(rawValue: defaults.string(forKey: "claudeProvider") ?? "") ?? .claudeCode
-        speechProvider = SpeechProvider(rawValue: defaults.string(forKey: "speechProvider") ?? "") ?? .whisper
-        savedKeys = Set(APIKey.allCases.filter { $0.value != nil })
         autoAnswer = defaults.object(forKey: "autoAnswer") as? Bool ?? true
         micQuestions = defaults.bool(forKey: "micQuestions")
         showTranscript = defaults.object(forKey: "showTranscript") as? Bool ?? true
@@ -74,21 +61,6 @@ final class Preferences: ObservableObject {
         meetingAction = MeetingAction(rawValue: defaults.string(forKey: "meetingAction") ?? "") ?? .ask
         unwatchedCalendars = Set(defaults.stringArray(forKey: "unwatchedCalendars") ?? [])
         meetingProjects = defaults.dictionary(forKey: "meetingProjects") as? [String: String] ?? [:]
-    }
-
-    /// Saves a provider's key in the keychain (never in the settings), trimmed of what a paste brings along.
-    func saveKey(_ value: String, for key: APIKey) throws {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        try key.save(trimmed)
-        savedKeys.insert(key)
-        onKeyChange(key, true)
-    }
-
-    func removeKey(_ key: APIKey) {
-        key.remove()
-        savedKeys.remove(key)
-        onKeyChange(key, false)
     }
 }
 

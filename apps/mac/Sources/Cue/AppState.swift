@@ -18,18 +18,31 @@ struct Utterance: Identifiable {
     /// Which of the call's voices said it (1, 2, …), once they have been told apart.
     var speaker: Int?
 
-    /// The microphone picking up the call through speakers produces a near-copy of a participant line.
+    /// The microphone picking up the call through speakers produces a near-copy of a participant line (the second pass drops those;
+    /// the live call drops them on the server).
     static func isEcho(_ text: String, of other: String, stopWords: Set<String>) -> Bool {
-        let words = Set(KnowledgeBase.stems(text, stopWords: stopWords))
+        let words = Set(stems(text, stopWords: stopWords))
         guard words.count >= 3 else { return false }
-        let otherWords = Set(KnowledgeBase.stems(other, stopWords: stopWords))
+        let otherWords = Set(stems(other, stopWords: stopWords))
         return Double(words.intersection(otherWords).count) / Double(words.count) > 0.6
+    }
+
+    /// Crude stemming that works well enough across European languages: lowercase,
+    /// keep words of 4+ letters that are not stop words, cut to 6 letters.
+    static func stems(_ text: String, stopWords: Set<String>) -> [String] {
+        text.lowercased()
+            .replacingOccurrences(of: "’", with: "'")
+            .components(separatedBy: CharacterSet.letters.union(.decimalDigits).union(CharacterSet(charactersIn: "'-")).inverted)
+            .filter { $0.count >= 4 && !stopWords.contains($0) }
+            .map { String($0.prefix(6)) }
     }
 }
 
 /// What was asked in one go: one question or several, each answered on its own and shown together.
 struct Exchange: Identifiable {
     let id = UUID()
+    /// The server's name for the questions asked in one go (what `prepare` says).
+    let serverID: String
     var answers: [Answer]
 
     /// Noticed with Auto off: the questions wait for Prepare Answer.
@@ -38,15 +51,20 @@ struct Exchange: Identifiable {
 }
 
 struct Answer: Identifiable {
-    /// Also the id of its request to Claude.
     let id = UUID()
+    /// The server's id of the question: the events of its answer name it.
+    let questionID: String
     let question: String
+    /// Its place among the questions asked in one go, and how many there were.
+    var part = 0
+    var parts = 1
     var askedAt = Date()
     /// Shown the instant the question lands, before Claude says anything.
     let opener: String?
-    let prepared: PreparedAnswer?
-    let preparedScore: Double
-    /// Sent to Claude (a question noticed with Auto off isn't, until Prepare Answer).
+    /// The prepared answer that matches, once the server has found it.
+    var prepared: PreparedAnswer?
+    var preparedScore = 0.0
+    /// Being answered (a question noticed with Auto off isn't, until Prepare Answer).
     var requested = true
     var text = ""
     var firstTokenAt: Date?
@@ -81,9 +99,17 @@ struct Answer: Identifiable {
 struct ServiceStatus: Equatable {
     var ok = false
     var detail = "Starting…"
+    /// Getting there, as opposed to something that needs attention.
+    var working = false
+
+    /// Before a call exists: nothing is running yet, and that is not a problem.
+    static let idle = ServiceStatus(ok: false, detail: "Starts when you start listening", working: true)
 }
 
-/// Orchestrates audio → speech recognition → question detection → answers.
+/// The question judge, as the server reports it.
+enum JudgeState { case starting, ready, unavailable }
+
+/// Orchestrates the audio going up to the live call and what comes back: the transcript, the questions and their answers.
 @MainActor
 final class AppState: ObservableObject {
     let preferences: Preferences
@@ -147,9 +173,10 @@ final class AppState: ObservableObject {
     @Published var callLevel: Float = 0
     @Published var mic = ServiceStatus()
     @Published var call = ServiceStatus()
-    /// Speech recognition, by whichever provider: whisper-server's start, or Deepgram's key check.
-    @Published var speech = ServiceStatus()
-    @Published var claude = ServiceStatus()
+    /// Speech recognition, as the live call reports it.
+    @Published var speech = ServiceStatus.idle
+    /// Claude, as the live call reports it.
+    @Published var claude = ServiceStatus.idle
     @Published private(set) var knowledge: KnowledgeBase?
     @Published private(set) var readingMaterials = false
     /// Between Start Cue and Stop Cue: the overlay is up and Cue listens for questions.
@@ -158,28 +185,36 @@ final class AppState: ObservableObject {
     private var capturing = false
 
     var openSettings: () -> Void = {}
-    /// Settings on its Providers tab.
-    var openProviders: () -> Void = {}
     var openDashboard: () -> Void = {}
     var openRecordings: (_ selecting: String?) -> Void = { _ in }
     var showOverlay: () -> Void = {}
     var hideOverlay: () -> Void = {}
 
-    private let whisperService = WhisperService()
-    private let deepgramService = DeepgramService()
-    /// The service `speech` is about: the provider's.
-    private lazy var recognizer: SpeechRecognizer = preferences.speechProvider == .deepgram ? deepgramService : whisperService
     private var rehearsalStarted = false
-    private var claudeService: ClaudeSession?
-    /// The provider `claudeService` goes through.
-    private var claudeProvider: ClaudeProvider?
     private let micCapture = MicCapture()
     private let systemCapture = SystemAudioCapture()
-    private let micSegmenter = SpeechSegmenter()
-    private let systemSegmenter = SpeechSegmenter()
+    private let micMeter = LevelMeter()
+    private let callMeter = LevelMeter()
     private let audioRecorder = AudioRecorder()
-    private let detector = QuestionDetector()
-    private let judge = QuestionJudge()
+    /// Where the captured audio goes while a call is live.
+    private let audioSink = AudioSink()
+    /// The live call, from when capture starts to when it stops.
+    private var liveCall: LiveCall?
+    /// Counts the calls started and ended, so a call that took long to start finds it was ended meanwhile.
+    private var callGeneration = 0
+    /// The call's socket is up: audio goes to the server and its events come back.
+    private var callConnected = false
+    private var callRestarts = 0
+    /// The project the live call listens for.
+    private var callProjectID: String?
+    private var judgeState = JudgeState.starting
+    private var speechUnavailable = false
+    /// Who is talking right now, by the server's word.
+    private var speaking: [Channel: Bool] = [:]
+    /// Commands (Ask…) given while the call was still being made.
+    private var heldCommands: [[String: Any]] = []
+    /// Questions being answered whose line in the session log waits for the prepared answer that matches (it comes right after the question).
+    private var unlogged: Set<String> = []
     let log: SessionLog
     private var meterTimer: Timer?
     private var subscriptions: Set<AnyCancellable> = []
@@ -193,7 +228,7 @@ final class AppState: ObservableObject {
 
     private struct KnowledgeInputs: Equatable {
         var materials: [Material]
-        var context: PromptContext
+        var language: String
     }
 
     init(preferences: Preferences) {
@@ -204,7 +239,7 @@ final class AppState: ObservableObject {
         projects = ProjectStore(preferences: preferences, api: api, log: log)
         projects.migrateLegacySettings(log: log)
         speakerModels = SpeakerModels(log: log)
-        recordings = RecordingStore(preferences: preferences, projects: projects, speakerModels: speakerModels, log: log)
+        recordings = RecordingStore(preferences: preferences, projects: projects, speakerModels: speakerModels, api: api, log: log)
         recordings.reload()
         player = NotePlayer(log: log)
         AudioRecorder.removeStaleWorkingFolders()
@@ -226,7 +261,6 @@ final class AppState: ObservableObject {
         }
         preferences.activeProject = activeProject?.id
         if let activeProject { log.write("📁 Project: \(activeProject.name)") }
-        applyLanguage()
     }
 
     /// The active project's language data.
@@ -236,8 +270,8 @@ final class AppState: ObservableObject {
     var status: (text: String, kind: StatusKind) {
         if readingMaterials { return ("Reading materials…", .working) }
         if let progress = downloader.progress { return ("Downloading speech model \(Int(progress * 100))%", .working) }
-        if !speech.ok { return (speech.detail, speech.detail.hasPrefix("Starting") ? .working : .problem) }
-        if !claude.ok { return (claude.detail, claude.detail.contains("…") ? .working : .problem) }
+        if !speech.ok { return (speech.detail, speech.working ? .working : .problem) }
+        if !claude.ok { return (claude.detail, claude.working ? .working : .problem) }
         if !call.ok && !mic.ok { return ("No audio", .problem) }
         guard let activeProject else { return ("No project", .problem) }
         if activeProject.materials.isEmpty { return ("No materials", .problem) }
@@ -252,50 +286,24 @@ final class AppState: ObservableObject {
         api.start()
         // Signing out (or losing the session) ends listening: the overlay goes, and so does anything that would answer.
         api.$phase.removeDuplicates().sink { [weak self] phase in if phase == .signedOut { self?.stopCue() } }.store(in: &subscriptions)
-        // With Auto off, the questions are listed for Prepare Answer instead of answered.
-        detector.onQuestions = { [weak self] questions in
-            guard let self else { return }
-            self.ask(questions, request: self.preferences.autoAnswer)
-        }
-        // The judge decides what is a question for the speaker; the detector, when it was asked.
-        detector.judge = { [weak self] speech, verdict in
-            guard let self else { return verdict(nil) }
-            self.judge.judge(self.judgeMessage(speech), verdict: verdict)
-        }
-        judge.onState = { [weak self] state in
-            switch state {
-            case .ready: self?.log.write("🧐 Question judge ready: Claude Haiku")
-            case .unavailable(let detail): self?.log.write("⚠︎ Question judge unavailable (\(detail)) — going by question marks")
-            case .starting: break
-            }
-        }
-        wire(micSegmenter, channel: .me)
-        wire(systemSegmenter, channel: .others)
-        micCapture.onSamples = { [micSegmenter, audioRecorder] samples, time in
-            micSegmenter.push(samples)
+        micCapture.onSamples = { [micMeter, audioSink, audioRecorder] samples, time in
+            micMeter.add(samples)
+            audioSink.push(samples, from: .me, at: time)
             audioRecorder.push(samples, from: .me, at: time)
         }
-        systemCapture.onSamples = { [systemSegmenter, audioRecorder] samples, time in
-            systemSegmenter.push(samples)
+        systemCapture.onSamples = { [callMeter, audioSink, audioRecorder] samples, time in
+            callMeter.add(samples)
+            audioSink.push(samples, from: .others, at: time)
             audioRecorder.push(samples, from: .others, at: time)
         }
         systemCapture.onStop = { error in
             Task { @MainActor in self.call = ServiceStatus(ok: false, detail: "Call audio stopped: \(error.localizedDescription)") }
         }
-        downloader.onFinished = { [weak self] in if self?.preferences.speechProvider == .whisper { self?.startSpeech() } }
-        preferences.onKeyChange = { [weak self] key, saved in self?.keyChanged(key, saved: saved) }
-        log.write("🤖 Claude: \(preferences.claudeProvider.title)")
-        log.write("🗣 Speech recognition: \(preferences.speechProvider.title)")
-        let deepgramService = deepgramService
-        Task {
-            await deepgramService.setProblemHandler { problem in
-                Task { @MainActor in self.speechProblem(problem) }
-            }
-        }
+        log.write("🤖 Claude: Cue plan")
+        log.write("🗣 Speech recognition: Cue plan")
 
-        applyLanguage()
         rebuildKnowledge()
-        startSpeech()
+        startRehearsalIfRequested()
         // Listening starts with Start Cue (or a recording), not at launch.
         mic = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
         call = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
@@ -304,8 +312,8 @@ final class AppState: ObservableObject {
 
         meterTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             Task { @MainActor in
-                self.micLevel = self.micSegmenter.level
-                self.callLevel = self.systemSegmenter.level
+                self.micLevel = self.micMeter.level
+                self.callLevel = self.callMeter.level
                 self.checkReading()
             }
         }
@@ -316,10 +324,7 @@ final class AppState: ObservableObject {
         audioRecorder.cancel()
         micCapture.stop()
         systemCapture.stop()
-        claudeService?.stop()
-        judge.stop()
-        whisperService.stop()
-        deepgramService.stop()
+        endCall()
     }
 
     private func observeSettings() {
@@ -343,44 +348,32 @@ final class AppState: ObservableObject {
             }
             .store(in: &subscriptions)
 
-        // Anything that changes the system prompt rebuilds it; Claude restarts only if the bytes changed.
-        // @Published sends the new value before storing it, so build the inputs from what was sent.
-        Publishers.CombineLatest($activeProject, preferences.$speakerName)
-            .map { Self.knowledgeInputs(project: $0, speaker: $1) }
+        // The materials the project's page and Home show are read again when its files or language change.
+        $activeProject
+            .map { Self.knowledgeInputs(project: $0) }
             .removeDuplicates()
             .dropFirst()
             .debounce(for: .seconds(1.2), scheduler: RunLoop.main)
             .sink { [weak self] inputs in
                 guard let self, inputs != self.knowledgeInputs else { return }
-                self.applyLanguage()
                 self.rebuildKnowledge()
             }
             .store(in: &subscriptions)
 
-        $activeProject.map { $0?.whisperPrompt }.removeDuplicates().dropFirst()
-            .debounce(for: .seconds(0.5), scheduler: RunLoop.main)
-            .sink { [weak self] _ in self?.applyLanguage() }
-            .store(in: &subscriptions)
-
-        preferences.$model.dropFirst().removeDuplicates()
-            .sink { [weak self] model in self?.restartClaude(model: model) }
-            .store(in: &subscriptions)
-
-        // Settings › Providers: speech recognition, live and after a recording, by the provider picked there…
-        preferences.$speechProvider.removeDuplicates().dropFirst()
-            .sink { [weak self] provider in
-                self?.log.write("🗣 Speech recognition: \(provider.title)")
-                self?.startSpeech(provider: provider)
+        // A call listens for one project: another project means another call.
+        $activeProject.map { $0?.id }.removeDuplicates().dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self, self.capturing, self.activeProject?.serverID != self.callProjectID else { return }
+                self.startCall()
             }
             .store(in: &subscriptions)
-        // …and answers, the judge and summaries too.
-        preferences.$claudeProvider.removeDuplicates().dropFirst()
-            .sink { [weak self] provider in
-                guard let self else { return }
-                self.log.write("🤖 Claude: \(provider.title)")
-                self.restartClaude(provider: provider)
-                if let context = self.knowledgeInputs?.context { self.judge.configure(context, provider: provider) }
-            }
+
+        // What the server does with the questions follows these.
+        Publishers.CombineLatest3(preferences.$speakerName, preferences.$autoAnswer, preferences.$micQuestions)
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.sendConfig() }
             .store(in: &subscriptions)
 
         projects.objectWillChange
@@ -396,117 +389,124 @@ final class AppState: ObservableObject {
             .store(in: &subscriptions)
     }
 
-    private func applyLanguage() {
-        let lexicon = self.lexicon
-        let language = activeProject?.language ?? Project.defaultLanguage, prompt = activeProject?.whisperPrompt ?? ""
-        let terms = activeProject?.terms ?? [], hallucinations = lexicon.hallucinations
-        for recognizer in [whisperService, deepgramService] as [SpeechRecognizer] {
-            Task { await recognizer.configure(language: language, prompt: prompt, terms: terms, hallucinations: hallucinations) }
-        }
+    private static func knowledgeInputs(project: Project?) -> KnowledgeInputs {
+        KnowledgeInputs(materials: project?.materials ?? [], language: project?.language ?? Project.defaultLanguage)
     }
 
-    private static func knowledgeInputs(project: Project?, speaker: String) -> KnowledgeInputs {
-        KnowledgeInputs(materials: project?.materials ?? [],
-                        context: PromptContext(speaker: speaker, occasion: project?.occasion ?? "",
-                                               languageCode: project?.language ?? Project.defaultLanguage))
-    }
-
+    /// Reads what the account has of the active project's files, for its page.
     func rebuildKnowledge() {
         knowledgeGeneration += 1
         let generation = knowledgeGeneration
-        let inputs = Self.knowledgeInputs(project: activeProject, speaker: preferences.speakerName)
-        knowledgeInputs = inputs
-        let context = inputs.context
+        knowledgeInputs = Self.knowledgeInputs(project: activeProject)
         let serverID = activeProject?.serverID
         let project = activeProject?.name ?? "no project"
         readingMaterials = true
         Task {
-            // What the account read from the files is the prompt's material; if it can't be asked, the prompt stays as it was.
             let documents = await self.projects.documents(of: serverID)
             guard generation == self.knowledgeGeneration else { return }
             guard let documents else {
                 self.readingMaterials = false
                 return
             }
-            let knowledge = KnowledgeBase.build(documents: documents, context: context)
-            let changed = (try? knowledge.writeSystemPrompt()) ?? true
+            let knowledge = KnowledgeBase(documents: documents)
             self.knowledge = knowledge
             self.readingMaterials = false
             let files = knowledge.documents.map { "\($0.name) — \($0.error ?? $0.summary)" }.joined(separator: "; ")
             self.log.write("📚 Materials for \(project) (~\(knowledge.estimatedTokens / 1000)k tokens): \(files.isEmpty ? "none" : files)")
-            if changed || self.claudeService == nil { self.restartClaude(model: self.preferences.model) }
-            self.judge.configure(context, provider: self.preferences.claudeProvider)
         }
     }
 
-    /// `provider` when it just changed (the preference still has the old one).
-    func restartClaude(model: ClaudeService.Model? = nil, provider: ClaudeProvider? = nil) {
-        guard knowledge != nil else { return }
-        claude = ServiceStatus(ok: false, detail: "Warming up…")
-        let provider = provider ?? preferences.claudeProvider
-        if claudeService == nil || provider != claudeProvider {
-            claudeService?.stop()
-            claudeProvider = provider
-            claudeService = makeClaudeSession(provider, systemPromptFile: KnowledgeBase.systemPromptFile, model: preferences.model, handlers: .init(
-                onDelta: { id, text in Task { @MainActor in self.appendDelta(id, text) } },
-                onDone: { id, error in Task { @MainActor in self.finish(id, error: error) } },
-                onReady: { ready, detail in Task { @MainActor in self.claude = ServiceStatus(ok: ready, detail: detail) } }
-            ))
-        }
-        claudeService?.start(model: model ?? preferences.model)
-    }
+    // MARK: - The live call
 
-    /// A key saved or removed in Settings › Providers: the provider that uses it starts again with it.
-    private func keyChanged(_ key: APIKey, saved: Bool) {
-        log.write("🔑 \(key.title) \(saved ? "saved in the keychain" : "removed")")
-        switch key {
-        case .anthropic where preferences.claudeProvider == .anthropicAPI:
-            restartClaude()
-            judge.restart()
-        case .deepgram where preferences.speechProvider == .deepgram:
-            startSpeech()
-        default:
-            break
+    /// Makes a call for the active project and connects to it; whatever call there was ends first. The server reads the project's
+    /// materials, warms Claude and opens the speech streams, and says how that goes in `status` events.
+    private func startCall() {
+        endCall()
+        let generation = callGeneration
+        guard let project = activeProject ?? recordingProject, let serverID = project.serverID else {
+            let detail = activeProject == nil ? "No project" : "Waiting for the project to reach your account"
+            claude = ServiceStatus(ok: false, detail: detail)
+            speech = ServiceStatus(ok: false, detail: detail)
+            return
         }
-    }
-
-    /// Starts the provider's speech recognition (`provider` when it just changed): whisper-server, or a
-    /// check of the Deepgram key. The other one stops, so whisper-server doesn't hold the GPU for nothing.
-    func startSpeech(provider: SpeechProvider? = nil) {
-        let provider = provider ?? preferences.speechProvider
-        recognizer = provider == .deepgram ? deepgramService : whisperService
-        (provider == .deepgram ? whisperService as SpeechRecognizer : deepgramService).stop()
-        for segmenter in [micSegmenter, systemSegmenter] {
-            segmenter.partialFrames = Int(recognizer.partialInterval * whisperSampleRate) / 320
-        }
-        speech = ServiceStatus(ok: false, detail: "Starting speech recognition…")
-        let recognizer = recognizer
+        callProjectID = serverID
+        claude = ServiceStatus(ok: false, detail: "Warming up Claude…", working: true)
+        speech = ServiceStatus(ok: false, detail: "Starting speech recognition…", working: true)
         Task {
             do {
-                try await recognizer.start()
-                guard recognizer === self.recognizer else { return }
-                speech = ServiceStatus(ok: true, detail: "Speech recognition ready")
-                startRehearsalIfRequested()
+                let info = try await api.createCall(projectID: serverID, speaker: preferences.speakerName, auto: preferences.autoAnswer,
+                                                    micQuestions: preferences.micQuestions, questions: cueRunning)
+                guard generation == callGeneration else {
+                    await api.endCall(info.callId)
+                    return
+                }
+                let call = LiveCall(api: api, info: info, audio: audioSink)
+                call.onEvent = { [weak self] event in self?.handle(event) }
+                let callID = info.callId
+                call.onGone = { [weak self] why in self?.callEnded(callID, why: why) }
+                liveCall = call
+                sendConfig()
+                for command in heldCommands { call.send(command) }
+                heldCommands = []
+                call.connect()
             } catch {
-                guard recognizer === self.recognizer else { return }
+                guard generation == callGeneration else { return }
+                claude = ServiceStatus(ok: false, detail: error.localizedDescription)
                 speech = ServiceStatus(ok: false, detail: error.localizedDescription)
-                log.write("⚠︎ Speech recognition unavailable: \(error.localizedDescription)")
+                log.write("⚠︎ Couldn't start the live call: \(error.localizedDescription)")
             }
         }
     }
 
-    /// A Deepgram stream failed after starting fine (a key revoked, no credit left, the connection lost), or,
-    /// with nil, one answered again after that.
-    private func speechProblem(_ problem: String?) {
-        guard preferences.speechProvider == .deepgram else { return }
-        if let problem {
-            guard speech.ok || speech.detail != problem else { return }
-            speech = ServiceStatus(ok: false, detail: problem)
-            log.write("⚠︎ Speech recognition unavailable: \(problem)")
-        } else if !speech.ok {
-            speech = ServiceStatus(ok: true, detail: "Speech recognition ready")
-            log.write("🗣 Speech recognition ready again: Deepgram")
+    /// Ends the call, if there is one: the server closes its speech streams and keeps the transcript.
+    private func endCall() {
+        callGeneration += 1
+        callProjectID = nil
+        speaking = [:]
+        callConnected = false
+        heldCommands = []
+        unlogged = []
+        judgeState = .starting
+        speechUnavailable = false
+        claude = .idle
+        speech = .idle
+        guard let call = liveCall else { return }
+        liveCall = nil
+        call.close()
+        Task { await api.endCall(call.id) }
+    }
+
+    /// The server has no more to say about the call (it ended, or no longer knows it). While Cue still listens, a new call takes over.
+    private func callEnded(_ id: String, why: String) {
+        guard liveCall?.id == id else { return }
+        endCall()
+        log.write("⚠︎ The live call stopped: \(why)")
+        guard capturing, callRestarts < 3 else { return }
+        callRestarts += 1
+        let generation = callGeneration
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            if generation == callGeneration, capturing { startCall() }
         }
+    }
+
+    /// Menu › Restart Live Call.
+    func restartCall() {
+        callRestarts = 0
+        if capturing { startCall() }
+    }
+
+    /// The settings the server follows while it listens for questions.
+    private func sendConfig() {
+        liveCall?.send([
+            "type": "config", "speaker": preferences.speakerName, "auto": preferences.autoAnswer,
+            "micQuestions": preferences.micQuestions, "questions": cueRunning,
+        ])
+    }
+
+    /// A command for the call; held when the call is still being made, dropped when there is none to come.
+    private func sendCommand(_ command: [String: Any]) {
+        if let liveCall { liveCall.send(command) } else if capturing { heldCommands.append(command) }
     }
 
     private func startAudio() {
@@ -544,10 +544,13 @@ final class AppState: ObservableObject {
         capturing = needed
         if needed {
             startAudio()
+            callRestarts = 0
+            startCall()
             log.write("🎤 Listening")
         } else {
             micCapture.stop()
             systemCapture.stop()
+            endCall()
             partial = [:]
             mic = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
             call = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
@@ -560,21 +563,26 @@ final class AppState: ObservableObject {
         guard let path = ProcessInfo.processInfo.environment["CUE_REHEARSE_PARTICIPANT"], !rehearsalStarted else { return }
         rehearsalStarted = true
         Task {
-            // Nothing is heard before someone is signed in (and Cue running, which signing in starts for a rehearsal).
-            while !claude.ok || judge.state == .starting || !api.isSignedIn || !cueRunning { try? await Task.sleep(for: .milliseconds(300)) }
+            // Nothing is heard before someone is signed in (and Cue running, which signing in starts for a rehearsal), and the call's
+            // socket is up with Claude, the judge and speech recognition warm: the first question is answered as in a real talk.
+            while !callConnected || !claude.ok || !speech.ok || judgeState == .starting || !api.isSignedIn || !cueRunning {
+                try? await Task.sleep(for: .milliseconds(300))
+            }
             do {
                 // CUE_REHEARSE_RECORD=1 also records the rehearsal and writes its notes.
                 let record = ProcessInfo.processInfo.environment["CUE_REHEARSE_RECORD"] == "1"
                 if record { startRecording(.rehearsal) }
-                var length = try Rehearsal.play(fileAt: path) { [systemSegmenter, audioRecorder] samples, time in
-                    systemSegmenter.push(samples)
+                var length = try Rehearsal.play(fileAt: path) { [callMeter, audioSink, audioRecorder] samples, time in
+                    callMeter.add(samples)
+                    audioSink.push(samples, from: .others, at: time)
                     // ScreenCaptureKit delivers nothing while the Mac plays nothing; the recorder gets the same here.
                     if samples.contains(where: { $0 != 0 }) { audioRecorder.push(samples, from: .others, at: time) }
                 }
                 // CUE_REHEARSE_ME plays a second recording as your microphone, in parallel.
                 if let mine = ProcessInfo.processInfo.environment["CUE_REHEARSE_ME"] {
-                    length = max(length, try Rehearsal.play(fileAt: mine) { [micSegmenter, audioRecorder] samples, time in
-                        micSegmenter.push(samples)
+                    length = max(length, try Rehearsal.play(fileAt: mine) { [micMeter, audioSink, audioRecorder] samples, time in
+                        micMeter.add(samples)
+                        audioSink.push(samples, from: .me, at: time)
                         audioRecorder.push(samples, from: .me, at: time)
                     })
                 }
@@ -588,70 +596,97 @@ final class AppState: ObservableObject {
         }
     }
 
-    // MARK: - Speech
+    // MARK: - What the live call says
 
-    private func wire(_ segmenter: SpeechSegmenter, channel: Channel) {
-        segmenter.onEvent = { [weak self] event in
-            guard let self else { return }
-            switch event {
-            case .onset:
-                Task { await self.recognizer.begin(channel: channel) }
-                Task { @MainActor in self.speechStarted(channel) }
-            case .partial(let audio):
-                Task {
-                    guard let text = await self.recognizer.transcribePartial(audio, channel: channel), !text.isEmpty else { return }
-                    await MainActor.run { if self.partial[channel] != nil { self.partial[channel] = text } }
-                }
-            case .final(let audio, let speechStarted, let speechEnded):
-                Task {
-                    let text = await self.recognizer.transcribeFinal(audio, channel: channel)
-                    await MainActor.run {
-                        self.utteranceFinished(channel, text: text, speechStarted: speechStarted, speechEnded: speechEnded)
-                    }
-                }
+    private func handle(_ event: CallEvent) {
+        switch event.type {
+        case "ready":
+            callConnected = true
+            callRestarts = 0
+        case "status":
+            statusChanged(event)
+        case "speaking":
+            guard let channel = event.side else { return }
+            let active = event.active ?? false
+            speaking[channel] = active
+            if active {
+                speechStarted(channel)
+            } else if partial[channel]?.isEmpty == true {
+                partial[channel] = nil
             }
+        case "transcript.partial":
+            if let channel = event.side, let text = event.text, !text.isEmpty { partial[channel] = text }
+        case "transcript.final":
+            utteranceFinished(event)
+        case "question":
+            questionAsked(event)
+        case "prepared":
+            preparedFound(event)
+        case "answer.delta":
+            if let id = event.questionId, let text = event.text { appendDelta(id, text) }
+        case "answer.done":
+            if let id = event.questionId { finish(id, error: event.error) }
+        case "error":
+            log.write("⚠︎ \(event.message ?? "The live call had a problem")")
+        default:
+            break
+        }
+    }
+
+    /// What the server says about Claude, the question judge and speech recognition, in the words the session log has always used.
+    private func statusChanged(_ event: CallEvent) {
+        let state = event.state ?? "", detail = event.detail ?? ""
+        let status = ServiceStatus(ok: state == "ready", detail: detail, working: state == "starting")
+        switch event.part {
+        case "claude":
+            claude = status
+        case "speech":
+            speech = status
+            if state == "unavailable" {
+                speechUnavailable = true
+                log.write("⚠︎ Speech recognition unavailable: \(detail)")
+            } else if state == "ready", speechUnavailable {
+                speechUnavailable = false
+                log.write("🗣 Speech recognition ready again: Cue plan")
+            }
+        case "judge":
+            switch state {
+            case "ready":
+                if judgeState != .ready { log.write("🧐 Question judge ready: Claude Haiku") }
+                judgeState = .ready
+            case "unavailable":
+                if judgeState != .unavailable { log.write("⚠︎ Question judge unavailable (\(detail)) — going by question marks") }
+                judgeState = .unavailable
+            default:
+                judgeState = .starting
+            }
+        default:
+            break
         }
     }
 
     private func speechStarted(_ channel: Channel) {
         partial[channel] = ""
-        switch channel {
-        case .others:
-            detector.participantsSpeaking()
-        case .me:
-            // With speakers instead of headphones the mic also hears the call; don't mistake that for the user.
-            guard !systemSegmenter.isSpeaking else { return }
-            detector.presenterSpeaking()
-            presenterSpoke = Date()
-            if reading == .notYet && expandedID != nil { reading = .reading }
-        }
+        // With speakers instead of headphones the mic also hears the call; don't mistake that for the user.
+        guard channel == .me, speaking[.others] != true else { return }
+        presenterSpoke = Date()
+        if reading == .notYet && expandedID != nil { reading = .reading }
     }
 
-    private func utteranceFinished(_ channel: Channel, text: String, speechStarted: Date, speechEnded: Date) {
+    /// The server's times count from when the call began; the transcript's lines are stamped with the clock.
+    private func utteranceFinished(_ event: CallEvent) {
+        guard let channel = event.side else { return }
         partial[channel] = nil
-        guard !text.isEmpty, !isEcho(channel, text) else {
-            if channel == .others { detector.participantsStopped(speechEnded: speechEnded) }
-            return
-        }
-        let utterance = Utterance(channel: channel, text: text, started: speechStarted, time: speechEnded)
+        guard let text = event.text, !text.isEmpty else { return }
+        let origin = liveCall?.startedAt ?? Date()
+        let started = origin.addingTimeInterval(event.start ?? 0)
+        let ended = origin.addingTimeInterval(event.end ?? event.start ?? 0)
+        var utterance = Utterance(channel: channel, text: text, started: started, time: max(started, ended))
+        utterance.speaker = event.speaker
         utterances.append(utterance)
         if utterances.count > 300 { utterances.removeFirst(utterances.count - 300) }
         recorder.add(utterance)
-        log.write("**[\(promptLabel(channel))]** \(text)", at: speechEnded)
-        // Questions are only looked for while Cue runs, as only then the overlay shows them.
-        if cueRunning, channel == .others || preferences.micQuestions {
-            detector.add(text, from: judgeLabel(channel), speechStarted: speechStarted, speechEnded: speechEnded)
-        }
-    }
-
-    /// The mic picking up the call through speakers produces a near-copy of a participant line.
-    private func isEcho(_ channel: Channel, _ text: String) -> Bool {
-        guard channel == .me else { return false }
-        let stopWords = lexicon.stopWords
-        return utterances.suffix(4).contains { other in
-            other.channel == .others && Date().timeIntervalSince(other.time) < 15
-                && Utterance.isEcho(text, of: other.text, stopWords: stopWords)
-        }
+        log.write("**[\(promptLabel(channel))]** \(text)", at: utterance.time)
     }
 
     private func promptLabel(_ channel: Channel) -> String {
@@ -669,7 +704,6 @@ final class AppState: ObservableObject {
         activeProject = project
         preferences.activeProject = project.id
         log.write("📁 Project: \(project.name)")
-        applyLanguage()
         rebuildKnowledge()
     }
 
@@ -702,6 +736,7 @@ final class AppState: ObservableObject {
         cueRunning = true
         log.write("▶︎ Cue started\(activeProject.map { ": \($0.name)" } ?? "")")
         updateCapture()
+        sendConfig()
     }
 
     /// Stop Cue: hides the overlay and stops listening. A call being recorded keeps recording.
@@ -709,9 +744,9 @@ final class AppState: ObservableObject {
         guard cueRunning else { return }
         cueRunning = false
         hideOverlay()
-        _ = detector.take()
         log.write("⏹ Cue stopped")
         updateCapture()
+        sendConfig()
     }
 
     /// After a rename or delete on the dashboard.
@@ -726,7 +761,6 @@ final class AppState: ObservableObject {
             if let next = projects.mostRecent {
                 activate(next)
             } else {
-                applyLanguage()
                 rebuildKnowledge()
             }
         }
@@ -804,63 +838,56 @@ final class AppState: ObservableObject {
 
     // MARK: - Answers
 
-    /// Manual trigger: whatever the participants are saying right now, else their last line. Its
-    /// questions are answered each on its own, or all of it when it holds none.
+    /// The "answer now" hot key: the server takes what the participants are saying right now, else their last line, and answers its
+    /// questions each on its own (or all of it when it holds none).
     func answerNow() {
-        let taken = detector.take()
-        let live = partial[.others] ?? ""
-        var speech = taken?.speech ?? ""
-        if !live.isEmpty { speech += (speech.isEmpty ? "" : " ") + live }
-        if speech.isEmpty {
-            speech = utterances.last(where: { $0.channel == .others })?.text ?? utterances.last?.text ?? ""
-        }
-        guard !speech.isEmpty else { return }
-        // The judge hasn't heard what's still being said.
-        let questions = live.isEmpty ? taken?.questions ?? [] : []
-        ask(questions.isEmpty ? [speech] : questions, force: true)
+        sendCommand(["type": "answerNow"])
     }
 
-    /// Who said a line, for the judge. Listening for questions from the room, the microphone hears
-    /// the people around the speaker too, so it can't be labelled as the speaker.
-    private func judgeLabel(_ channel: Channel) -> String {
-        channel == .me && preferences.micQuestions ? "Room" : promptLabel(channel)
-    }
-
-    /// What the judge reads: the last two minutes for context, then what was just said.
-    private func judgeMessage(_ speech: String) -> String {
-        let said = Set(detector.buffer.map(\.started))
-        let context = utterances
-            .filter { Date().timeIntervalSince($0.time) < 120 && !said.contains($0.started) }
-            .suffix(10)
-            .map { "[\(judgeLabel($0.channel))] \($0.text)" }
-            .joined(separator: "\n")
-        return (context.isEmpty ? "" : "Said earlier (context):\n\(context.suffix(2000))\n\n") + "Just said:\n\(speech)"
-    }
-
+    /// The Ask field: this question, answered now.
     func ask(_ question: String, force: Bool = false) {
-        ask([question], force: force)
+        guard api.isSignedIn, !question.isEmpty else { return }
+        sendCommand(["type": "ask", "text": question])
     }
 
-    /// Questions asked in one go, answered each on its own and listed together. `force` when the user
-    /// asked for it: shown at once. Without `request` they are only listed, for Prepare Answer.
-    func ask(_ questions: [String], force: Bool = false, request: Bool = true) {
-        guard api.isSignedIn, claudeService != nil || !request else { return }
-        let lexicon = self.lexicon
-        let exchange = Exchange(answers: questions.map { question in
-            let match = knowledge?.match(question)
-            let opener = match.flatMap { Self.firstSentence($0.answer.a, dropping: lexicon.thanksPrefix) }
-                ?? (lexicon.defaultOpener.isEmpty ? nil : lexicon.defaultOpener)
-            return Answer(question: question, opener: opener, prepared: match?.answer, preparedScore: match?.score ?? 0, requested: false)
-        })
-        exchanges.append(exchange)
-        if request {
-            send(exchange.id, force: force)
-        } else {
-            for question in questions { log.write("❔ **Question (Auto is off):** \(question)") }
+    /// Prepare Answer on questions noticed with Auto off.
+    func prepare(_ id: UUID) {
+        guard let index = exchanges.firstIndex(where: { $0.id == id }) else { return }
+        sendCommand(["type": "prepare", "exchange": exchanges[index].serverID])
+        for part in exchanges[index].answers.indices where !exchanges[index].answers[part].requested {
+            exchanges[index].answers[part].requested = true
+            exchanges[index].answers[part].askedAt = Date()
+            unlogged.insert(exchanges[index].answers[part].questionID)
+            logQuestion(exchanges[index].answers[part].questionID)
         }
-        // Asked for by the user: show it now. Noticed by Cue: it waits as a row until it's a real answer,
-        // or under the button while the view is held or the speaker reads the answer in view.
-        if force {
+        expand(id)
+    }
+
+    /// A question the server noticed (or was asked): the exchange it belongs to gets it, and once the exchange is whole it takes its place
+    /// in the list. Asked for by the user: shown at once. Noticed by Cue: it waits as a row until it's a real answer, or under the button
+    /// while the view is held or the speaker reads the answer in view.
+    private func questionAsked(_ event: CallEvent) {
+        guard let questionID = event.id, let exchangeID = event.exchange, let text = event.text else { return }
+        let requested = event.requested ?? true
+        var answer = Answer(questionID: questionID, question: text, opener: event.opener, requested: requested)
+        answer.part = event.index ?? 0
+        answer.parts = event.of ?? 1
+        let index: Int
+        if let found = exchanges.firstIndex(where: { $0.serverID == exchangeID }) {
+            index = found
+            exchanges[index].answers.append(answer)
+        } else {
+            exchanges.append(Exchange(serverID: exchangeID, answers: [answer]))
+            index = exchanges.count - 1
+        }
+        if requested {
+            unlogged.insert(questionID)
+        } else {
+            log.write("❔ **Question (Auto is off):** \(text)")
+        }
+        guard exchanges[index].answers.count >= answer.parts else { return }
+        let exchange = exchanges[index]
+        if event.forced == true {
             expand(exchange.id)
         } else if holding || listScrolled {
             unseen.insert(exchange.id)
@@ -869,42 +896,22 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Prepare Answer on questions noticed with Auto off.
-    func prepare(_ id: UUID) {
-        send(id, force: true)
-        expand(id)
+    /// The prepared answer that matches a question.
+    private func preparedFound(_ event: CallEvent) {
+        guard let id = event.questionId, let (index, part) = position(ofQuestion: id) else { return }
+        exchanges[index].answers[part].prepared = PreparedAnswer(q: event.question ?? "", a: event.answer ?? "", who: event.who,
+                                                                 source: event.source ?? "")
+        exchanges[index].answers[part].preparedScore = event.score ?? 0
+        logQuestion(id)
     }
 
-    /// Sends an exchange's questions that are still waiting to Claude, each as its own request.
-    private func send(_ id: UUID, force: Bool) {
-        guard let claudeService, let index = exchanges.firstIndex(where: { $0.id == id }) else { return }
-        let questions = exchanges[index].answers.map(\.question)
-        for (part, answer) in exchanges[index].answers.enumerated() where !answer.requested {
-            let others = questions.enumerated().filter { $0.offset != part }.map { "«\($0.element)»" }
-            claudeService.ask(message(for: answer.question, askedWith: others, force: force), id: answer.id)
-            exchanges[index].answers[part].requested = true
-            exchanges[index].answers[part].askedAt = Date()
-            let of = questions.count > 1 ? " _(\(part + 1) of \(questions.count))_" : ""
-            let match = answer.prepared.map { _ in " _(prepared match \(Int(answer.preparedScore * 100))%)_" } ?? ""
-            log.write("❓ **Question:** \(answer.question)\(of)\(match)")
-        }
-    }
-
-    private func message(for question: String, askedWith others: [String], force: Bool) -> String {
-        let context = utterances
-            .filter { Date().timeIntervalSince($0.time) < 180 && !question.contains($0.text) }
-            .suffix(12)
-            .map { "[\(promptLabel($0.channel))] \($0.text)" }
-            .joined(separator: "\n")
-        var message = context.isEmpty ? "" : "Recent transcript (context):\n\(context.suffix(2500))\n\n"
-        message += "Question: [\(promptLabel(.others))] \(question)"
-        if !others.isEmpty {
-            message += "\n\n(Asked in one go with \(others.joined(separator: ", ")), which are answered separately: answer only this question.)"
-        }
-        message += force
-            ? "\n\n(The speaker asked for an answer themselves — even if this is not a question, suggest what to say.)"
-            : "\n\n(Noticed automatically. If it is not a question or remark addressed to the speaker, reply with — alone.)"
-        return message
+    /// The line for a question being answered, once (it says which prepared answer matched, which the server sends right after the question).
+    private func logQuestion(_ id: String) {
+        guard unlogged.remove(id) != nil, let (index, part) = position(ofQuestion: id) else { return }
+        let answer = exchanges[index].answers[part]
+        let of = answer.parts > 1 ? " _(\(answer.part + 1) of \(answer.parts))_" : ""
+        let match = answer.prepared.map { _ in " _(prepared match \(Int(answer.preparedScore * 100))%)_" } ?? ""
+        log.write("❓ **Question:** \(answer.question)\(of)\(match)")
     }
 
     /// The user opens an exchange (a click, ⌃⌥← →). An older one holds the view: new questions
@@ -950,7 +957,7 @@ final class AppState: ObservableObject {
     /// still talking (their utterance isn't transcribed yet when it ends).
     private func checkReading() {
         guard reading == .reading else { return }
-        if micSegmenter.isSpeaking && !systemSegmenter.isSpeaking { presenterSpoke = Date(); return }
+        if speaking[.me] == true && speaking[.others] != true { presenterSpoke = Date(); return }
         guard Date().timeIntervalSince(presenterSpoke) >= readingPause else { return }
         reading = .done
         let held = heldWhileReading
@@ -961,21 +968,16 @@ final class AppState: ObservableObject {
         reveal(index)
     }
 
-    private func position(of answer: UUID) -> (exchange: Int, part: Int)? {
+    private func position(ofQuestion id: String) -> (exchange: Int, part: Int)? {
         for (index, exchange) in exchanges.enumerated() {
-            if let part = exchange.answers.firstIndex(where: { $0.id == answer }) { return (index, part) }
+            if let part = exchange.answers.firstIndex(where: { $0.questionID == id }) { return (index, part) }
         }
         return nil
     }
 
-    private static func firstSentence(_ text: String, dropping prefix: String) -> String? {
-        let cleaned = prefix.isEmpty ? text : text.replacingOccurrences(of: prefix, with: "")
-        guard let end = cleaned.firstIndex(where: { ".!?".contains($0) }) else { return cleaned.isEmpty ? nil : cleaned }
-        return String(cleaned[...end])
-    }
-
-    private func appendDelta(_ id: UUID, _ text: String) {
-        guard let (index, part) = position(of: id) else { return }
+    private func appendDelta(_ id: String, _ text: String) {
+        logQuestion(id)
+        guard let (index, part) = position(ofQuestion: id) else { return }
         if exchanges[index].answers[part].firstTokenAt == nil { exchanges[index].answers[part].firstTokenAt = Date() }
         exchanges[index].answers[part].text += text
         // The first words of a real answer (not "—") bring it into view, unless a newer one is there.
@@ -983,8 +985,9 @@ final class AppState: ObservableObject {
         if exchanges[index].answers[part].isUnderWay, shown.map({ $0 < index }) ?? true { reveal(index) }
     }
 
-    private func finish(_ id: UUID, error: String?) {
-        guard let (index, part) = position(of: id) else { return }
+    private func finish(_ id: String, error: String?) {
+        logQuestion(id)
+        guard let (index, part) = position(ofQuestion: id) else { return }
         exchanges[index].answers[part].done = true
         exchanges[index].answers[part].error = error
         let answer = exchanges[index].answers[part]

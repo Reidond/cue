@@ -33,14 +33,6 @@ struct Project: Codable, Identifiable, Hashable {
             .joined(separator: ". ")
     }
 
-    /// The names and terms one by one, as Deepgram's keyterms: they're written one per line or
-    /// separated by commas or semicolons.
-    var terms: [String] {
-        vocabulary.components(separatedBy: CharacterSet(charactersIn: ",;\n"))
-            .map { $0.trimmingCharacters(in: .whitespaces.union(CharacterSet(charactersIn: "."))) }
-            .filter { !$0.isEmpty }
-    }
-
     private enum CodingKeys: String, CodingKey {
         case name, occasion, language, vocabulary = "namesAndTerms", created, lastUsed, serverID
     }
@@ -325,7 +317,7 @@ final class ProjectStore: ObservableObject {
         projects[index].materials = materials
     }
 
-    /// What the account read from the project's files, for Claude's system prompt and the project's page. Nil when it couldn't be asked.
+    /// What the account read from the project's files, for the project's page. Nil when it couldn't be asked.
     func documents(of serverID: String?) async -> [MaterialDocument]? {
         guard let serverID else { return [] }
         do {

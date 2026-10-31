@@ -334,6 +334,12 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
         throw CueAPIError.server("Cue didn't accept the sign-in.")
     }
 
+    /// An access token for what `request` doesn't send (the live socket, a streamed summary): still good, or refreshed first.
+    func bearer(refreshing: Bool = false) async throws -> String {
+        if refreshing { return try await refreshAccessToken() }
+        return try await validAccessToken()
+    }
+
     private func validAccessToken() async throws -> String {
         if let accessToken, Date() < refreshAt { return accessToken }
         return try await refreshAccessToken()

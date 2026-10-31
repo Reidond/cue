@@ -42,35 +42,32 @@ struct ProjectView: View {
                 .labelsHidden()
             }
         }
-        .task(id: PreviewKey(project: project, speaker: state.preferences.speakerName)) {
+        .task(id: PreviewKey(project: project)) {
             guard !isActive else { return }
-            await preview.read(project, speaker: state.preferences.speakerName, in: projects)
+            await preview.read(project, in: projects)
         }
     }
 
     private struct PreviewKey: Equatable {
-        let materials: [Material], language: String, occasion: String, speaker: String
-        init(project: Project, speaker: String) {
+        let materials: [Material], language: String
+        init(project: Project) {
             materials = project.materials
             language = project.language
-            occasion = project.occasion
-            self.speaker = speaker
         }
     }
 }
 
-/// Asks the account for a project's materials for its page, the way Cue reads them for answers.
+/// Asks the account for a project's materials for its page.
 @MainActor
 final class MaterialsPreview: ObservableObject {
     @Published private(set) var knowledge: KnowledgeBase?
     @Published private(set) var reading = false
 
-    func read(_ project: Project, speaker: String, in store: ProjectStore) async {
+    func read(_ project: Project, in store: ProjectStore) async {
         reading = true
-        let context = PromptContext(speaker: speaker, occasion: project.occasion, languageCode: project.language)
         let documents = await store.documents(of: project.serverID)
         guard !Task.isCancelled else { return }
-        if let documents { knowledge = KnowledgeBase.build(documents: documents, context: context) }
+        if let documents { knowledge = KnowledgeBase(documents: documents) }
         reading = false
     }
 }

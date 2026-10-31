@@ -235,6 +235,8 @@ final class RecordingStore: ObservableObject {
     private let preferences: Preferences
     private let projects: ProjectStore
     private let speakerModels: SpeakerModels
+    /// Writes the summaries.
+    private let api: CueAPI
     private let log: SessionLog
     /// What cancels each summary being written.
     private var summarizers: [String: () -> Void] = [:]
@@ -243,10 +245,11 @@ final class RecordingStore: ObservableObject {
     private var secondPassRunning = false
     private var secondPassQueue: [CheckedContinuation<Void, Never>] = []
 
-    init(preferences: Preferences, projects: ProjectStore, speakerModels: SpeakerModels, log: SessionLog) {
+    init(preferences: Preferences, projects: ProjectStore, speakerModels: SpeakerModels, api: CueAPI, log: SessionLog) {
         self.preferences = preferences
         self.projects = projects
         self.speakerModels = speakerModels
+        self.api = api
         self.log = log
     }
 
@@ -404,8 +407,8 @@ final class RecordingStore: ObservableObject {
         defer { secondPasses[id] = nil }
         let started = Date()
         let job = SecondPass.Job(folder: file.workingAudio, startedAt: live.startedAt, endedAt: live.endedAt,
-                                 language: language, prompt: project.whisperPrompt, terms: project.terms,
-                                 lexicon: project.lexicon, provider: preferences.speechProvider)
+                                 language: language, prompt: project.whisperPrompt,
+                                 lexicon: project.lexicon)
         do {
             let result = try await SecondPass.run(job, child: child) { [weak self] done in
                 Task { @MainActor in
@@ -559,8 +562,7 @@ final class RecordingStore: ObservableObject {
                                              unnamed: people.dropFirst().filter(lexicon.isParticipantLabel),
                                              language: lexicon.name, occasion: project?.occasion ?? "",
                                              namesAndTerms: project?.vocabulary ?? "", meeting: meeting)
-        summarizers[id] = Summarizer.run(system: prompt, transcript: text, model: preferences.model,
-                                         provider: preferences.claudeProvider, onText: { [weak self] partial in
+        summarizers[id] = Summarizer.run(system: prompt, transcript: text, api: api, onText: { [weak self] partial in
             Task { @MainActor in if self?.summarizing.contains(id) == true { self?.liveSummary[id] = partial } }
         }, completion: { [weak self] result in
             Task { @MainActor in self?.finishSummary(id, result, completion: completion) }
@@ -738,7 +740,7 @@ final class RecordingStore: ObservableObject {
     }
 }
 
-/// One-shot `claude -p` run that turns a transcript into meeting notes.
+/// Turns a transcript into meeting notes; the Cue API's Claude writes them.
 enum Summarizer {
     /// `others` are the transcript's labels for the people on the call (one label for all of them
     /// unless their voices were told apart), and `unnamed` those of them that are labels rather than
@@ -876,98 +878,14 @@ enum Summarizer {
         }
     }
 
-    /// Streams the growing summary through `onText`; returns what cancels it.
+    /// Streams the growing summary through `onText` (the Cue API writes it: `POST /v1/summaries`); returns what cancels it.
     @discardableResult
-    static func run(system: String, transcript: String, model: ClaudeService.Model, provider: ClaudeProvider,
-                    onText: @escaping (String) -> Void,
+    static func run(system: String, transcript: String, api: CueAPI, onText: @escaping (String) -> Void,
                     completion: @escaping (Result<String, Error>) -> Void) -> (() -> Void)? {
-        if provider == .anthropicAPI {
-            return runOverAPI(system: system, transcript: transcript, model: model, onText: onText, completion: completion)
-        }
-        guard let binary = ClaudeService.findBinary() else {
-            completion(.failure(ServiceError("Claude Code not found")))
-            return nil
-        }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.currentDirectoryURL = appSupport.appendingPathComponent("run")
-        // From a file: arguments would reach Claude with «й» and «ї» decomposed (see `SecondPass.spawn`).
-        let systemFile = process.currentDirectoryURL!.appendingPathComponent("summary-\(UUID().uuidString).md")
-        process.arguments = [
-            "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-            "--model", model.rawValue, "--system-prompt-file", systemFile.path,
-            "--tools", "", "--strict-mcp-config", "--setting-sources", "",
-            "--disable-slash-commands", "--no-session-persistence",
-        ]
-        let input = Pipe(), output = Pipe()
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do {
-            try FileManager.default.createDirectory(at: process.currentDirectoryURL!, withIntermediateDirectories: true)
-            try system.write(to: systemFile, atomically: true, encoding: .utf8)
-            try process.run()
-        } catch {
-            try? FileManager.default.removeItem(at: systemFile)
-            completion(.failure(error))
-            return nil
-        }
-        DispatchQueue.global().async {
-            try? input.fileHandleForWriting.write(contentsOf: Data(("Transcript:\n\n" + transcript).utf8))
-            try? input.fileHandleForWriting.close()
-        }
-        DispatchQueue.global().async {
-            var text = "", buffer = Data(), finished = false
-            let handle = output.fileHandleForReading
-            while case let chunk = handle.availableData, !chunk.isEmpty {
-                buffer.append(chunk)
-                while let newline = buffer.firstIndex(of: 0x0A) {
-                    let line = buffer[buffer.startIndex..<newline]
-                    buffer.removeSubrange(buffer.startIndex...newline)
-                    guard let event = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
-                    if event["type"] as? String == "stream_event",
-                       let inner = event["event"] as? [String: Any],
-                       let delta = inner["delta"] as? [String: Any],
-                       delta["type"] as? String == "text_delta",
-                       let piece = delta["text"] as? String {
-                        text += piece
-                        onText(text)
-                    } else if event["type"] as? String == "result" {
-                        finished = true
-                        if event["is_error"] as? Bool == true {
-                            completion(.failure(ServiceError(event["result"] as? String ?? "Claude couldn't summarize the call")))
-                        } else {
-                            completion(.success((event["result"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? text))
-                        }
-                    }
-                }
-            }
-            process.waitUntilExit()
-            try? FileManager.default.removeItem(at: systemFile)
-            if !finished {
-                completion(.failure(ServiceError(process.terminationReason == .uncaughtSignal ? "Summary cancelled" : "Claude stopped before finishing")))
-            }
-        }
-        return process.terminate
-    }
-
-    /// The same over the Anthropic API: one request with the transcript as its message. Claude may think
-    /// first (the default), as nobody waits on the first word here.
-    private static func runOverAPI(system: String, transcript: String, model: ClaudeService.Model,
-                                   onText: @escaping (String) -> Void,
-                                   completion: @escaping (Result<String, Error>) -> Void) -> (() -> Void)? {
-        guard let key = APIKey.anthropic.value else {
-            completion(.failure(ServiceError("No Anthropic API key — add one in Settings › Providers")))
-            return nil
-        }
-        let body: [String: Any] = [
-            "model": model.apiID, "max_tokens": 16000, "system": system,
-            "messages": [["role": "user", "content": "Transcript:\n\n" + transcript]],
-        ]
         let task = Task {
             var text = ""
             do {
-                let summary = try await AnthropicAPI.stream(body, key: key) { piece in
+                let summary = try await api.summarize(system: system, transcript: transcript) { piece in
                     text += piece
                     onText(text)
                 }

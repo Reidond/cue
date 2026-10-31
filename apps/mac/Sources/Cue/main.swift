@@ -42,8 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var activity: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        signal(SIGPIPE, SIG_IGN)  // writing to a Claude process that just died must not kill the app
-        // Quit cleanly on Ctrl-C / kill so whisper-server doesn't linger.
+        signal(SIGPIPE, SIG_IGN)  // writing to a socket or a process that just closed must not kill the app
+        // Quit cleanly on Ctrl-C / kill, so the live call is ended and the second pass's processes stop.
         for number in [SIGINT, SIGTERM] {
             signal(number, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
@@ -86,7 +86,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         state.openSettings = { [weak self] in self?.showSettings() }
-        state.openProviders = { [weak self] in self?.showSettings(.providers) }
         state.openDashboard = { [weak self] in self?.showDashboard() }
         state.openRecordings = { [weak self] id in self?.showDashboard(note: id) }
         state.showOverlay = { [weak self] in self?.panel.orderFrontRegardless() }
@@ -130,7 +129,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let content: AnyView = switch pane {
                 case .general: AnyView(GeneralSettings(preferences: preferences))
                 case .account: AnyView(AccountSettings(api: state.api))
-                case .providers: AnyView(ProviderSettings(preferences: preferences, state: state))
                 case .calendar: AnyView(CalendarSettings(preferences: preferences, calendar: state.calendar))
                 }
                 let hosting = NSHostingController(rootView: content.frame(width: pane.size.width, height: pane.size.height))
@@ -246,7 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(withTitle: "Dashboard…", action: #selector(menuDashboard), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(menuSettings), keyEquivalent: ",").target = self
-        menu.addItem(withTitle: "Restart Claude", action: #selector(menuRestart), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Restart Live Call", action: #selector(menuRestart), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Cue", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
@@ -261,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func menuToggle() { toggleOverlay() }
     @objc private func menuAnswer() { state.answerNow() }
     @objc private func menuSettings() { showSettings() }
-    @objc private func menuRestart() { state.restartClaude() }
+    @objc private func menuRestart() { state.restartCall() }
     @objc private func menuRecord() { state.toggleRecording(.menuBar) }
     @objc private func menuDashboard() { showDashboard() }
     @objc private func menuNewProject() {
@@ -362,9 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// speaker models), `show TEXT` (the overlay's row of the question with TEXT in it), `newest`
     /// (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions
     /// waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's
-    /// menu), `settings general|account|providers|calendar` (a Settings tab), `provider NAME` (a provider
-    /// picked in Settings › Providers: claudeCode, anthropicAPI, whisper or deepgram),
-    /// `key anthropic|deepgram [KEY]` (a key pasted into its field and saved; without one, Remove) and
+    /// menu), `settings general|account|calendar` (a Settings tab) and
     /// `set PROJECT | occasion|language|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (the minus button of a material),
     /// `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes),
     /// `signin` (Sign In on the sign-in screen) and `signout` (Sign Out in Settings › Account). Until someone is signed in, only these,
@@ -394,7 +390,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func control(_ line: String) async {
         let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
         let command = parts.first ?? "", argument = parts.count > 1 ? parts[1] : ""
-        if !state.api.isSignedIn, !["signin", "signout", "settings", "page", "size", "provider", "key"].contains(command) {
+        if !state.api.isSignedIn, !["signin", "signout", "settings", "page", "size"].contains(command) {
             state.log.write("⚠︎ Sign in to Cue first (\(command) ignored)")
             return
         }
@@ -471,13 +467,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // The dashboard's edge dragged to make it W × H points (as small as it lets it be).
             let numbers = argument.split(separator: " ").compactMap { Double($0) }
             if numbers.count == 2, let window = dashboardWindow { window.setContentSize(NSSize(width: numbers[0], height: numbers[1])) }
-        case "provider":
-            if let provider = ClaudeProvider(rawValue: argument) { preferences.claudeProvider = provider }
-            if let provider = SpeechProvider(rawValue: argument) { preferences.speechProvider = provider }
-        case "key":
-            let sides = argument.split(separator: " ", maxSplits: 1).map(String.init)
-            guard let key = sides.first.flatMap(APIKey.init(rawValue:)) else { break }
-            if sides.count > 1 { try? preferences.saveKey(sides[1], for: key) } else { preferences.removeKey(key) }
         case "page":
             showDashboard()
             switch argument {
