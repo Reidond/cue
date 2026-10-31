@@ -81,8 +81,8 @@ export class AdminPage {
         });
     }
 
-    /** Opens the admin as `email`, signing in through the stand-in identity provider as the SPA's own button does. */
-    static async signIn(backend: Backend, email: string, options: AdminOptions): Promise<AdminPage> {
+    /** The admin SPA in a fresh browser, signed out. */
+    static async open(backend: Backend, options: AdminOptions): Promise<AdminPage> {
         const context = await (
             await browser()
         ).newContext({
@@ -94,8 +94,14 @@ export class AdminPage {
         await mkdir(options.shots, { recursive: true });
         const admin = new AdminPage(await context.newPage(), backend.url, options.shots, options.scheme ?? 'light');
         opened.add(admin);
-        backend.idp.approveAs(email);
         await admin.page.goto(`${backend.url}/admin/`);
+        return admin;
+    }
+
+    /** Opens the admin as `email`, signing in through the stand-in identity provider as the SPA's own button does. */
+    static async signIn(backend: Backend, email: string, options: AdminOptions): Promise<AdminPage> {
+        const admin = await AdminPage.open(backend, options);
+        backend.idp.approveAs(email);
         await admin.page.getByRole('link', { name: 'Continue with Google' }).click();
         await admin.page.waitForURL(/\/admin\//);
         return admin;

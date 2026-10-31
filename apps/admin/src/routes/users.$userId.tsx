@@ -199,7 +199,7 @@ function LimitCard({ user }: { user: AdminUser }) {
                     if (draft !== null && dirty) save.mutate(draft);
                 }}
             >
-                <MoneyField label="Monthly limit in dollars" value={draft} onChange={setDraft} step={5} />
+                <MoneyField label="Monthly limit in dollars" value={draft} onChange={setDraft} step={5} prefix="$" />
                 <Button type="submit" tone="primary" disabled={!dirty || draft === null || save.isPending}>
                     Save
                 </Button>

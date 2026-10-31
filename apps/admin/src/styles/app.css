@@ -193,6 +193,7 @@ select {
 
 .page-head {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-end;
     justify-content: space-between;
     gap: 16px;
@@ -260,6 +261,10 @@ select {
         overflow-x: auto;
     }
 
+    .nav a svg {
+        display: none;
+    }
+
     .account {
         margin: 0 0 0 auto;
         flex-direction: row;
@@ -268,10 +273,6 @@ select {
     }
 
     .account-who {
-        max-width: 140px;
-    }
-
-    .account-who strong {
         display: none;
     }
 
@@ -306,6 +307,7 @@ select {
 
 .grid-2 {
     display: grid;
+    align-items: start;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 20px;
 }
@@ -536,6 +538,8 @@ select.input {
 }
 
 .number-step {
+    display: grid;
+    place-items: center;
     flex: none;
     width: 36px;
     border: 0;
@@ -568,8 +572,21 @@ select.input {
 .number-affix {
     display: flex;
     align-items: center;
-    padding-left: 10px;
     color: var(--text-3);
+}
+
+.number-affix:first-of-type {
+    padding-left: 10px;
+}
+
+.number-affix:last-of-type {
+    padding-right: 10px;
+}
+
+.stepper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 /* Segmented control (Base UI toggle group). The pressed item is the selection. */
@@ -797,6 +814,8 @@ select.input {
 }
 
 .table-wrap {
+    /* The screen-reader-only text of a header cell is absolutely positioned: without this it would escape the scroll area and widen the page. */
+    position: relative;
     overflow-x: auto;
 }
 
@@ -1214,11 +1233,13 @@ details.table-view td:last-child {
     justify-content: space-between;
     gap: 24px;
     padding: 16px 0;
+}
+
+.setting + .setting {
     border-top: 1px solid var(--divider);
 }
 
-.setting:first-of-type {
-    border-top: 0;
+.setting:first-child {
     padding-top: 0;
 }
 

@@ -61,7 +61,8 @@ export function MoneyField({
     step = 1,
     min = 0,
     max = 100000,
-    prefix = '$',
+    prefix,
+    suffix,
 }: {
     value: number | null;
     onChange: (value: number | null) => void;
@@ -70,6 +71,7 @@ export function MoneyField({
     min?: number;
     max?: number;
     prefix?: string;
+    suffix?: string;
 }) {
     return (
         <NumberField.Root
@@ -86,10 +88,17 @@ export function MoneyField({
                 <NumberField.Decrement className="number-step" aria-label={`Decrease ${label}`}>
                     <MinusIcon />
                 </NumberField.Decrement>
-                <span className="number-affix" aria-hidden="true">
-                    {prefix}
-                </span>
+                {prefix ? (
+                    <span className="number-affix" aria-hidden="true">
+                        {prefix}
+                    </span>
+                ) : null}
                 <NumberField.Input className="number-input" aria-label={label} />
+                {suffix ? (
+                    <span className="number-affix" aria-hidden="true">
+                        {suffix}
+                    </span>
+                ) : null}
                 <NumberField.Increment className="number-step" aria-label={`Increase ${label}`}>
                     <PlusIcon />
                 </NumberField.Increment>

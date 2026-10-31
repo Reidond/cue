@@ -32,7 +32,7 @@ function OverviewPage() {
                     <h1>Overview</h1>
                     <p className="sub">What Cue has cost, against what everyone may spend.</p>
                 </div>
-                <div className="toolbar">
+                <div className="stepper">
                     <Link to="/" search={{ month: shiftMonth(shown, -1) }} className="btn icon-btn" aria-label="Previous month">
                         <ChevronLeft />
                     </Link>

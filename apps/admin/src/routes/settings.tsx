@@ -148,7 +148,8 @@ function NumberSetting({
                     step={step}
                     min={min}
                     max={max}
-                    prefix={money ? '$' : (unit ?? '')}
+                    prefix={money ? '$' : undefined}
+                    suffix={unit}
                 />
                 <Button type="submit" tone="primary" disabled={!dirty || draft === null || saving}>
                     Save
