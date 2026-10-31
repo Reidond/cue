@@ -124,8 +124,13 @@ final class ProjectStore: ObservableObject {
                 remote = try await api.listProjects()
             }
 
+            // A create or rename in flight has the account's side done and the folder's not yet: look again once it's over, so nothing is made twice.
+            guard changing == 0, changes == changesAtStart else {
+                Task { await self.syncWithAccount() }
+                return
+            }
             var folders: [String: Project] = [:]
-            for project in local + imported {
+            for project in localProjects() {
                 if let id = project.serverID, folders[id] == nil { folders[id] = project }
             }
             var synced: [Project] = []
@@ -162,6 +167,11 @@ final class ProjectStore: ObservableObject {
         ProjectFields(name: project.name, occasion: project.occasion, language: project.language, namesAndTerms: project.vocabulary,
                       createdAt: project.created.timeIntervalSince1970 * 1000,
                       lastUsedAt: project.lastUsed.map { $0.timeIntervalSince1970 * 1000 })
+    }
+
+    private func changes(of project: Project) -> ProjectChanges {
+        ProjectChanges(name: project.name, occasion: project.occasion, language: project.language, namesAndTerms: project.vocabulary,
+                       lastUsedAt: project.lastUsed.map { $0.timeIntervalSince1970 * 1000 })
     }
 
     /// Sends a project found in the library to the account, with the files it kept in `Materials/`.
@@ -225,7 +235,7 @@ final class ProjectStore: ObservableObject {
         saves[serverID] = nil
         guard let project = projects.first(where: { $0.serverID == serverID }) else { return }
         do {
-            try await api.updateProject(serverID, fields(of: project))
+            try await api.updateProject(serverID, changes(of: project))
             log.write("☁️ Saved “\(project.name)” to your account")
         } catch {
             log.write("⚠︎ Couldn't save “\(project.name)”: \(error.localizedDescription)")
@@ -241,7 +251,7 @@ final class ProjectStore: ObservableObject {
             changing -= 1
             changes += 1
         }
-        if let serverID = project.serverID { try await api.updateProject(serverID, ProjectFields(name: name)) }
+        if let serverID = project.serverID { try await api.updateProject(serverID, ProjectChanges(name: name)) }
         var renamed = self.project(project.id) ?? project
         renamed.name = name
         if Self.folderName(for: name) != project.id {
@@ -334,7 +344,8 @@ final class ProjectStore: ObservableObject {
             }
             return documents
         } catch {
-            log.write("⚠︎ Couldn't read your materials: \(error.localizedDescription)")
+            // A page that was left, or a newer read that replaced this one, cancels it: nothing went wrong.
+            if !Task.isCancelled { log.write("⚠︎ Couldn't read your materials: \(error.localizedDescription)") }
             return nil
         }
     }

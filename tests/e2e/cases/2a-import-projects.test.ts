@@ -14,7 +14,7 @@ e2eCase(
         const seminar = await cue.project('Семінар', { language: 'uk' });
         makeDocx(join(seminar, 'Materials', 'prepared.docx'), ['Питання: Скільки було вуликів?', 'Відповідь: Сорок вісім.']);
 
-        await cue.launch();
+        await cue.launch({ CUE_SNAPSHOT: cue.path('cue.png') });
         await cue.waitLog(/📦 Imported 2 projects from this Mac \(2 files\)/, 30);
 
         const account = await (await cue.backend()).accountOf(cue.email);

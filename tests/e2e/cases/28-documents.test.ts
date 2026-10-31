@@ -16,7 +16,7 @@ e2eCase(
             'Rooftop colonies made 31 kg of honey per hive.',
             'Winter losses were 9 percent.',
         ]);
-        await cue.launch();
+        await cue.launch({ CUE_SNAPSHOT: cue.path('cue.png') });
         cue.control('new Bee talk');
         cue.control(`add ${word}`);
         cue.control(`add ${pdf}`);

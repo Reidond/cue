@@ -48,13 +48,22 @@ struct RemotePreparedAnswer: Decodable {
     let materialId: String
 }
 
-/// Fields of a project to send; a nil one stays as it is on the server.
+/// Fields of a new project; the times are for a project moved in from this Mac.
 struct ProjectFields: Encodable {
-    var name: String?
+    var name: String
     var occasion: String?
     var language: String?
     var namesAndTerms: String?
     var createdAt: Double?
+    var lastUsedAt: Double?
+}
+
+/// Fields of a project to change; a nil one stays as it is on the server (and the API refuses any it doesn't know, `createdAt` too).
+struct ProjectChanges: Encodable {
+    var name: String?
+    var occasion: String?
+    var language: String?
+    var namesAndTerms: String?
     var lastUsedAt: Double?
 }
 
@@ -79,7 +88,7 @@ extension CueAPI {
     }
 
     @discardableResult
-    func updateProject(_ id: String, _ fields: ProjectFields) async throws -> RemoteProject {
+    func updateProject(_ id: String, _ fields: ProjectChanges) async throws -> RemoteProject {
         try decode(RemoteProject.self, from: try await request("PATCH", "v1/projects/\(id)", json: try JSONEncoder().encode(fields)))
     }
 
