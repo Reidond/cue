@@ -1,6 +1,6 @@
-# Every push to main builds Cue.app and publishes it as a GitHub release, with the
+# Every push to main builds Cue.app (apps/mac) and publishes it as a GitHub release, with the
 # changes since the previous release as its notes. Versions are CFBundleShortVersionString
-# from apps/mac/Resources/Info.plist plus a patch number: 2.0.0, 2.0.1, …
+# from apps/mac/Resources/Info.plist plus a patch number: 2.0.0, 2.0.1, … It does not deploy the backend: deploy.yml does, when main changes it.
 name: Release
 
 on:
@@ -66,7 +66,7 @@ jobs:
           2. This build is signed ad hoc and not notarized: the first time, right-click Cue.app › **Open**
              (or run `xattr -dr com.apple.quarantine /Applications/Cue.app`). macOS asks for the
              microphone and screen-audio permissions again after each update.
-          3. Cue needs `brew install whisper-cpp` and a signed-in Claude Code; see the README.
+          3. Cue is invite-only: sign in with the Google or GitHub account that was invited. The app talks to the Cue backend; see the README.
 
           Requires macOS 26 or later on Apple silicon.
           NOTES

@@ -1,0 +1,94 @@
+# Deploys the Cue backend (the API Worker, with the admin app as its assets) to Cloudflare when a push to main changes it. The first deploy is
+# made by hand: docs/deploy.md is the owner's checklist (the API token, the OAuth apps, the Worker secrets). Release (release.yml) builds the Mac
+# app and never deploys.
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+    # The Worker with its prompts (apps/api/prompts), the admin app, the contract, and what builds them.
+    paths:
+      - apps/api/**
+      - apps/admin/**
+      - packages/contract/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - vite.config.ts
+      - .github/workflows/deploy.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a deploy under way is finished, not cancelled.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # A fork has neither the Cloudflare account nor its secrets.
+    if: ${{ !github.event.repository.fork }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # The owner's address(es), comma-separated: a repository variable (Settings › Secrets and variables › Actions › Variables).
+      ADMIN_EMAILS: ${{ vars.ADMIN_EMAILS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Credentials and settings
+        run: |
+          missing=""
+          [[ -n $CLOUDFLARE_API_TOKEN ]] || missing="$missing secret:CLOUDFLARE_API_TOKEN"
+          [[ -n $CLOUDFLARE_ACCOUNT_ID ]] || missing="$missing secret:CLOUDFLARE_ACCOUNT_ID"
+          [[ -n $ADMIN_EMAILS ]] || missing="$missing variable:ADMIN_EMAILS"
+          if [[ -n $missing ]]; then
+            echo "::error::Not set:$missing. See docs/deploy.md."
+            exit 1
+          fi
+
+      - uses: voidzero-dev/setup-vp@v1.22.0
+        with:
+          node-version: latest
+          cache: true
+
+      # The checks of ci.yml that decide whether the Worker builds: the toolchain, the types, format, lint, type-check. The end-to-end suite
+      # has run on the pull request.
+      - name: Install
+        run: vp install
+
+      - name: Worker toolchain (cf must build with Vite+)
+        run: node apps/api/scripts/check-vite.ts
+
+      - name: Worker types
+        working-directory: apps/api
+        run: ./node_modules/.bin/cf workers types
+
+      - name: Check (format, lint, types)
+        run: vp check
+
+      # Before the new code runs, the database it expects. On the very first deploy there is no database yet: this says so and goes on.
+      - name: Migrations
+        run: node apps/api/scripts/migrate-remote.ts --if-exists
+
+      - name: Deploy
+        working-directory: apps/api
+        run: ./node_modules/.bin/cf deploy --message "$GITHUB_SHA"
+
+      # The first deploy created the database; any other run finds nothing to apply.
+      - name: Migrations (after the first deploy)
+        run: node apps/api/scripts/migrate-remote.ts
+
+      - name: Is it up?
+        run: |
+          url=$(tr -d '[:space:]' < apps/api/production-url.txt)
+          for attempt in 1 2 3 4 5 6; do
+            if curl -fsS "$url/v1/openapi.json" -o /dev/null; then echo "$url answers"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::$url did not answer /v1/openapi.json"
+          exit 1
