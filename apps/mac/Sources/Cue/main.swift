@@ -365,6 +365,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// menu), `settings general|account|providers|calendar` (a Settings tab), `provider NAME` (a provider
     /// picked in Settings › Providers: claudeCode, anthropicAPI, whisper or deepgram),
     /// `key anthropic|deepgram [KEY]` (a key pasted into its field and saved; without one, Remove) and
+    /// `set PROJECT | occasion|language|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (the minus button of a material),
     /// `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes),
     /// `signin` (Sign In on the sign-in screen) and `signout` (Sign Out in Settings › Account). Until someone is signed in, only these,
     /// `page`, `size` and the Settings ones do anything.
@@ -373,13 +374,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             MainActor.assumeIsolated {
                 guard let self, let text = try? String(contentsOfFile: path, encoding: .utf8) else { return }
                 let lines = text.split(separator: "\n").map(String.init)
-                for line in lines.dropFirst(self.controlLinesDone) { self.control(line) }
+                for line in lines.dropFirst(self.controlLinesDone) { self.enqueue(line) }
                 self.controlLinesDone = max(self.controlLinesDone, lines.count)
             }
         }
     }
 
-    private func control(_ line: String) {
+    /// Commands run one after another: `new` and `add` wait for the account, and what comes after them waits for those.
+    private var controlQueue: Task<Void, Never>?
+
+    private func enqueue(_ line: String) {
+        let previous = controlQueue
+        controlQueue = Task { @MainActor in
+            await previous?.value
+            await self.control(line)
+        }
+    }
+
+    private func control(_ line: String) async {
         let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
         let command = parts.first ?? "", argument = parts.count > 1 ? parts[1] : ""
         if !state.api.isSignedIn, !["signin", "signout", "settings", "page", "size", "provider", "key"].contains(command) {
@@ -393,10 +405,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Task { await self.state.api.signOut() }
         case "new":
             showDashboard()
-            if let project = try? state.projects.create(named: argument) { dashboard.open(project) }
+            if let project = try? await state.projects.create(named: argument) { dashboard.open(project) }
         case "add":
             if let project = state.projects.project(dashboard.selectedProject) ?? state.activeProject {
-                state.projects.addMaterials([URL(fileURLWithPath: argument)], to: project)
+                await state.projects.addMaterials([URL(fileURLWithPath: argument)], to: project)
+            }
+        case "set":
+            let sides = argument.components(separatedBy: " | ")
+            if sides.count == 3, var project = state.projects.project(named: sides[0]) {
+                switch sides[1] {
+                case "occasion": project.occasion = sides[2]
+                case "language": project.language = sides[2]
+                case "names": project.vocabulary = sides[2]
+                default: break
+                }
+                state.projects.update(project)
+            }
+        case "remove":
+            let sides = argument.components(separatedBy: " | ")
+            if sides.count == 2, let project = state.projects.project(named: sides[0]),
+               let material = project.materials.first(where: { $0.name == sides[1] }) {
+                await state.projects.removeMaterial(material, from: project)
             }
         case "project":
             if let project = state.projects.project(named: argument) { state.activate(project) }
@@ -472,24 +501,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             break
         }
     }
-}
-
-/// `Cue --inspect FILE…` prints what Cue reads from each file, including prepared answers,
-/// in the language of the last project used.
-if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "--inspect" {
-    let language = MainActor.assumeIsolated {
-        let preferences = Preferences()
-        return ProjectStore(preferences: preferences).project(preferences.activeProject)?.language
-    }
-    let lexicon = Lexicon.load(language ?? appDefaults.string(forKey: "language") ?? "en")
-    for path in CommandLine.arguments.dropFirst(2) {
-        let document = Materials.read(URL(fileURLWithPath: path), lexicon: lexicon)
-        print("\(document.name): \(document.error ?? document.summary)")
-        for item in document.prepared {
-            print("  Q\(item.who.map { " (\($0))" } ?? ""): \(item.q.prefix(90))\n  A: \(item.a.prefix(90))")
-        }
-    }
-    exit(0)
 }
 
 /// `Cue --render NOTES.md OUT.png` renders Markdown the way the dashboard shows notes.

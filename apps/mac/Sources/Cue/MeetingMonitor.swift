@@ -218,13 +218,15 @@ final class MeetingMonitor: ObservableObject {
         settled.insert(call.key)
         let pending = asking
         pending.forEach(withdraw)
-        guard let project = project(for: call.event) else { return }
-        state.log.write("📅 Recording “\(call.title)” into \(project.name)")
-        state.startRecording(into: project, meeting: call.event.map { MeetingDetails(title: $0.title, attendees: $0.attendees) }, by: trigger)
-        recording = call
-        recordingStarted = state.recorder.startedAt
-        heardAt = heard ? Date() : nil
-        heardApp = heard ? call.app : nil
+        Task {
+            guard let project = await self.project(for: call.event) else { return }
+            self.state.log.write("📅 Recording “\(call.title)” into \(project.name)")
+            self.state.startRecording(into: project, meeting: call.event.map { MeetingDetails(title: $0.title, attendees: $0.attendees) }, by: trigger)
+            self.recording = call
+            self.recordingStarted = self.state.recorder.startedAt
+            self.heardAt = heard ? Date() : nil
+            self.heardApp = heard ? call.app : nil
+        }
     }
 
     private func stop(_ call: Call) {
@@ -246,10 +248,11 @@ final class MeetingMonitor: ObservableObject {
 
     /// The project an event's notes go to: the one picked for its series on Upcoming, else "Meetings",
     /// created when first needed. Calls without an event go to "Meetings" too.
-    func project(for event: CalendarEvent?) -> Project? {
+    func project(for event: CalendarEvent?) async -> Project? {
         let projects = state.projects
         if let event, let id = state.calendar.assignedProject(event), let project = projects.project(id) { return project }
-        return projects.project(named: MeetingCalendar.defaultProject) ?? (try? projects.create(named: MeetingCalendar.defaultProject))
+        if let meetings = projects.project(named: MeetingCalendar.defaultProject) { return meetings }
+        return try? await projects.create(named: MeetingCalendar.defaultProject)
     }
 
     /// The folder of the project an event's notes would go to, without creating "Meetings".

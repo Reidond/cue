@@ -45,7 +45,7 @@ export {
     needWindowSnapshots,
 } from './requirements.ts';
 export { fail, print, skip } from './results.ts';
-export { AdminClient, Backend, type BackendOptions } from './backend.ts';
+export { Account, AdminClient, Backend, type AccountMaterial, type AccountProject, type BackendOptions } from './backend.ts';
 export { AdminPage, browser, closeBrowser } from './browser.ts';
 export { type FakeIdp } from './fake-idp.ts';
 export { Cue, SPEAKER_FILES, type CalendarEvent, type ClaudeRequest } from './sandbox.ts';

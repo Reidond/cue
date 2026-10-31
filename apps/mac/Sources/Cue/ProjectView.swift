@@ -44,12 +44,12 @@ struct ProjectView: View {
         }
         .task(id: PreviewKey(project: project, speaker: state.preferences.speakerName)) {
             guard !isActive else { return }
-            await preview.read(project, speaker: state.preferences.speakerName)
+            await preview.read(project, speaker: state.preferences.speakerName, in: projects)
         }
     }
 
     private struct PreviewKey: Equatable {
-        let materials: [URL], language: String, occasion: String, speaker: String
+        let materials: [Material], language: String, occasion: String, speaker: String
         init(project: Project, speaker: String) {
             materials = project.materials
             language = project.language
@@ -59,21 +59,18 @@ struct ProjectView: View {
     }
 }
 
-/// Reads a project's materials for its page, the way Cue reads them for answers.
+/// Asks the account for a project's materials for its page, the way Cue reads them for answers.
 @MainActor
 final class MaterialsPreview: ObservableObject {
     @Published private(set) var knowledge: KnowledgeBase?
     @Published private(set) var reading = false
 
-    func read(_ project: Project, speaker: String) async {
+    func read(_ project: Project, speaker: String, in store: ProjectStore) async {
         reading = true
-        let materials = project.materials
         let context = PromptContext(speaker: speaker, occasion: project.occasion, languageCode: project.language)
-        let knowledge = await Task.detached(priority: .userInitiated) {
-            KnowledgeBase.build(materials: materials, context: context)
-        }.value
+        let documents = await store.documents(of: project.serverID)
         guard !Task.isCancelled else { return }
-        self.knowledge = knowledge
+        if let documents { knowledge = KnowledgeBase.build(documents: documents, context: context) }
         reading = false
     }
 }
@@ -161,16 +158,16 @@ private struct ProjectOverview: View {
                 if project.materials.isEmpty {
                     dropHint
                 } else {
-                    ForEach(project.materials, id: \.self) { url in
-                        MaterialRow(url: url, document: knowledge?.documents.first { $0.url == url }, reading: reading) {
-                            projects.removeMaterial(url, from: project)
+                    ForEach(project.materials) { material in
+                        MaterialRow(material: material) {
+                            Task { await projects.removeMaterial(material, from: project) }
                         }
                     }
                 }
                 HStack {
                     Button("Add Files…", systemImage: "plus", action: chooseFiles)
                     Spacer()
-                    if reading {
+                    if reading || projects.uploading.contains(project.id) {
                         ProgressView().controlSize(.small)
                     } else if let knowledge, !project.materials.isEmpty {
                         Text(summary(knowledge)).foregroundStyle(.secondary).monospacedDigit()
@@ -179,10 +176,10 @@ private struct ProjectOverview: View {
             } header: {
                 Text("Materials")
             } footer: {
-                Text("PDF, PowerPoint, Word, Markdown or text, copied into the project folder. Prepared answers are picked up from lines like “Q: …” followed by “A: …”, and from questions followed by an “Answer:” line, including in speaker notes.")
+                Text("PDF, PowerPoint, Word, Markdown or text, kept in your Cue account, which reads them. Prepared answers are picked up from lines like “Q: …” followed by “A: …”, and from questions followed by an “Answer:” line, including in speaker notes.")
             }
             .dropDestination(for: URL.self) { urls, _ in
-                projects.addMaterials(urls, to: project)
+                Task { await projects.addMaterials(urls, to: project) }
                 return true
             } isTargeted: { dropTargeted = $0 }
         }
@@ -222,32 +219,31 @@ private struct ProjectOverview: View {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
-        panel.allowedContentTypes = Materials.supportedExtensions.compactMap { UTType(filenameExtension: $0) }
+        panel.allowedContentTypes = Material.supportedExtensions.compactMap { UTType(filenameExtension: $0) }
         panel.prompt = "Add"
-        if panel.runModal() == .OK { projects.addMaterials(panel.urls, to: project) }
+        if panel.runModal() == .OK {
+            let urls = panel.urls
+            Task { await projects.addMaterials(urls, to: project) }
+        }
     }
 }
 
 private struct MaterialRow: View {
-    let url: URL
-    let document: MaterialDocument?
-    let reading: Bool
+    let material: Material
     let remove: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+            Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: (material.name as NSString).pathExtension) ?? .data))
                 .resizable()
                 .frame(width: 28, height: 28)
             VStack(alignment: .leading, spacing: 2) {
-                Text(url.lastPathComponent).lineLimit(1).truncationMode(.middle)
+                Text(material.name).lineLimit(1).truncationMode(.middle)
                 Group {
-                    if let error = document?.error {
+                    if let error = material.error {
                         Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    } else if let document {
-                        Text(document.summary).foregroundStyle(.secondary)
                     } else {
-                        Text(reading ? "Reading…" : " ").foregroundStyle(.secondary)
+                        Text(material.summary).foregroundStyle(.secondary)
                     }
                 }
                 .font(.caption)
@@ -259,8 +255,8 @@ private struct MaterialRow: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
-            .help("Move to Trash")
-            .accessibilityLabel("Remove \(url.lastPathComponent)")
+            .help("Remove from the project")
+            .accessibilityLabel("Remove \(material.name)")
         }
     }
 }

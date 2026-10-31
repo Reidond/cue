@@ -192,7 +192,7 @@ final class AppState: ObservableObject {
     private var recordingMeeting: MeetingDetails?
 
     private struct KnowledgeInputs: Equatable {
-        var materials: [URL]
+        var materials: [Material]
         var context: PromptContext
     }
 
@@ -201,7 +201,7 @@ final class AppState: ObservableObject {
         let log = SessionLog()
         self.log = log
         api = CueAPI(log: log)
-        projects = ProjectStore(preferences: preferences)
+        projects = ProjectStore(preferences: preferences, api: api, log: log)
         projects.migrateLegacySettings(log: log)
         speakerModels = SpeakerModels(log: log)
         recordings = RecordingStore(preferences: preferences, projects: projects, speakerModels: speakerModels, log: log)
@@ -209,14 +209,24 @@ final class AppState: ObservableObject {
         player = NotePlayer(log: log)
         AudioRecorder.removeStaleWorkingFolders()
         calendar = MeetingCalendar(preferences: preferences)
-        // CUE_PROJECT=name picks the project at launch (creating it when missing); otherwise the last one used.
+        // The projects are the account's: once someone is signed in they are loaded (and the ones found in the library imported), and one is chosen.
+        api.onSignedIn = { [weak self] in
+            await self?.projects.syncWithAccount()
+            await self?.chooseProject()
+        }
+    }
+
+    /// The project Cue is bound to after signing in. CUE_PROJECT=name picks it (creating it when missing); otherwise the last one used.
+    private func chooseProject() async {
         if let name = ProcessInfo.processInfo.environment["CUE_PROJECT"] {
-            activeProject = projects.project(named: name) ?? (try? projects.create(named: name))
+            if projects.project(named: name) == nil { _ = try? await projects.create(named: name) }
+            activeProject = projects.project(named: name)
         } else {
             activeProject = projects.project(preferences.activeProject) ?? projects.mostRecent
         }
         preferences.activeProject = activeProject?.id
         if let activeProject { log.write("📁 Project: \(activeProject.name)") }
+        applyLanguage()
     }
 
     /// The active project's language data.
@@ -406,21 +416,26 @@ final class AppState: ObservableObject {
         let generation = knowledgeGeneration
         let inputs = Self.knowledgeInputs(project: activeProject, speaker: preferences.speakerName)
         knowledgeInputs = inputs
-        let materials = inputs.materials, context = inputs.context
+        let context = inputs.context
+        let serverID = activeProject?.serverID
         let project = activeProject?.name ?? "no project"
         readingMaterials = true
-        Task.detached(priority: .userInitiated) {
-            let knowledge = KnowledgeBase.build(materials: materials, context: context)
-            let changed = (try? knowledge.writeSystemPrompt()) ?? true
-            await MainActor.run {
-                guard generation == self.knowledgeGeneration else { return }
-                self.knowledge = knowledge
+        Task {
+            // What the account read from the files is the prompt's material; if it can't be asked, the prompt stays as it was.
+            let documents = await self.projects.documents(of: serverID)
+            guard generation == self.knowledgeGeneration else { return }
+            guard let documents else {
                 self.readingMaterials = false
-                let files = knowledge.documents.map { "\($0.name) — \($0.error ?? $0.summary)" }.joined(separator: "; ")
-                self.log.write("📚 Materials for \(project) (~\(knowledge.estimatedTokens / 1000)k tokens): \(files.isEmpty ? "none" : files)")
-                if changed || self.claudeService == nil { self.restartClaude(model: self.preferences.model) }
-                self.judge.configure(context, provider: self.preferences.claudeProvider)
+                return
             }
+            let knowledge = KnowledgeBase.build(documents: documents, context: context)
+            let changed = (try? knowledge.writeSystemPrompt()) ?? true
+            self.knowledge = knowledge
+            self.readingMaterials = false
+            let files = knowledge.documents.map { "\($0.name) — \($0.error ?? $0.summary)" }.joined(separator: "; ")
+            self.log.write("📚 Materials for \(project) (~\(knowledge.estimatedTokens / 1000)k tokens): \(files.isEmpty ? "none" : files)")
+            if changed || self.claudeService == nil { self.restartClaude(model: self.preferences.model) }
+            self.judge.configure(context, provider: self.preferences.claudeProvider)
         }
     }
 
@@ -776,9 +791,9 @@ final class AppState: ObservableObject {
                 return
             }
             // Without a project (none created yet), recordings go to "Meetings".
-            let project = recordingProject.flatMap { projects.project($0.id) } ?? activeProject
-                ?? projects.project(named: "Meetings") ?? (try? projects.create(named: "Meetings"))
-            guard let project else { return }
+            var target = recordingProject.flatMap { projects.project($0.id) } ?? activeProject ?? projects.project(named: "Meetings")
+            if target == nil { target = try? await projects.create(named: "Meetings") }
+            guard let project = target else { return }
             // The language live recognition used: the bound project's, which a meeting's project may not share.
             let spoken = activeProject?.language ?? Project.defaultLanguage
             let id = recordings.save(transcript, into: project, meeting: meeting, audio: audio, spokenIn: spoken)

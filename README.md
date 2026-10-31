@@ -85,9 +85,10 @@ On the project's page:
 
 3. Describe the **occasion** (one or two sentences), pick the **language** and
    add **names and terms** that recognition should spell right.
-4. Drop your **materials** onto the Materials section. They are copied into
-   the project, so cleaning up Downloads later doesn't break anything.
-   **Prepared Answers** shows the questions and answers Cue found in them.
+4. Drop your **materials** onto the Materials section. They are uploaded to
+   your Cue account, which reads them (PDF, Word, PowerPoint with speaker
+   notes, Markdown, text), so cleaning up Downloads later doesn't break anything.
+   **Prepared Answers** shows the questions and answers it found in them.
 5. Press **Start Cue** (⌘↩): the overlay appears and answers from this project.
 
 Your name, the Claude model, text size, the library folder and what Cue does
@@ -97,16 +98,21 @@ actions.
 
 ### Library
 
-Projects live in `~/Documents/Cue` (change it in Settings), one folder each,
-so you can open, back up or move them:
+Projects belong to your Cue account: their settings and materials are kept
+there, and shown on every Mac or PC you sign in on. The notes of their calls
+stay on this Mac for now, in `~/Documents/Cue` (change it in Settings), one
+folder per project, so you can open, back up or move them:
 
 ```
 ~/Documents/Cue/
   PhD defense/
-    project.json        name, occasion, language, names & terms, created, last used
-    Materials/          copies of the files you added
+    project.json        the account's project this folder is for, and a copy of its settings
     Notes/              2026-10-24 14.05 – Title.md (+ .m4a, the call's audio)
 ```
+
+The first time you sign in, the projects found in the library (and the
+materials they kept in a `Materials/` folder) are uploaded to your account once:
+the session log says `📦 Imported N projects from this Mac`.
 
 When you upgrade from a version without projects, your talk settings and
 materials become the project **My project** (rename it from its context menu)
@@ -341,9 +347,6 @@ them) and writes alerts to the session log instead of showing them.
 The same hooks work by hand:
 
 ```bash
-# What Cue extracts from files, including prepared answers
-apps/mac/build/Cue.app/Contents/MacOS/Cue --inspect slides.pptx answers.docx
-
 # Rehearsal: play a recording as the call instead of live audio
 CUE_NO_LIVE_AUDIO=1 CUE_REHEARSE_PARTICIPANT=questions.wav apps/mac/build/Cue.app/Contents/MacOS/Cue
 

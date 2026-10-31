@@ -1,8 +1,8 @@
 import AppKit
 import Foundation
 
-/// One talk or series of calls: a folder in the library holding `project.json`,
-/// copies of its materials and its notes.
+/// One talk or series of calls. It lives in the Cue account (its settings and its materials); the folder in the library holds what stays on
+/// this Mac until the notes move too: `project.json`, which ties the folder to the account's project, and the notes.
 struct Project: Codable, Identifiable, Hashable {
     var name: String
     var occasion = ""
@@ -11,13 +11,16 @@ struct Project: Codable, Identifiable, Hashable {
     var vocabulary = ""
     var created = Date()
     var lastUsed: Date?
+    /// The project in the account (the Cue API); nil for one that is only on this Mac so far.
+    var serverID: String?
 
-    /// The project's folder; its name is the project's identity.
+    /// The project's folder; its name is the project's identity here (notes and calendar assignments point at it).
     var folder: URL = URL(fileURLWithPath: "/")
-    /// Files in `Materials/`, by name.
-    var materials: [URL] = []
+    /// The files of the project, as the account holds them.
+    var materials: [Material] = []
 
     var id: String { folder.lastPathComponent }
+    /// Files that were copied here before projects moved to the account; they go up with the project at the first sign-in.
     var materialsFolder: URL { folder.appendingPathComponent("Materials") }
     var notesFolder: URL { folder.appendingPathComponent("Notes") }
 
@@ -39,7 +42,7 @@ struct Project: Codable, Identifiable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, occasion, language, vocabulary = "namesAndTerms", created, lastUsed
+        case name, occasion, language, vocabulary = "namesAndTerms", created, lastUsed, serverID
     }
 
     init(name: String, language: String = Project.defaultLanguage) {
@@ -55,33 +58,43 @@ struct Project: Codable, Identifiable, Hashable {
         vocabulary = try container.decodeIfPresent(String.self, forKey: .vocabulary) ?? ""
         created = try container.decodeIfPresent(Date.self, forKey: .created) ?? Date()
         lastUsed = try container.decodeIfPresent(Date.self, forKey: .lastUsed)
+        serverID = try container.decodeIfPresent(String.self, forKey: .serverID)
     }
 
     static var defaultLanguage: String { Locale.current.language.languageCode?.identifier ?? "en" }
 }
 
-/// The library folder (`~/Documents/Cue` by default): one subfolder per project.
+/// The signed-in person's projects: the account holds them (settings and materials, through the Cue API) and the library folder
+/// (`~/Documents/Cue` by default) has one subfolder for each, for the notes.
 @MainActor
 final class ProjectStore: ObservableObject {
     @Published private(set) var projects: [Project] = []
+    /// The projects with a file on its way to the account (by folder name).
+    @Published private(set) var uploading: Set<String> = []
 
     private let preferences: Preferences
+    private let api: CueAPI
+    private let log: SessionLog
+    /// Settings changes waiting to be saved to the account, by project.
+    private var saves: [String: Task<Void, Never>] = [:]
+    private var syncing = false
+    /// Changes in flight (create, rename, delete, adding files), and how many have finished: a re-read of the account that
+    /// overlapped one is out of date and is thrown away.
+    private var changing = 0
+    private var changes = 0
 
-    init(preferences: Preferences) {
+    init(preferences: Preferences, api: CueAPI, log: SessionLog) {
         self.preferences = preferences
-        reload()
+        self.api = api
+        self.log = log
     }
 
     var library: URL { preferences.libraryFolder }
 
-    /// Every folder in the library is a project; one without `project.json` is named after its folder.
+    /// Reads the account again, and picks up folders added in Finder.
     func reload() {
-        let folders = (try? FileManager.default.contentsOfDirectory(
-            at: library, includingPropertiesForKeys: [.isDirectoryKey], options: .skipsHiddenFiles)) ?? []
-        projects = folders
-            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
-            .map(Self.load)
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        guard api.isSignedIn, changing == 0 else { return }
+        Task { await syncWithAccount() }
     }
 
     func project(_ id: String?) -> Project? { projects.first { $0.id == id } }
@@ -94,89 +107,244 @@ final class ProjectStore: ObservableObject {
         projects.first { $0.name == name } ?? projects.first { $0.id == name }
     }
 
-    private static func load(_ folder: URL) -> Project {
-        let data = try? Data(contentsOf: folder.appendingPathComponent("project.json"))
-        var project = data.flatMap { try? decoder.decode(Project.self, from: $0) } ?? Project(name: folder.lastPathComponent)
-        if project.name.trimmingCharacters(in: .whitespaces).isEmpty { project.name = folder.lastPathComponent }
-        project.folder = folder
-        let files = (try? FileManager.default.contentsOfDirectory(
-            at: project.materialsFolder, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []
-        project.materials = files
-            .filter { Materials.supportedExtensions.contains($0.pathExtension.lowercased()) }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-        return project
+    // MARK: The account
+
+    /// Loads the projects of the account and their files. The first time on this Mac, the projects found in the library that the account
+    /// doesn't know yet go up with their materials ("📦 Imported …"). Every project has its folder here, made when it is first seen.
+    func syncWithAccount() async {
+        guard !syncing else { return }
+        syncing = true
+        defer { syncing = false }
+        let changesAtStart = changes
+        let local = localProjects()
+        do {
+            var remote = try await api.listProjects()
+            var imported: [Project] = []
+            var files = 0
+            for project in local where project.serverID == nil {
+                if let result = await importProject(project) {
+                    imported.append(result.project)
+                    files += result.files
+                }
+            }
+            if !imported.isEmpty {
+                log.write("📦 Imported \(imported.count) project\(imported.count == 1 ? "" : "s") from this Mac (\(files) file\(files == 1 ? "" : "s"))")
+                remote = try await api.listProjects()
+            }
+
+            var folders: [String: Project] = [:]
+            for project in local + imported {
+                if let id = project.serverID, folders[id] == nil { folders[id] = project }
+            }
+            var synced: [Project] = []
+            for item in remote {
+                var project = folders[item.id] ?? makeFolder(for: item)
+                // A change waiting to be saved is newer than the account's.
+                if saves[item.id] == nil { Self.apply(item, to: &project) }
+                if let materials = try? await api.materials(of: item.id) { project.materials = materials }
+                try? write(project)
+                synced.append(project)
+            }
+            guard changing == 0, changes == changesAtStart else {
+                Task { await self.syncWithAccount() }
+                return
+            }
+            projects = synced.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        } catch {
+            log.write("⚠︎ Couldn't load your projects: \(error.localizedDescription)")
+            if projects.isEmpty { projects = local.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } }
+        }
+    }
+
+    /// What the account says about a project, applied to the one here.
+    private static func apply(_ remote: RemoteProject, to project: inout Project) {
+        project.name = remote.name
+        project.occasion = remote.occasion
+        project.language = remote.language
+        project.vocabulary = remote.namesAndTerms
+        project.created = Date(timeIntervalSince1970: remote.createdAt / 1000)
+        project.lastUsed = remote.lastUsedAt.map { Date(timeIntervalSince1970: $0 / 1000) }
+    }
+
+    private func fields(of project: Project) -> ProjectFields {
+        ProjectFields(name: project.name, occasion: project.occasion, language: project.language, namesAndTerms: project.vocabulary,
+                      createdAt: project.created.timeIntervalSince1970 * 1000,
+                      lastUsedAt: project.lastUsed.map { $0.timeIntervalSince1970 * 1000 })
+    }
+
+    /// Sends a project found in the library to the account, with the files it kept in `Materials/`.
+    private func importProject(_ project: Project) async -> (project: Project, files: Int)? {
+        var project = project
+        do {
+            project.serverID = try await api.createProject(fields(of: project)).id
+            try write(project)
+        } catch {
+            log.write("⚠︎ Couldn't import “\(project.name)”: \(error.localizedDescription)")
+            return nil
+        }
+        var files = 0
+        let staged = (try? FileManager.default.contentsOfDirectory(at: project.materialsFolder, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []
+        for url in staged.filter({ Material.supportedExtensions.contains($0.pathExtension.lowercased()) })
+            .sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
+            do {
+                _ = try await api.uploadMaterial(url, to: project.serverID ?? "")
+                files += 1
+            } catch {
+                log.write("⚠︎ Couldn't import \(url.lastPathComponent) of “\(project.name)”: \(error.localizedDescription)")
+            }
+        }
+        return (project, files)
     }
 
     // MARK: Changes
 
+    /// A new project in the account, and its folder here.
     @discardableResult
-    func create(named name: String, language: String = Project.defaultLanguage) throws -> Project {
-        var project = Project(name: name.trimmingCharacters(in: .whitespacesAndNewlines), language: language)
-        project.folder = library.appendingPathComponent(uniqueFolderName(for: project.name))
-        try FileManager.default.createDirectory(at: project.materialsFolder, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: project.notesFolder, withIntermediateDirectories: true)
+    func create(named name: String, language: String = Project.defaultLanguage) async throws -> Project {
+        changing += 1
+        defer {
+            changing -= 1
+            changes += 1
+        }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let remote = try await api.createProject(ProjectFields(name: name, language: language))
+        var project = makeFolder(for: remote)
+        Self.apply(remote, to: &project)
         try write(project)
-        reload()
-        return self.project(project.id) ?? project
+        projects = (projects + [project]).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return project
     }
 
-    /// Saves the fields in `project.json` (name, occasion, language, names and terms, dates).
+    /// Saves the fields (name, occasion, language, names and terms, dates): at once here, and to the account a moment after the last edit.
     func update(_ project: Project) {
         guard let index = projects.firstIndex(where: { $0.id == project.id }), projects[index] != project else { return }
         projects[index] = project
         try? write(project)
+        guard let serverID = project.serverID else { return }
+        saves[serverID]?.cancel()
+        saves[serverID] = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else { return }
+            await self?.save(serverID)
+        }
     }
 
-    /// Renames the project and its folder; returns the renamed project.
-    func rename(_ project: Project, to name: String) throws -> Project {
+    private func save(_ serverID: String) async {
+        saves[serverID] = nil
+        guard let project = projects.first(where: { $0.serverID == serverID }) else { return }
+        do {
+            try await api.updateProject(serverID, fields(of: project))
+            log.write("☁️ Saved “\(project.name)” to your account")
+        } catch {
+            log.write("⚠︎ Couldn't save “\(project.name)”: \(error.localizedDescription)")
+        }
+    }
+
+    /// Renames the project in the account, and its folder here; returns the renamed project.
+    func rename(_ project: Project, to name: String) async throws -> Project {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name != project.name else { return project }
-        var renamed = project
+        changing += 1
+        defer {
+            changing -= 1
+            changes += 1
+        }
+        if let serverID = project.serverID { try await api.updateProject(serverID, ProjectFields(name: name)) }
+        var renamed = self.project(project.id) ?? project
         renamed.name = name
-        let folderName = Self.folderName(for: name)
-        if folderName != project.id {
+        if Self.folderName(for: name) != project.id {
             renamed.folder = library.appendingPathComponent(uniqueFolderName(for: name))
             try FileManager.default.moveItem(at: project.folder, to: renamed.folder)
         }
         try write(renamed)
-        reload()
-        return self.project(renamed.id) ?? renamed
+        projects = (projects.filter { $0.id != project.id } + [renamed]).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return renamed
     }
 
-    /// Moves the whole project folder, materials and notes included, to the Trash.
-    func delete(_ project: Project) throws {
-        try FileManager.default.trashItem(at: project.folder, resultingItemURL: nil)
-        reload()
-    }
-
-    /// Copies files into `Materials/`, so the project keeps working after the originals move.
-    /// A file already there with the same contents is skipped; a different one with the same name gets a number.
-    @discardableResult
-    func addMaterials(_ urls: [URL], to project: Project) -> Int {
-        let manager = FileManager.default
-        try? manager.createDirectory(at: project.materialsFolder, withIntermediateDirectories: true)
-        var copied = 0
-        for url in urls where Materials.supportedExtensions.contains(url.pathExtension.lowercased()) {
-            guard manager.isReadableFile(atPath: url.path), url.deletingLastPathComponent() != project.materialsFolder else { continue }
-            var target = project.materialsFolder.appendingPathComponent(url.lastPathComponent)
-            var number = 2
-            while manager.fileExists(atPath: target.path) {
-                if manager.contentsEqual(atPath: url.path, andPath: target.path) { break }
-                target = project.materialsFolder.appendingPathComponent(
-                    "\(url.deletingPathExtension().lastPathComponent) \(number).\(url.pathExtension)")
-                number += 1
-            }
-            guard !manager.fileExists(atPath: target.path) else { continue }
-            if (try? manager.copyItem(at: url, to: target)) != nil { copied += 1 }
+    /// Deletes the project and its materials from the account, and moves its folder here, notes included, to the Trash.
+    func delete(_ project: Project) async throws {
+        changing += 1
+        defer {
+            changing -= 1
+            changes += 1
         }
-        reload()
-        return copied
+        if let serverID = project.serverID {
+            saves[serverID]?.cancel()
+            saves[serverID] = nil
+            try await api.deleteProject(serverID)
+        }
+        try FileManager.default.trashItem(at: project.folder, resultingItemURL: nil)
+        projects.removeAll { $0.id == project.id }
     }
 
-    func removeMaterial(_ url: URL, from project: Project) {
-        guard url.deletingLastPathComponent() == project.materialsFolder else { return }
-        try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
-        reload()
+    /// Sends files to the project; the account stores them and reads their text. Files of a kind it doesn't read are skipped.
+    @discardableResult
+    func addMaterials(_ urls: [URL], to project: Project) async -> Int {
+        guard let serverID = project.serverID else { return 0 }
+        changing += 1
+        uploading.insert(project.id)
+        defer {
+            changing -= 1
+            changes += 1
+            uploading.remove(project.id)
+        }
+        var added = 0
+        for url in urls where Material.supportedExtensions.contains(url.pathExtension.lowercased()) {
+            guard FileManager.default.isReadableFile(atPath: url.path) else { continue }
+            do {
+                let material = try await api.uploadMaterial(url, to: serverID)
+                added += 1
+                log.write("📎 Added \(material.name) to \(project.name): \(material.error ?? material.summary)")
+            } catch {
+                log.write("⚠︎ Couldn't add \(url.lastPathComponent) to \(project.name): \(error.localizedDescription)")
+            }
+        }
+        await refreshMaterials(of: project.id)
+        return added
+    }
+
+    func removeMaterial(_ material: Material, from project: Project) async {
+        guard let serverID = project.serverID else { return }
+        changing += 1
+        defer {
+            changing -= 1
+            changes += 1
+        }
+        do {
+            try await api.deleteMaterial(material.id, in: serverID)
+            log.write("🗑 Removed \(material.name) from \(project.name)")
+        } catch {
+            log.write("⚠︎ Couldn't remove \(material.name): \(error.localizedDescription)")
+        }
+        await refreshMaterials(of: project.id)
+    }
+
+    private func refreshMaterials(of id: String) async {
+        guard let serverID = project(id)?.serverID, let materials = try? await api.materials(of: serverID) else { return }
+        guard let index = projects.firstIndex(where: { $0.id == id }) else { return }
+        projects[index].materials = materials
+    }
+
+    /// What the account read from the project's files, for Claude's system prompt and the project's page. Nil when it couldn't be asked.
+    func documents(of serverID: String?) async -> [MaterialDocument]? {
+        guard let serverID else { return [] }
+        do {
+            let materials = try await api.materials(of: serverID)
+            let answers = try await api.preparedAnswers(of: serverID)
+            var documents: [MaterialDocument] = []
+            for material in materials {
+                var document = MaterialDocument(name: material.name, summary: material.summary, error: material.error)
+                if material.error == nil { document.text = try await api.materialText(material.id, in: serverID).text }
+                document.prepared = answers.filter { $0.materialId == material.id }.map {
+                    PreparedAnswer(q: $0.question, a: $0.answer, who: $0.who, source: $0.source)
+                }
+                documents.append(document)
+            }
+            return documents
+        } catch {
+            log.write("⚠︎ Couldn't read your materials: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     // MARK: Files
@@ -199,6 +367,32 @@ final class ProjectStore: ObservableObject {
         try Self.encoder.encode(project).write(to: project.folder.appendingPathComponent("project.json"), options: .atomic)
     }
 
+    /// Every folder in the library is a project; one without `project.json` is named after its folder.
+    private func localProjects() -> [Project] {
+        let folders = (try? FileManager.default.contentsOfDirectory(
+            at: library, includingPropertiesForKeys: [.isDirectoryKey], options: .skipsHiddenFiles)) ?? []
+        return folders
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+            .map(Self.load)
+    }
+
+    private static func load(_ folder: URL) -> Project {
+        let data = try? Data(contentsOf: folder.appendingPathComponent("project.json"))
+        var project = data.flatMap { try? decoder.decode(Project.self, from: $0) } ?? Project(name: folder.lastPathComponent)
+        if project.name.trimmingCharacters(in: .whitespaces).isEmpty { project.name = folder.lastPathComponent }
+        project.folder = folder
+        return project
+    }
+
+    /// The project's folder here, made when the account's project is first seen on this Mac.
+    private func makeFolder(for remote: RemoteProject) -> Project {
+        var project = Project(name: remote.name, language: remote.language)
+        project.serverID = remote.id
+        project.folder = library.appendingPathComponent(uniqueFolderName(for: remote.name))
+        try? FileManager.default.createDirectory(at: project.notesFolder, withIntermediateDirectories: true)
+        return project
+    }
+
     private static func folderName(for name: String) -> String {
         let safe = name.components(separatedBy: CharacterSet(charactersIn: "/:\\\n")).joined(separator: "-")
             .trimmingCharacters(in: CharacterSet.whitespaces.union(["."]))
@@ -219,7 +413,8 @@ final class ProjectStore: ObservableObject {
 
     /// One-time move from the single set of settings Cue had before projects: the
     /// talk settings and materials become the project "My project", and the notes
-    /// in the old recordings folder move into its `Notes/`. Safe to run again.
+    /// in the old recordings folder move into its `Notes/`. The project is only a folder here;
+    /// signing in sends it to the account. Safe to run again.
     func migrateLegacySettings(log: SessionLog) {
         let defaults = appDefaults
         guard !defaults.bool(forKey: "migratedToProjects") else { return }
@@ -237,14 +432,15 @@ final class ProjectStore: ObservableObject {
 
         let name = "My project"
         do {
-            var project = try self.project(named: name) ?? create(named: name, language: language ?? Project.defaultLanguage)
+            var project = localProjects().first { $0.name == name || $0.id == name } ?? Project(name: name)
+            if project.folder.path == "/" { project.folder = library.appendingPathComponent(uniqueFolderName(for: name)) }
             project.occasion = occasion
             project.vocabulary = vocabulary
-            if let language { project.language = language }
-            update(project)
-            addMaterials(materials, to: project)
-
+            project.language = language ?? project.language
             try FileManager.default.createDirectory(at: project.notesFolder, withIntermediateDirectories: true)
+            try write(project)
+            let copied = copyMaterials(materials, into: project)
+
             var moved = 0
             for note in notes {
                 let target = project.notesFolder.appendingPathComponent(note.lastPathComponent)
@@ -256,12 +452,32 @@ final class ProjectStore: ObservableObject {
             let left = (try? FileManager.default.contentsOfDirectory(atPath: oldNotesFolder.path))?.filter { $0 != ".DS_Store" }
             if left?.isEmpty == true { try? FileManager.default.removeItem(at: oldNotesFolder) }
 
-            reload()
             preferences.activeProject = project.id
-            let copied = self.project(project.id)?.materials.count ?? 0
             log.write("📦 Moved your settings into the project “\(name)”: \(copied) of \(materials.count) materials copied, \(moved) notes moved")
         } catch {
             log.write("⚠︎ Couldn't move your settings into a project: \(error.localizedDescription)")
         }
+    }
+
+    /// Copies files into the project's `Materials/`, to go up to the account with it. A file already there with the same contents is
+    /// skipped; a different one with the same name gets a number.
+    private func copyMaterials(_ urls: [URL], into project: Project) -> Int {
+        let manager = FileManager.default
+        try? manager.createDirectory(at: project.materialsFolder, withIntermediateDirectories: true)
+        var copied = 0
+        for url in urls where Material.supportedExtensions.contains(url.pathExtension.lowercased()) {
+            guard manager.isReadableFile(atPath: url.path), url.deletingLastPathComponent() != project.materialsFolder else { continue }
+            var target = project.materialsFolder.appendingPathComponent(url.lastPathComponent)
+            var number = 2
+            while manager.fileExists(atPath: target.path) {
+                if manager.contentsEqual(atPath: url.path, andPath: target.path) { break }
+                target = project.materialsFolder.appendingPathComponent(
+                    "\(url.deletingPathExtension().lastPathComponent) \(number).\(url.pathExtension)")
+                number += 1
+            }
+            guard !manager.fileExists(atPath: target.path) else { continue }
+            if (try? manager.copyItem(at: url, to: target)) != nil { copied += 1 }
+        }
+        return copied
     }
 }

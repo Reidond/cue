@@ -63,6 +63,32 @@ the only way to use the app. Work on it in a Boat sandbox like everything else (
   when that fails). The remote path has not run against a real account yet. A user is invited or an `ADMIN_EMAILS` address
   (always invited, the `admin` role); only a provider-verified email may sign in.
 
+## Projects and materials (`apps/api` `/v1/projects`, `apps/mac/Sources/Cue/Projects.swift`)
+
+A person's projects (name, occasion, language, names and terms) and their materials live in D1 and R2; `docs/backend.md` › Materials has the design.
+
+- **Routes**: `src/routes/projects.ts` (CRUD and `…/prepared-answers`) and `src/routes/materials.ts`, both behind the `authed` plugin (`src/routes/authed.ts`,
+  which gives a route `userId`); `src/projects.ts` has the row types. Every query carries the user id: another person's project is `not_found`, never `forbidden`.
+  Schemas are in `packages/contract/src/projects.ts` (and the Swift side's `ProjectsAPI.swift` follows them by hand).
+- **An upload** is `POST /v1/projects/:id/materials?name=NAME`, the file as the body (`Content-Length` required, `Content-Type` its type, 25 MB at most).
+  The route has `parse: () => true`, so Elysia leaves the body alone and it streams into R2 (`MATERIALS`); the server then reads it back, extracts the text and keeps
+  it in D1 (`material.text`, with the extractor's `qa` blocks for a slide deck's speaker notes). The same file again (name and ETag) is the same material; the same
+  name with other contents gets " 2". A file whose text can't be read is kept with `error` (the app shows it); only a failing converter (`upstream_unavailable`) fails the upload.
+- **Extraction** (`src/materials/`): `.md`/`.markdown`/`.txt` as they are; `.pptx` by the API itself (`slides.ts`, `fflate` + a small XML tokenizer, the port of the app's
+  `OfficeXML`); everything else Workers AI `toMarkdown` (`markdown.ts`). `cf dev` can't run Workers AI without a token, so the `AI` binding is left out unless
+  `AI_BINDING=1` and `MARKDOWN_URL` points at a stand-in speaking `toMarkdown`'s shape: `harness/fake-providers.ts` serves it (`/markdown`, noted as
+  `markdown-request`, reading Word and PDF files built by `harness/documents.ts`). A real `toMarkdown` run is not covered by any case. Each file it reads is a `usage` row
+  (`material_text`, provider `cloudflare`, unit `files`, priced by `TOMARKDOWN_MICROS_PER_FILE` in `src/usage.ts`, now 0: documents are free).
+- **Prepared answers** are found when asked for (`src/materials/prepared.ts`, the port of `Materials.extractQA`), in the project's language (`lexicon.ts` holds the question and
+  answer labels; English ones always count), so changing the language changes them.
+- **The Mac app**: `ProjectStore` is the account's projects plus a folder each in the library, for the notes until PR 6. `Project.id` stays the folder name (notes and calendar
+  assignments point at it); `Project.serverID`, in `project.json`, is the account's project. After sign-in (`CueAPI.onSignedIn`, before `Signed in` is logged) `syncWithAccount` lists the
+  account's projects, makes a folder for the ones this Mac hasn't seen, and uploads every folder without a `serverID` once (`📦 Imported N projects from this Mac`).
+  Create, rename, delete and adding or removing a file wait for the server; field edits are saved here at once and to the account after 0.8 s (`☁️ Saved “NAME” to your account`).
+  `CUE_CONTROL` commands run one after another, so `new` and `add` finish before the next line. `KnowledgeBase` builds Claude's prompt from the server's text.
+- **In a case**: `backend.call(method, path, token, { body | file })`, `backend.accountOf(email)` (`Account`: `projects()`, `materials()`, `text()`, `answers()`) and
+  `backend.rows(sql)` check the account from outside the app; `makeDocx`/`makePdf`/`makePptx`/`writeFile` build the files.
+
 ## The admin (`apps/api` `/admin/v1`, `apps/admin`)
 
 The owner's admin: usage and money, never content (no transcripts, no notes). `docs/backend.md` › Admin API says what it covers.
@@ -128,7 +154,7 @@ This rule is strict and has no exceptions.
   If you find any, delete them.
 - **Every change is verified by an end-to-end case** in `tests/e2e/cases/`
   that runs the built `Cue.app` — the app itself, or its command-line modes
-  (`--inspect`, `--render`, …) — against real files, real audio, real
+  (`--render`, …) — against real files, real audio, real
   `whisper-server` and real child processes, and checks what a user would see:
   the notes on disk, the audio files, the session log, the rendered windows.
 - **The suite's browser is Playwright** (`playwright-core` in `tests/e2e`; it downloads nothing): `harness/browser.ts` drives the machine's Chrome
@@ -340,7 +366,7 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_SNAPSHOT_METHOD=m` | How `CUE_SNAPSHOT` takes them: `desktop` (the default: each window over the desktop picture alone, so its glass refracts real pixels yet no other window covers it or shows through), `window` (the window alone: the overlay's glass over nothing), `display` (what's on screen behind the window now, other apps included, minus whatever is in front of it) or `offscreen` (the fallback, forced). |
 | `CUE_APPEARANCE=light\|dark` | Use this appearance instead of the system's. |
 | `CUE_PROJECT=name` | Make this project active at launch, creating it if there is none by that name. |
-| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `download speakers` (Download on Home's Speaker models row), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|account\|providers\|calendar` (Settings on that tab), `provider NAME` (a provider picked in Settings › Providers: `claudeCode`, `anthropicAPI`, `whisper`, `deepgram`), `key anthropic\|deepgram [KEY]` (a key pasted into its field and saved; without one, Remove), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes), `signin` (Sign In on Home) and `signout` (Sign Out in Settings › Account). Until someone is signed in only `signin`, `signout`, `settings`, `page`, `size`, `provider` and `key` do anything (the rest log `⚠︎ Sign in to Cue first (…)`). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
+| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `download speakers` (Download on Home's Speaker models row), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|account\|providers\|calendar` (Settings on that tab), `provider NAME` (a provider picked in Settings › Providers: `claudeCode`, `anthropicAPI`, `whisper`, `deepgram`), `key anthropic\|deepgram [KEY]` (a key pasted into its field and saved; without one, Remove), `set PROJECT | occasion|language|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (a material's minus button), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes), `signin` (Sign In on Home) and `signout` (Sign Out in Settings › Account). Until someone is signed in only `signin`, `signout`, `settings`, `page`, `size`, `provider` and `key` do anything (the rest log `⚠︎ Sign in to Cue first (…)`). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
 | `CUE_CALENDAR_EVENTS=file.json` | Read the calendar from this file instead of EventKit (no permission asked), again on every check: a JSON array of `{title, start, end}` (ISO 8601) with optional `id`, `series` (shared by a recurring event's occurrences), `calendar` (name), `url`, `location`, `notes`, `attendees` (names), `recurring`. |
 | `CUE_MIC_APPS=file` | The bundle IDs using the microphone right now, one per line, read on every check instead of Core Audio's process list. |
 | `CUE_MEETING_TICK=s` / `CUE_MIC_RELEASE=s` | Check for calls every `s` seconds instead of 5; stop a call's recording once the call app has been off the microphone for `s` seconds instead of 60. |
@@ -376,7 +402,8 @@ or `⚠︎ Couldn't improve the transcript: …`, `👥 Finding speakers…`,
 `💡 Suggested name: LABEL → NAME`, `✏️ Renamed “OLD” to “NEW” in …`,
 `👥 Speaker models downloaded: … MB`,
 `🔑 Signed in to Cue as EMAIL`, `🔑 Signed out of Cue` (Sign Out, or after `⚠︎ Your Cue session ended: …`),
-`🔑 Cue access refreshed`, `⚠︎ Not invited: EMAIL`, `⚠︎ Couldn't sign in to Cue: …`, `⚠︎ Sign in to Cue first`,
+`🔑 Cue access refreshed`, `📦 Imported N projects from this Mac (M files)`, `📎 Added FILE to PROJECT: SUMMARY`, `🗑 Removed FILE from PROJECT`,
+`☁️ Saved “PROJECT” to your account`, `⚠︎ Not invited: EMAIL`, `⚠︎ Couldn't sign in to Cue: …`, `⚠︎ Sign in to Cue first`,
 `📝 Notes ready: …`, `📅 Recording “Title” into Project`, `🔔 Record “Title”?`
 for every notification, `⚠︎ Nothing was recorded: …` for every alert,
 `🧐 Question judge ready: Claude Haiku` or

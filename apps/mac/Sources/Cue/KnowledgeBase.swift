@@ -9,6 +9,29 @@ struct PromptContext: Equatable {
     var lexicon: Lexicon { Lexicon.load(languageCode) }
 }
 
+/// A prepared question and its answer, found in a material by the Cue API.
+struct PreparedAnswer: Hashable {
+    let q: String
+    let a: String
+    let who: String?
+    let source: String
+}
+
+/// One file of a project: the text the Cue API read from it, plus any prepared Q&A it found there.
+struct MaterialDocument {
+    let name: String
+    var text = ""
+    var prepared: [PreparedAnswer] = []
+    var summary = ""
+    var error: String?
+
+    init(name: String, summary: String, error: String?) {
+        self.name = name
+        self.summary = summary
+        self.error = error
+    }
+}
+
 /// The user's materials compiled into Claude's system prompt, plus the prepared
 /// answers for the instant offline match.
 struct KnowledgeBase {
@@ -24,9 +47,8 @@ struct KnowledgeBase {
     /// Rough token count; Claude's tokenizer averages ~3.9 UTF-8 bytes per token on mixed text.
     var estimatedTokens: Int { systemPrompt.utf8.count * 10 / 39 }
 
-    static func build(materials: [URL], context: PromptContext) -> KnowledgeBase {
+    static func build(documents: [MaterialDocument], context: PromptContext) -> KnowledgeBase {
         let lexicon = context.lexicon
-        let documents = materials.map { Materials.read($0, lexicon: lexicon) }
         let prepared = documents.flatMap(\.prepared)
 
         let template = (Bundle.main.url(forResource: "prompt", withExtension: "md"))

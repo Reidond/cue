@@ -125,41 +125,48 @@ struct DashboardView: View {
                             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("Move to Trash", role: .destructive, action: deleteProject)
         } message: {
-            Text("Its materials and notes go to the Trash too. You can restore the folder from the Trash in Finder.")
+            Text("Its materials are deleted from your account, and its notes go to the Trash. You can restore the folder from the Trash in Finder.")
         }
     }
 
     private func createProject() {
         let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
-        do {
-            model.open(try projects.create(named: name))
-        } catch {
-            NSAlert(error: error).show(logging: state.log)
+        Task {
+            do {
+                model.open(try await projects.create(named: name))
+            } catch {
+                NSAlert(error: error).show(logging: state.log)
+            }
         }
     }
 
     private func renameProject() {
         guard let project = renaming else { return }
         renaming = nil
-        do {
-            let renamed = try projects.rename(project, to: newName)
-            state.projectsChanged(renamed: project, to: renamed)
-            if model.selection == .project(project.id) { model.selection = .project(renamed.id) }
-        } catch {
-            NSAlert(error: error).show(logging: state.log)
+        let name = newName
+        Task {
+            do {
+                let renamed = try await projects.rename(project, to: name)
+                state.projectsChanged(renamed: project, to: renamed)
+                if model.selection == .project(project.id) { model.selection = .project(renamed.id) }
+            } catch {
+                NSAlert(error: error).show(logging: state.log)
+            }
         }
     }
 
     private func deleteProject() {
         guard let project = deleting else { return }
         deleting = nil
-        do {
-            try projects.delete(project)
-            if model.selection == .project(project.id) { model.selection = .home }
-            state.projectsChanged()
-        } catch {
-            NSAlert(error: error).show(logging: state.log)
+        Task {
+            do {
+                try await projects.delete(project)
+                if model.selection == .project(project.id) { model.selection = .home }
+                state.projectsChanged()
+            } catch {
+                NSAlert(error: error).show(logging: state.log)
+            }
         }
     }
 }

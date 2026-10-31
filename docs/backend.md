@@ -115,6 +115,15 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
 - Contract: TypeBox schemas in `packages/contract` (including the WebSocket events); Elysia serves the
   OpenAPI document; the Swift `Codable` types follow it (and the Windows client will too).
 
+### Materials
+
+A project's files are uploaded as the request body (`POST /v1/projects/:id/materials?name=`, streamed into R2; `Content-Length` required, 25 MB) and read
+on the server: Markdown and text as they are, PowerPoint by the API itself (slides and speaker notes; the notes are where prepared answers live), and PDF, Word, spreadsheets,
+HTML and the other formats Workers AI `toMarkdown` takes by `toMarkdown`. The text (at most a million characters) is kept in D1 beside the file's R2 key; a file that
+can't be read is kept with the reason. `GET …/materials`, `GET …/materials/:id` (with the text), `DELETE …/materials/:id`, and `GET /v1/projects/:id/prepared-answers`, found in the
+text with the project's language's question and answer labels (the port of the app's parser), which PR 5's Call DO matches questions against. Each `toMarkdown` file is a `usage`
+row (`material_text`). Not yet: re-reading old files after the extractor improves, images, `.doc`/`.rtf`.
+
 ### Admin API
 
 `/admin/v1/*`, same origin as the SPA, Better Auth session cookie with the `admin` role: overview

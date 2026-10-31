@@ -157,6 +157,10 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
 
     var isSignedIn: Bool { phase == .signedIn }
 
+    /// Runs once the account is known and before Cue counts as signed in: loads what the account holds (its projects), so everything
+    /// that waits for a sign-in finds it there.
+    var onSignedIn: (() async -> Void)?
+
     private let log: SessionLog
     private var accessToken: String?
     private var refreshAt = Date.distantPast
@@ -202,7 +206,7 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
                 "grant_type": "authorization_code", "code": code, "redirect_uri": Self.redirectURI, "code_verifier": verifier,
             ]))
             try await loadMe()
-            becameSignedIn()
+            await becameSignedIn()
         } catch CueAPIError.cancelled {
             phase = .signedOut
         } catch CueAPIError.notInvited(let email) {
@@ -249,7 +253,8 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
         phase = .signedOut
     }
 
-    private func becameSignedIn() {
+    private func becameSignedIn() async {
+        await onSignedIn?()
         phase = .signedIn
         log.write("🔑 Signed in to Cue as \(me?.account.email ?? "unknown")")
     }
@@ -260,7 +265,7 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
         do {
             _ = try await validAccessToken()
             try await loadMe()
-            becameSignedIn()
+            await becameSignedIn()
         } catch CueAPIError.ended(let why) {
             endSession(why)
         } catch {
@@ -296,13 +301,28 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
 
     /// `GET path` with the access token, refreshed when it's about to run out or was refused.
     func get(_ path: String) async throws -> Data {
+        try await request("GET", path)
+    }
+
+    /// `method path` with the access token (refreshed when it's about to run out or was refused). `json` is the request's body; `file` is
+    /// sent as the body instead, streamed from disk, with `contentType` (the Cue API takes a material that way).
+    func request(_ method: String, _ path: String, query: [String: String] = [:], json: Data? = nil, file: URL? = nil,
+                 contentType: String? = nil) async throws -> Data {
         var token = try await validAccessToken()
         for attempt in 0..<2 {
-            var request = URLRequest(url: Self.baseURL.appendingPathComponent(path))
+            var components = URLComponents(url: Self.baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+            if !query.isEmpty { components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) } }
+            var request = URLRequest(url: components.url!)
+            request.httpMethod = method
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
             request.setValue("mac/\(version)", forHTTPHeaderField: "Cue-Version")
-            let (data, status) = try await send(request)
+            if let json {
+                request.httpBody = json
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            }
+            if let contentType { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+            let (data, status) = try await send(request, file: file)
             if status == 401 && attempt == 0 {
                 token = try await refreshAccessToken()
                 continue
@@ -368,10 +388,15 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
         }
     }
 
-    private func send(_ request: URLRequest) async throws -> (Data, Int) {
+    private func send(_ request: URLRequest, file: URL? = nil) async throws -> (Data, Int) {
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+            let result: (Data, URLResponse)
+            if let file {
+                result = try await URLSession.shared.upload(for: request, fromFile: file)
+            } else {
+                result = try await URLSession.shared.data(for: request)
+            }
+            return (result.0, (result.1 as? HTTPURLResponse)?.statusCode ?? 0)
         } catch {
             throw CueAPIError.network(error.localizedDescription)
         }

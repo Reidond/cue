@@ -248,6 +248,11 @@ export class Backend {
         return rows.map((row) => Object.fromEntries(columns.map((column, index) => [column, row[index]])));
     }
 
+    /** Signs `email` in and returns their view of the account, to check from outside what the app put there. */
+    async accountOf(email: string): Promise<Account> {
+        return new Account(this, (await this.tokensFor(email)).access_token);
+    }
+
     // MARK: The admin API, as the admin SPA's browser calls it
 
     /** Signs `email` in to the admin (the session cookie a browser would get) and returns a client for `/admin/v1`; fails the case if the sign-in does not end there. */
@@ -317,5 +322,61 @@ export class AdminClient {
 
     get(path: string) {
         return this.call('GET', path);
+    }
+}
+
+export interface AccountProject {
+    id: string;
+    name: string;
+    occasion: string;
+    language: string;
+    namesAndTerms: string;
+    terms: string[];
+    createdAt: number;
+    lastUsedAt: number | null;
+    materialCount: number;
+}
+
+export interface AccountMaterial {
+    id: string;
+    name: string;
+    error: string | null;
+    summary: string;
+    preparedCount: number;
+}
+
+/** What a signed-in person has in the account, read through the Cue API (projects, materials, prepared answers). */
+export class Account {
+    readonly #backend: Backend;
+    readonly token: string;
+
+    constructor(backend: Backend, token: string) {
+        this.#backend = backend;
+        this.token = token;
+    }
+
+    async projects(): Promise<AccountProject[]> {
+        return (await this.#backend.call('GET', '/v1/projects', this.token)).body.projects as AccountProject[];
+    }
+
+    /** The project with that name; fails the case when there is none. */
+    async project(name: string): Promise<AccountProject> {
+        const found = (await this.projects()).find((project) => project.name === name);
+        return found ?? fail(`the account has no project "${name}"`, JSON.stringify(await this.projects()));
+    }
+
+    async materials(project: AccountProject): Promise<AccountMaterial[]> {
+        return (await this.#backend.call('GET', `/v1/projects/${project.id}/materials`, this.token)).body.materials as AccountMaterial[];
+    }
+
+    /** The text the server extracted from the material with that name. */
+    async text(project: AccountProject, name: string): Promise<string> {
+        const material = (await this.materials(project)).find((item) => item.name === name);
+        if (!material) return fail(`"${project.name}" has no material "${name}"`);
+        return (await this.#backend.call('GET', `/v1/projects/${project.id}/materials/${material.id}`, this.token)).body.text as string;
+    }
+
+    async answers(project: AccountProject): Promise<{ question: string; answer: string; who: string | null; source: string }[]> {
+        return (await this.#backend.call('GET', `/v1/projects/${project.id}/prepared-answers`, this.token)).body.answers;
     }
 }

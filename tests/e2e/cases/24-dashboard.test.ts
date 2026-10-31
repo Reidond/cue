@@ -28,6 +28,7 @@ e2eCase("The dashboard shows Home, a project's page, its prepared answers and it
     cue.control(`add ${fixture('materials', 'talk.md')}`);
     const notes = join(cue.projectPath('Bee talk'), 'Notes');
     await cue.waitFor('the project', 10, () => isDirectory(notes));
+    await cue.waitLog(/Added talk\.md to Bee talk/, 20);
     await copyFile(fixture('notes', 'sample.md'), join(notes, '2026-10-20 10.00 – Weekly sync about the report.md'));
 
     await cue.dashboardPage('Bee talk', /3 prepared answers/);
