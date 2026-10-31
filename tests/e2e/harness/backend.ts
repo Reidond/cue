@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { basename, extname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Note } from '../../../packages/contract/src/notes.ts';
 import { E2E_ROOT } from './config.ts';
 import { type FakeIdp, startFakeIdp } from './fake-idp.ts';
 import {
@@ -406,6 +407,18 @@ export class Account {
         const material = (await this.materials(project)).find((item) => item.name === name);
         if (!material) return fail(`"${project.name}" has no material "${name}"`);
         return (await this.#backend.call('GET', `/v1/projects/${project.id}/materials/${material.id}`, this.token)).body.text as string;
+    }
+
+    /** The account's notes (newest first), the project's only when given; trashed ones are not listed. */
+    async notes(project?: AccountProject): Promise<Note[]> {
+        const query = project ? `?project=${project.id}` : '';
+        return (await this.#backend.call('GET', `/v1/notes${query}`, this.token)).body.notes as Note[];
+    }
+
+    /** One note; fails the case when the account has none by that id. */
+    async note(id: string): Promise<Note> {
+        const read = await this.#backend.call('GET', `/v1/notes/${id}`, this.token);
+        return read.status === 200 ? (read.body as Note) : fail(`the account has no note ${id}`, JSON.stringify(read));
     }
 
     async answers(project: AccountProject): Promise<{ question: string; answer: string; who: string | null; source: string }[]> {

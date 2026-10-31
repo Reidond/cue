@@ -8,24 +8,13 @@ import {
     fail,
     fixture,
     matches,
-    needWhisper,
-    needWhisperCli,
     readText,
-    shellQuote,
-    writeExecutable,
 } from '../harness/index.ts';
 
 e2eCase(
-    'A second pass that hears far less than live recognition did (here whisper-cli only gets the first second ' +
-        "of each side) doesn't replace the live transcript: the note keeps it and says why.",
+    'A second pass that hears far less than live recognition did (here Deepgram only gets one word out of each side) ' +
+        "doesn't replace the live transcript: the note keeps it and says why.",
     async (cue) => {
-        needWhisper();
-        const realWhisperCli = needWhisperCli();
-        const whisperCli = await writeExecutable(
-            cue.path('whisper-cli'),
-            `#!/bin/bash\nexec ${shellQuote(realWhisperCli)} "$@" --duration 1000\n`,
-        );
-
         await cue.defaults('speakerName', 'Andrii Test');
         await cue.defaults('autoAnswer', false);
         await cue.project('Interviews', { language: 'en' });
@@ -33,9 +22,10 @@ e2eCase(
         await cue.launch({
             CUE_PROJECT: 'Interviews',
             CUE_REHEARSE_RECORD: '1',
-            CUE_WHISPER_CLI: whisperCli,
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
             FAKE_DEEPGRAM_LIVE: call.live(),
+            // A side's lines are complete: the stretches of speech after the first are not heard at all.
+            FAKE_DEEPGRAM_FILE: call.file({ me: ['Good.'], others: ['Hello.'] }),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 180);

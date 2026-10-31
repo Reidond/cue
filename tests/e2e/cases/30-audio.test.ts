@@ -14,7 +14,6 @@ import {
     fixture,
     lines,
     matches,
-    needWhisper,
     print,
 } from '../harness/index.ts';
 
@@ -22,8 +21,6 @@ e2eCase(
     'A recorded call keeps its audio next to the notes: AAC as long as the call, both sides in sync, named in ' +
         'the front matter and renamed with the notes after the summary.',
     async (cue) => {
-        needWhisper();
-
         await cue.defaults('speakerName', 'Andrii Test');
         await cue.project('Interviews', { language: 'en' });
         const call = await dialogue(fixture('dialogues', 'sync.txt'), cue.path('call'));
@@ -32,6 +29,7 @@ e2eCase(
             CUE_REHEARSE_RECORD: '1',
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
             FAKE_DEEPGRAM_LIVE: call.live(),
+            FAKE_DEEPGRAM_FILE: call.file(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Transcript saved/, 120);
@@ -82,5 +80,16 @@ e2eCase(
         assertContains(notes, /^\*\*00:00:05 · Andrii Test\*\*$/);
         assertContains(notes, /^\*\*00:00:09 · Participant\*\*$/);
         assertContains(notes, /^\*\*00:00:12 · Andrii Test\*\*$/);
+
+        // The mixed audio went up with the recording: the account has it for playing, and serves it in ranges.
+        const backend = await cue.backend();
+        const account = await backend.accountOf(cue.email);
+        const stored = (await account.notes())[0] ?? fail('the account should have the note');
+        if (!stored.audio.includes('mixed')) fail(`the account should keep the mixed audio: ${JSON.stringify(stored.audio)}`);
+        const ranged = await fetch(new URL(`/v1/notes/${stored.id}/audio/mixed`, backend.url), {
+            headers: { authorization: `Bearer ${account.token}`, range: 'bytes=0-99' },
+        });
+        assertEq(ranged.status, 206, 'the audio should be served in ranges');
+        assertEq((await ranged.arrayBuffer()).byteLength, 100);
     },
 );

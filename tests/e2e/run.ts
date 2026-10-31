@@ -111,17 +111,16 @@ Object.assign(process.env, {
 
 // What this machine can do that the cases about to run depend on, probed once (harness/capabilities.ts):
 // a case that needs what's missing skips with the reason.
-const needs = new Set<'speech' | 'snapshots'>();
+const needs = new Set<'snapshots'>();
 for (const name of cases) {
     const source = readFileSync(join(E2E, 'cases', name), 'utf8');
-    if (/needWhisper\(/.test(source)) needs.add('speech');
     if (/snapshotText|dashboardPage|dashboardShows/.test(source)) needs.add('snapshots');
 }
 const capabilitiesFile = join(work, 'cache', 'capabilities.json');
 const { probeMachine } = await import('./harness/capabilities.ts');
 const capabilities = await probeMachine(needs, capabilitiesFile);
 process.env['E2E_CAPABILITIES'] = capabilitiesFile;
-const names = { speech: 'Speech recognition', windows: 'Window snapshots', overlay: 'Overlay snapshots' } as const;
+const names = { windows: 'Window snapshots', overlay: 'Overlay snapshots' } as const;
 for (const [name, found] of Object.entries(capabilities) as [keyof typeof names, { ok: boolean; detail: string }][]) {
     console.log(`${names[name]}: ${found.ok ? 'yes' : 'no'} — ${found.detail}`);
 }

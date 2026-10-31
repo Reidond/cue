@@ -7,16 +7,11 @@ import {
     dialogue,
     e2eCase,
     fixture,
-    lines,
     listDir,
     minutesFromNow,
-    needWhisper,
 } from '../harness/index.ts';
 
 e2eCase('With "Record automatically" a meeting is recorded without a prompt, into Meetings (created for it).', async (cue) => {
-    needWhisper();
-    const whisperCli = await cue.whisperCliSpy();
-
     // The talk Cue is bound to, in English; meetings go elsewhere.
     await cue.project('Talk', { language: 'en' });
     cue.calendar([
@@ -35,9 +30,9 @@ e2eCase('With "Record automatically" a meeting is recorded without a prompt, int
     await cue.launch({
         CUE_MEETING_TICK: '0.5',
         CUE_MIC_RELEASE: '3',
-        CUE_WHISPER_CLI: whisperCli,
         CUE_REHEARSE_PARTICIPANT: call.wav('call'),
         FAKE_DEEPGRAM_LIVE: call.live(),
+        FAKE_DEEPGRAM_FILE: call.file(),
         CUE_REHEARSE_ME: call.wav('me'),
     });
 
@@ -57,9 +52,9 @@ e2eCase('With "Record automatically" a meeting is recorded without a prompt, int
     assertContains(notes, /onboarding screens/);
     // Meetings has the system language, but the call was recognized live in Talk's English: the second
     // pass listens in English too, and its transcript is the one kept.
-    const args = lines(cue.path('whisper-args.txt'));
-    const language = args.includes('-l') ? (args[args.lastIndexOf('-l') + 1] ?? '-l') : '';
-    assertEq(language, 'en', 'the second pass should use the live language');
+    const asked = cue.serviceRequests('deepgram-file');
+    assertEq(asked.length, 2, 'both sides should be read again');
+    for (const request of asked) assertEq(request.query['language'], 'en', 'the second pass should use the live language');
     assertContains(cue.sessionLog(), /✅ Transcript improved/);
     assertEq(listDir(join(cue.projectPath('Talk'), 'Notes')).length, 0, 'the active project gets nothing');
 });

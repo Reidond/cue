@@ -74,7 +74,16 @@ export interface Dialogue {
      * stand-in tells speech from silence by loudness and has no ears). The voices of the `call` side are numbered from 0 in the order they first speak.
      */
     live(): string;
+    /**
+     * FAKE_DEEPGRAM_FILE for the Deepgram stand-in's recorded files (the backend's second pass): what each side says, line by line in the order the lines
+     * start, with the call side's voices numbered from 0 in the order they first speak. `said` replaces a side's lines (its array is complete: fewer
+     * entries than the audio has stretches of speech means the rest is not heard; an entry with no text is a stretch Deepgram hears nothing in).
+     */
+    file(said?: { me?: Said[]; others?: Said[] }): string;
 }
+
+/** What a stretch of speech says in the recorded-file stand-in: its text, and on the call side the voice (from 0). */
+export type Said = string | { text: string; speaker?: number };
 
 /** The voices a dialogue script uses: the middle field of its `side | voice | text` lines. */
 function voicesIn(script: string): string[] {
@@ -99,22 +108,30 @@ export async function dialogue(script: string, out: string): Promise<Dialogue> {
     await mkdir(out, { recursive: true });
     await cp(cache, out, { recursive: true });
     const timeline = join(out, 'timeline.tsv');
-    const live = (): string => {
-        const voices: string[] = [];
-        const rows = linesOf(readFileSync(timeline, 'utf8'))
+    const rows = () =>
+        linesOf(readFileSync(timeline, 'utf8'))
             .map((line) => line.split('\t'))
             .filter((fields) => fields.length >= 5)
             .map(([start, , side, voice, ...text]) => ({ start: Number(start), side: side!, voice: voice!, text: text.join('\t') }))
             .sort((a, b) => a.start - b.start);
-        return JSON.stringify(
-            rows.map((row) => {
-                if (row.side === 'me') return row.text;
-                if (!voices.includes(row.voice)) voices.push(row.voice);
-                return { text: row.text, speaker: voices.indexOf(row.voice) };
-            }),
-        );
+    /** The lines in order, the call side's with their voice numbered from 0 in the order the voices first speak. */
+    const said = (): { side: string; said: Said }[] => {
+        const voices: string[] = [];
+        return rows().map((row) => {
+            if (row.side === 'me') return { side: 'me', said: row.text };
+            if (!voices.includes(row.voice)) voices.push(row.voice);
+            return { side: 'others', said: { text: row.text, speaker: voices.indexOf(row.voice) } };
+        });
     };
-    return { dir: out, timeline, wav: (side) => join(out, `${side}.wav`), live };
+    const live = (): string => JSON.stringify(said().map((row) => row.said));
+    const file = (replaced: { me?: Said[]; others?: Said[] } = {}): string => {
+        const all = said();
+        return JSON.stringify({
+            me: replaced.me ?? all.filter((row) => row.side === 'me').map((row) => row.said),
+            others: replaced.others ?? all.filter((row) => row.side === 'others').map((row) => row.said),
+        });
+    };
+    return { dir: out, timeline, wav: (side) => join(out, `${side}.wav`), live, file };
 }
 
 /** What `afinfo` says about an audio file. */

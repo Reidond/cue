@@ -1,19 +1,7 @@
 import { basename } from 'node:path';
-import {
-    assertContains,
-    assertEq,
-    assertFile,
-    assertNotContains,
-    dialogue,
-    e2eCase,
-    fail,
-    fixture,
-    needWhisper,
-} from '../harness/index.ts';
+import { assertContains, assertEq, assertFile, assertNotContains, dialogue, e2eCase, fail, fixture } from '../harness/index.ts';
 
 e2eCase('A two-sided rehearsal is recorded into notes with both sides, a summary and a title.', async (cue) => {
-    needWhisper();
-
     await cue.defaults('materials', [fixture('materials', 'talk.md')]);
     await cue.defaults('language', 'en');
     await cue.defaults('speakerName', 'Andrii Test');
@@ -23,6 +11,7 @@ e2eCase('A two-sided rehearsal is recorded into notes with both sides, a summary
         CUE_REHEARSE_RECORD: '1',
         CUE_REHEARSE_PARTICIPANT: call.wav('call'),
         FAKE_DEEPGRAM_LIVE: call.live(),
+        FAKE_DEEPGRAM_FILE: call.file(),
         CUE_REHEARSE_ME: call.wav('me'),
     });
     await cue.waitLog(/Transcript saved/, 120);
@@ -46,4 +35,15 @@ e2eCase('A two-sided rehearsal is recorded into notes with both sides, a summary
     assertContains(system, /\[Andrii Test\] is the person who recorded the call/);
     const input = cue.save('summary-input.txt', cue.claudeRequests('summary-input').join(''));
     assertContains(input, /\[Participant\].*report/);
+
+    // The notes are the account's: the backend has them, with the same title and both sides of the transcript.
+    const account = await (await cue.backend()).accountOf(cue.email);
+    const stored = await account.notes();
+    assertEq(stored.length, 1, 'the account should have the one note');
+    assertEq(stored[0]?.title, 'E2E rehearsal notes');
+    assertEq(stored[0]?.status, 'ready');
+    assertEq(
+        stored[0]?.transcript.some((turn) => turn.channel === 'me') && stored[0]?.transcript.some((turn) => turn.channel === 'others'),
+        true,
+    );
 });

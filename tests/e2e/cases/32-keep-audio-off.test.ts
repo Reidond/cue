@@ -1,21 +1,9 @@
-import {
-    assertContains,
-    assertEq,
-    assertFile,
-    assertNotContains,
-    dialogue,
-    e2eCase,
-    findFiles,
-    fixture,
-    needWhisper,
-} from '../harness/index.ts';
+import { assertContains, assertEq, assertFile, assertNotContains, dialogue, e2eCase, findFiles, fixture } from '../harness/index.ts';
 
 e2eCase(
     "With Keep audio off, a recording's notes have no audio; the sides are still recorded for processing and " +
         'deleted once the notes are ready.',
     async (cue) => {
-        needWhisper();
-
         await cue.defaults('keepAudio', false);
         await cue.project('Interviews', { language: 'en' });
         const call = await dialogue(fixture('dialogues', 'sync.txt'), cue.path('call'));
@@ -26,6 +14,7 @@ e2eCase(
             CUE_SNAPSHOT: cue.path('cue.png'),
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
             FAKE_DEEPGRAM_LIVE: call.live(),
+            FAKE_DEEPGRAM_FILE: call.file(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
 
@@ -46,5 +35,11 @@ e2eCase(
         assertNotContains(notes, /^audio:/, "the notes shouldn't name any audio");
         assertNotContains(cue.sessionLog(), /Audio saved/);
         assertEq(findFiles(cue.home, /\.(m4a|wav)$/).length, 0, 'no audio should be left anywhere');
+
+        // The sides went up to be transcribed; the backend deletes them once the notes are ready, and the mixed audio never went up.
+        const backend = await cue.backend();
+        const account = await backend.accountOf(cue.email);
+        await cue.waitFor('the audio to be gone from the account', 30, async () => (await account.notes())[0]?.audio.length === 0);
+        assertEq(backend.objects().length, 0, "the backend's storage should hold no audio");
     },
 );

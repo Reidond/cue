@@ -16,6 +16,7 @@ e2eCase(
 
         await cue.launch({ CUE_SNAPSHOT: cue.path('cue.png') });
         await cue.waitLog(/📦 Imported 2 projects from this Mac \(2 files\)/, 30);
+        await cue.waitLog(/📦 Imported 1 notes? from this Mac/, 30);
 
         const account = await (await cue.backend()).accountOf(cue.email);
         assertDeepEq((await account.projects()).map((project) => project.name).sort(), ['Interviews', 'Семінар']);
@@ -29,6 +30,11 @@ e2eCase(
         assertEq(ukrainian.language, 'uk');
         assertEq((await account.answers(ukrainian))[0]?.answer, 'Сорок вісім.', "read in the project's language");
         assertContains(join(interviews, 'project.json'), /"serverID" : "/);
+        assertDeepEq(
+            (await account.notes(remote)).map((note) => note.title),
+            ['Weekly sync about the report'],
+            'the old note went up with its project',
+        );
 
         // The note is still with its project.
         await cue.dashboardPage('Interviews/notes', /Weekly sync about the report/);
@@ -42,5 +48,6 @@ e2eCase(
         assertNotContains(cue.sessionLog(), /Imported/);
         assertEq((await account.projects()).length, 2, 'still two projects in the account');
         assertEq((await account.materials(remote)).length, 1, 'and one file');
+        assertEq((await account.notes()).length, 1, 'and one note');
     },
 );

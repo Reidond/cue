@@ -14,7 +14,6 @@ import {
     fixture,
     lines,
     matches,
-    needWhisper,
     print,
     sameFile,
 } from '../harness/index.ts';
@@ -23,8 +22,6 @@ e2eCase(
     'While a note is processed, each side of the call is in its own WAV (16-bit, 16 kHz) in a working folder ' +
         "named after the note's date, in sync with the call; the folder goes once the notes are ready.",
     async (cue) => {
-        needWhisper();
-
         await cue.project('Interviews', { language: 'en' });
         const call = await dialogue(fixture('dialogues', 'sync.txt'), cue.path('call'));
         // A summary that takes a while, as the real one does, so the working copies can be checked meanwhile.
@@ -34,6 +31,7 @@ e2eCase(
             FAKE_CLAUDE_SUMMARY_DELAY: '10',
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
             FAKE_DEEPGRAM_LIVE: call.live(),
+            FAKE_DEEPGRAM_FILE: call.file(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Working audio: /, 150);

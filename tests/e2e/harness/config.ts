@@ -1,5 +1,4 @@
 // What the runner (run.ts) tells every case through the environment, and the paths that follow from it.
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 function fromRunner(name: string): string {
@@ -28,9 +27,6 @@ export const DEEPGRAM: 'fake' | 'real' = process.env['E2E_DEEPGRAM'] === 'real' 
 export const KEYCHAIN_ITEMS = { deepgram: 'Cue e2e Deepgram API key' } as const;
 /** `run.ts --keep`: keep every case's sandbox, not only the failed ones. */
 export const KEEP = process.env['E2E_KEEP'] === '1';
-
-/** The user's real Cue folder: only its models are used, linked into each sandbox, never changed. */
-export const REAL_SUPPORT = join(homedir(), 'Library', 'Application Support', 'Cue');
 
 /** fixtures/… */
 export function fixture(...parts: string[]): string {

@@ -1,4 +1,4 @@
-// Stand-ins for the paid cloud services the Cue backend calls: the Anthropic Messages API and Deepgram's live speech-to-text, served on 127.0.0.1
+// Stand-ins for the paid cloud services the Cue backend calls: the Anthropic Messages API and Deepgram's speech-to-text (live streams and recorded files), served on 127.0.0.1
 // from the case's own process. They are the backend's upstreams (`ANTHROPIC_URL`, `DEEPGRAM_URL`), with the owner's keys the case gives the backend
 // (`FAKE_KEYS`): Cue itself never talks to them.
 //
@@ -6,18 +6,28 @@
 // as fake-replies.ts says, from the FAKE_CLAUDE_* variables of the Cue running (or of `cue.standIns`). They take only the keys in FAKE_KEYS: any
 // other one is rejected (401).
 //
-//   /v1/messages   answers, verdicts and summaries; `max_tokens: 0` warms the cache (answer-system, judge-system), a question is `ask` or `judge`,
-//                  a transcript `summary-system` and `summary-input`; each request also as `anthropic-request`, with the headers it came with.
+//   /v1/messages   answers, verdicts, names and summaries; `max_tokens: 0` warms the cache (answer-system, judge-system), a question is `ask` or
+//                  `judge`, a transcript `summary-system` and `summary-input` (the notes Workflow's summary) or, when the system prompt starts "You find
+//                  the names", `names-system` and `names-input`; each request also as `anthropic-request`, with the headers it came with.
 //                  Replies carry `usage` and simulate the prompt cache (a system prompt seen before is a cache read). FAKE_CLAUDE_JUDGE_FAILS=1
 //                  fails every judge request with a 500, FAKE_ANTHROPIC_OVERLOADED=N the first N judge requests with a 529 (overloaded),
 //                  FAKE_ANTHROPIC_CUT=N breaks off the first N streamed answers after their first words (no `message_stop`), FAKE_CLAUDE_JUDGE_DELAY
-//                  and FAKE_CLAUDE_SUMMARY_DELAY (seconds) slow them down.
+//                  and FAKE_CLAUDE_SUMMARY_DELAY (seconds) slow them down, FAKE_ANTHROPIC_SUMMARY_FAILS=N fails the first N summary requests with a
+//                  500. The names reply is FAKE_CLAUDE_NAMES (a JSON object, label → name) as `<!-- speaker: LABEL = NAME -->` lines, else the
+//                  speaker lines of the FAKE_CLAUDE_SUMMARY file.
 //   /v1/listen     WebSocket: a live stream, one per channel, of 16-bit PCM. Speech is told from silence by loudness (20 ms frames), and each
 //                  stretch of speech is an utterance: SpeechStarted, an interim result every 0.2 s, and the final once the silence has lasted
 //                  `endpointing` ms. Its text is the next line of FAKE_DEEPGRAM_LIVE (a JSON array, one entry per utterance in the order they start,
 //                  across both channels; an entry is a string, or {text, speaker} for the call side with `diarize`), or "Utterance N." (too short
 //                  to pass for an echo of the other side). FAKE_DEEPGRAM_DROP=N drops the connection of the Nth utterance as it starts, as a lost
 //                  connection would. A stream with no audio for 10 s is closed, as Deepgram does without KeepAlive. Noted as `deepgram-live`.
+//   /v1/listen     POST: a recorded file (the notes Workflow's second pass), a 16-bit WAV as the body, `tag` = the side (`me`, `others`). One
+//                  utterance per stretch of speech in it (20 ms frames above the silence threshold, pauses under half a second bridged), with
+//                  words spread over it, and with `diarize` each word and utterance has a `speaker`. Its text is the side's next entry of
+//                  FAKE_DEEPGRAM_FILE (a JSON object `{"me": […], "others": […]}`; an entry is a string, or {text, speaker} on the call side;
+//                  a side's array is complete: stretches past its end, and entries with no text, get no utterance), or "Second pass by Deepgram,
+//                  part N." for a side the object does not have. FAKE_DEEPGRAM_FILE_FAILS=N fails the first N recorded requests with a 500,
+//                  FAKE_DEEPGRAM_FILE_DELAY (seconds) slows each down. Noted as `deepgram-file`.
 //   /markdown      POST: Workers AI `toMarkdown`, for the Cue API (MARKDOWN_URL). A Word file's paragraphs or a PDF's text, one blank line
 //                  apart, as `{name, format: 'markdown', data, tokens}`; any other file as `{format: 'error'}`, the shape `toMarkdown` returns
 //                  per file. The file's name arrives in `x-file-name` (URL-encoded). Noted as `markdown-request`.
@@ -27,14 +37,14 @@ import type { AddressInfo, Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { unzip } from './documents.ts';
-import { answer, judgement, pieces, record, summary, type Env } from '../tools/fake-replies.ts';
+import { answer, judgement, names, pieces, record, summary, type Env } from '../tools/fake-replies.ts';
 
 /** The only keys the stand-ins take. */
 export const FAKE_KEYS = { anthropic: 'sk-ant-e2e-fake-key', deepgram: 'dg-e2e-fake-key' } as const;
 
 /** What the Anthropic stand-in noted about a request. */
 export interface AnthropicRequest {
-    kind: 'answer' | 'judge' | 'summary';
+    kind: 'answer' | 'judge' | 'summary' | 'names';
     key: string;
     version: string;
     model: string;
@@ -98,6 +108,23 @@ export interface DeepgramRequest {
     dropped?: boolean;
 }
 
+/** What the Deepgram stand-in noted about a recorded file (the notes Workflow's second pass): the query, the key, the audio. */
+export interface DeepgramFileRequest {
+    query: Record<string, string>;
+    keyterms: string[];
+    key: string;
+    /** The request's headers (lower-case names). */
+    headers: Record<string, string>;
+    /** Which side it carried: its `tag`. */
+    side: string;
+    /** Seconds of audio received (0 when it was not a WAV file). */
+    seconds: number;
+    bytes: number;
+    contentType: string;
+    /** Failed on purpose (FAKE_DEEPGRAM_FILE_FAILS). */
+    failed?: boolean;
+}
+
 export interface FakeProviders {
     /** ANTHROPIC_URL and DEEPGRAM_URL of the backend: both are this one server. */
     url: string;
@@ -140,6 +167,59 @@ function headersOf(request: IncomingMessage): Record<string, string> {
 /** Deepgram's `Authorization: Token KEY`. */
 function deepgramKey(request: IncomingMessage): string {
     return /^Token (.*)$/.exec(request.headers.authorization ?? '')?.[1] ?? '';
+}
+
+/** The samples of a WAV file (16-bit or float PCM, the first channel), and its rate. */
+function samplesOf(wav: Buffer): { rate: number; samples: Float32Array } | undefined {
+    if (wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') return undefined;
+    let offset = 12,
+        rate = 16000,
+        bits = 16,
+        channels = 1,
+        float = false;
+    while (offset + 8 <= wav.length) {
+        const id = wav.toString('ascii', offset, offset + 4),
+            size = wav.readUInt32LE(offset + 4);
+        if (id === 'fmt ') {
+            float = wav.readUInt16LE(offset + 8) === 3;
+            channels = wav.readUInt16LE(offset + 10);
+            rate = wav.readUInt32LE(offset + 12);
+            bits = wav.readUInt16LE(offset + 22);
+        } else if (id === 'data') {
+            const data = wav.subarray(offset + 8, Math.min(wav.length, offset + 8 + size));
+            const step = (bits / 8) * channels,
+                count = Math.floor(data.length / step);
+            const samples = new Float32Array(count);
+            for (let index = 0; index < count; index++) {
+                samples[index] = float ? data.readFloatLE(index * step) : data.readInt16LE(index * step) / 32768;
+            }
+            return { rate, samples };
+        }
+        offset += 8 + size + (size % 2);
+    }
+    return undefined;
+}
+
+/** Stretches of speech, in seconds: 20 ms frames well above silence, pauses under half a second bridged. */
+function stretches(rate: number, samples: Float32Array): [number, number][] {
+    const frame = Math.round(rate / 50),
+        found: [number, number][] = [];
+    let start: number | undefined,
+        last = 0;
+    for (let index = 0; index * frame < samples.length; index++) {
+        let sum = 0;
+        const end = Math.min(samples.length, (index + 1) * frame);
+        for (let at = index * frame; at < end; at++) sum += samples[at]! * samples[at]!;
+        if (Math.sqrt(sum / (end - index * frame)) < 0.01) continue;
+        if (start !== undefined && index - last > 25) {
+            if (last + 1 - start >= 15) found.push([start / 50, (last + 1) / 50]);
+            start = undefined;
+        }
+        start ??= index;
+        last = index;
+    }
+    if (start !== undefined && last + 1 - start >= 15) found.push([start / 50, (last + 1) / 50]);
+    return found;
 }
 
 // MARK: WebSocket, as much of RFC 6455 as a live stream needs
@@ -214,7 +294,9 @@ function frames(socket: Duplex, head: Buffer, onMessage: (opcode: number, payloa
 export async function startFakeProviders(log: string, env: () => Env): Promise<FakeProviders> {
     let utterances = 0,
         judged = 0,
-        answered = 0;
+        answered = 0,
+        summaries = 0,
+        filed = 0;
     /** The system prompts the prompt cache has seen. */
     const caches = new Set<string>();
     const sockets = new Set<Socket | Duplex>();
@@ -224,8 +306,10 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         const system = textOf(sent['system']);
         const messages = (sent['messages'] ?? []) as { content: unknown }[];
         const content = textOf(messages.at(-1)?.content);
-        const kind = content.startsWith('Transcript:')
-            ? 'summary'
+        const kind: AnthropicRequest['kind'] = content.startsWith('Transcript:')
+            ? system.startsWith('You find the names')
+                ? 'names'
+                : 'summary'
             : system.startsWith('You watch the live transcript')
               ? 'judge'
               : 'answer';
@@ -256,6 +340,9 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         if (kind === 'judge' && ++judged <= Number(environment['FAKE_ANTHROPIC_OVERLOADED'] ?? 0)) {
             return json(response, 529, { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } });
         }
+        if (kind === 'summary' && noted.maxTokens !== 0 && ++summaries <= Number(environment['FAKE_ANTHROPIC_SUMMARY_FAILS'] ?? 0)) {
+            return json(response, 500, { type: 'error', error: { type: 'api_error', message: 'The summary failed' } });
+        }
         // The prompt cache: a system prompt with a breakpoint is written the first time it is seen and read after that.
         const systemTokens = Math.ceil(system.length / 4);
         const cached = noted.systemCache !== undefined;
@@ -282,6 +369,10 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
             const delay = Number(environment['FAKE_CLAUDE_SUMMARY_DELAY']);
             if (delay > 0) await sleep(delay * 1000);
             text = summary(environment);
+        } else if (kind === 'names') {
+            record(log, 'names-system', system);
+            record(log, 'names-input', content);
+            text = names(environment);
         } else if (kind === 'judge') {
             record(log, 'judge', content);
             const delay = Number(environment['FAKE_CLAUDE_JUDGE_DELAY']);
@@ -325,6 +416,81 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         event('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: used.output_tokens } });
         event('message_stop', {});
         response.end();
+    }
+
+    /** A recorded file: one utterance per stretch of speech in it, saying what FAKE_DEEPGRAM_FILE has for that side. */
+    async function deepgramFile(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
+        const audio = await body(request);
+        const decoded = samplesOf(audio);
+        const key = deepgramKey(request);
+        const { query, keyterms } = queryOf(url);
+        const environment = env();
+        const side = query['tag'] ?? (query['diarize'] === 'true' ? 'others' : 'me');
+        const noted = (extra: Partial<DeepgramFileRequest>): string =>
+            JSON.stringify({
+                query,
+                keyterms,
+                key,
+                headers: headersOf(request),
+                side,
+                seconds: decoded ? decoded.samples.length / decoded.rate : 0,
+                bytes: audio.length,
+                contentType: String(request.headers['content-type'] ?? ''),
+                ...extra,
+            } satisfies DeepgramFileRequest);
+        if (key !== FAKE_KEYS.deepgram) {
+            record(log, 'deepgram-file', noted({}));
+            return json(response, 401, { err_code: 'INVALID_AUTH', err_msg: 'Invalid credentials.' });
+        }
+        const delay = Number(environment['FAKE_DEEPGRAM_FILE_DELAY']);
+        if (delay > 0) await sleep(delay * 1000);
+        if (++filed <= Number(environment['FAKE_DEEPGRAM_FILE_FAILS'] ?? 0)) {
+            record(log, 'deepgram-file', noted({ failed: true }));
+            return json(response, 500, { err_code: 'INTERNAL_SERVER_ERROR', err_msg: 'The recorded-file stand-in was told to fail.' });
+        }
+        record(log, 'deepgram-file', noted({}));
+        if (!decoded) return json(response, 400, { err_code: 'Bad Request', err_msg: 'Bad Request: failed to process audio' });
+
+        const diarize = query['diarize'] === 'true';
+        const scripts = JSON.parse(environment['FAKE_DEEPGRAM_FILE'] ?? '{}') as Record<
+            string,
+            (string | { text: string; speaker?: number })[]
+        >;
+        const script = scripts[side];
+        const found = stretches(decoded.rate, decoded.samples);
+        const utterances = found.flatMap(([start, end], index) => {
+            const entry = script === undefined ? `Second pass by Deepgram, part ${index + 1}.` : script[index];
+            const text = typeof entry === 'string' ? entry : (entry?.text ?? '');
+            if (text === '') return [];
+            const speaker = typeof entry === 'object' ? (entry.speaker ?? 0) : 0;
+            const spoken = text.split(' ');
+            const words = spoken.map((word, at) => ({
+                word: word.toLowerCase().replace(/[.,!?…]+$/, ''),
+                punctuated_word: word,
+                start: start + ((end - start) * at) / spoken.length,
+                end: start + ((end - start) * (at + 1)) / spoken.length,
+                confidence: 0.99,
+                ...(diarize ? { speaker } : {}),
+            }));
+            return [{ start, end, confidence: 0.99, channel: 0, transcript: text, words, ...(diarize ? { speaker } : {}) }];
+        });
+        json(response, 200, {
+            metadata: { duration: decoded.samples.length / decoded.rate, channels: 1, model_info: { name: query['model'] ?? 'nova-3' } },
+            results: {
+                channels: [
+                    {
+                        alternatives: [
+                            {
+                                transcript: utterances.map((item) => item.transcript).join(' '),
+                                confidence: 0.99,
+                                words: utterances.flatMap((item) => item.words),
+                            },
+                        ],
+                    },
+                ],
+                utterances,
+            },
+        });
     }
 
     /** One live stream of one channel: PCM in, SpeechStarted, interim results and finals out. */
@@ -525,9 +691,11 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         const handled =
             request.method === 'POST' && url.pathname === '/v1/messages'
                 ? anthropic(request, response)
-                : request.method === 'POST' && url.pathname === '/markdown'
-                  ? markdown(request, response)
-                  : Promise.resolve(json(response, 404, { error: `no ${request.method} ${url.pathname} here` }));
+                : request.method === 'POST' && url.pathname === '/v1/listen'
+                  ? deepgramFile(request, response, url)
+                  : request.method === 'POST' && url.pathname === '/markdown'
+                    ? markdown(request, response)
+                    : Promise.resolve(json(response, 404, { error: `no ${request.method} ${url.pathname} here` }));
         handled.catch((error: unknown) => {
             if (!response.headersSent) json(response, 500, { type: 'error', error: { type: 'api_error', message: String(error) } });
             else response.end();

@@ -8,7 +8,6 @@ import {
     fail,
     fixture,
     minutesFromNow,
-    needWhisper,
     ocr,
 } from '../harness/index.ts';
 
@@ -16,8 +15,6 @@ e2eCase(
     'Answering Record records the meeting into its project, named after the event with its attendees; once the ' +
         'call app has let go of the microphone for the release window, Cue stops and writes the notes.',
     async (cue) => {
-        needWhisper();
-
         await cue.project('Research', { language: 'en' });
         cue.calendar([
             {
@@ -40,6 +37,7 @@ e2eCase(
             CUE_MIC_RELEASE: '4',
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
             FAKE_DEEPGRAM_LIVE: call.live(),
+            FAKE_DEEPGRAM_FILE: call.file(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
 

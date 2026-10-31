@@ -1,10 +1,8 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { assertContains, assertEq, assertFile, dialogue, e2eCase, fail, fixture, listDir, needWhisper } from '../harness/index.ts';
+import { assertContains, assertEq, assertFile, dialogue, e2eCase, fail, fixture, listDir } from '../harness/index.ts';
 
 e2eCase("A recording goes into the active project's Notes/ and says which project it belongs to.", async (cue) => {
-    needWhisper();
-
     // Projects made by hand: a folder with project.json, and a bare folder.
     await cue.project('Interviews', { language: 'en' });
     await mkdir(join(cue.projectPath('Other project'), 'Notes'), { recursive: true });
@@ -14,6 +12,7 @@ e2eCase("A recording goes into the active project's Notes/ and says which projec
         CUE_REHEARSE_RECORD: '1',
         CUE_REHEARSE_PARTICIPANT: call.wav('call'),
         FAKE_DEEPGRAM_LIVE: call.live(),
+        FAKE_DEEPGRAM_FILE: call.file(),
         CUE_REHEARSE_ME: call.wav('me'),
     });
     await cue.waitLog(/Project: Interviews/, 10);

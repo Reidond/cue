@@ -2,47 +2,27 @@
 // and ways to drive the app and wait on it.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, closeSync, openSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Backend, type BackendOptions } from './backend.ts';
 import { closeBrowser } from './browser.ts';
-import { CUE_BIN, DEEPGRAM, E2E_CACHE, E2E_WORK, KEEP, REAL_SUPPORT } from './config.ts';
+import { CUE_BIN, DEEPGRAM, E2E_WORK, KEEP } from './config.ts';
 import {
     FAKE_KEYS,
     startFakeProviders,
     type AnthropicRequest,
+    type DeepgramFileRequest,
     type DeepgramRequest,
     type FakeProviders,
     type MarkdownRequest,
 } from './fake-providers.ts';
-import {
-    countLines,
-    exists,
-    findFiles,
-    isDirectory,
-    lines,
-    linesOf,
-    matches,
-    nonEmpty,
-    tail,
-    withFlags,
-    writeExecutable,
-} from './files.ts';
-import { exec, shellQuote, type Ran } from './process.ts';
-import { keychainKey, needOverlaySnapshots, needWhisperCli, needWindowSnapshots } from './requirements.ts';
+import { countLines, findFiles, lines, linesOf, matches, nonEmpty, tail, withFlags } from './files.ts';
+import { exec, type Ran } from './process.ts';
+import { keychainKey, needOverlaySnapshots, needWindowSnapshots } from './requirements.ts';
 import { fail, print, Skip } from './results.ts';
 import { ocr, readImage } from './screen.ts';
 import { sleep, within } from './time.ts';
-
-/** The speaker models' files (FluidAudio's speaker-diarization/ folder) that tell they're all there. */
-export const SPEAKER_FILES = [
-    'Segmentation.mlmodelc/coremldata.bin',
-    'FBank.mlmodelc/coremldata.bin',
-    'Embedding.mlmodelc/coremldata.bin',
-    'PldaRho.mlmodelc/coremldata.bin',
-    'plda-parameters.json',
-];
 
 /** A call in the calendar Cue reads (CUE_CALENDAR_EVENTS); times from `minutesFromNow` or `tomorrowAt`. */
 export interface CalendarEvent {
@@ -61,12 +41,21 @@ export interface CalendarEvent {
 }
 
 /** What the backend sent the Anthropic API's stand-in, by kind (see harness/fake-providers.ts). */
-export type ClaudeRequest = 'answer-system' | 'ask' | 'judge-system' | 'judge' | 'summary-system' | 'summary-input';
+export type ClaudeRequest =
+    | 'answer-system'
+    | 'ask'
+    | 'judge-system'
+    | 'judge'
+    | 'summary-system'
+    | 'summary-input'
+    | 'names-system'
+    | 'names-input';
 
 /** What the cloud services' stand-ins noted, by kind (see harness/fake-providers.ts). */
 export interface ServiceRequests {
     'anthropic-request': AnthropicRequest;
     'deepgram-live': DeepgramRequest;
+    'deepgram-file': DeepgramFileRequest;
     'markdown-request': MarkdownRequest;
 }
 
@@ -74,10 +63,6 @@ type DefaultsValue = string | boolean | number | readonly string[];
 
 /** Anything Cue is told before it starts, as environment variables. */
 export type LaunchEnv = Record<string, string>;
-
-function speakerModelsIn(models: string): boolean {
-    return SPEAKER_FILES.every((file) => exists(join(models, 'speaker-diarization', file)));
-}
 
 /** A JSON object in a file, or {} when there is none yet. */
 function existsJson(file: string): Record<string, string> {
@@ -93,7 +78,7 @@ export class Cue {
     readonly dir: string;
     /** CUE_HOME: holds `Application Support/Cue` and `Documents`. */
     readonly home: string;
-    /** `Application Support/Cue`: sessions, recordings, models. */
+    /** `Application Support/Cue`: sessions, recordings. */
     readonly support: string;
     readonly documents: string;
     /** The calendar Cue reads (see `calendar`). */
@@ -135,9 +120,6 @@ export class Cue {
             CUE_DEFAULTS_DOMAIN: domain,
         };
         delete env['NODE_TEST_CONTEXT'];
-        // The speaker models come in with the speech model once they are downloaded; until then Cue
-        // downloads them on first use into the checkout's e2e cache, and later cases and runs reuse them.
-        if (!speakerModelsIn(join(REAL_SUPPORT, 'models'))) env['CUE_SPEAKER_MODELS'] = join(E2E_CACHE, 'speaker-models');
         this.env = env;
     }
 
@@ -147,9 +129,6 @@ export class Cue {
         const cue = new Cue(dir, `com.andriishafar.cue.e2e.${name}-${process.pid}`);
         await mkdir(cue.support, { recursive: true });
         await mkdir(cue.documents, { recursive: true });
-        // The speech model is 1.6 GB: link it in, never copy or download it.
-        const models = join(REAL_SUPPORT, 'models');
-        if (isDirectory(models)) await symlink(models, join(cue.support, 'models'));
         await exec('defaults', ['delete', cue.domain]);
         await mkdir(cue.claudeLog, { recursive: true });
         // The paid services' stand-ins: the backend's upstreams, replying as the Cue running (or `standIns`) says.
@@ -354,7 +333,7 @@ export class Cue {
      * Does in the running Cue what a click would (CUE_CONTROL): `new NAME`, `add PATH`, `start NAME`,
      * `project NAME`, `ask TEXT`, `timestamp HH:MM:SS`, `page home|upcoming|NAME|NAME/answers|NAME/notes`,
      * `assign EVENT | PROJECT`, `notification record|dismiss`, and for the open note `rename NAME | NEW`,
-     * `apply LABEL` and `dismiss LABEL`, and `download speakers`.
+     * `apply LABEL` and `dismiss LABEL`.
      */
     control(command: string): void {
         appendFileSync(this.path('control'), `${command}\n`);
@@ -374,27 +353,6 @@ export class Cue {
     #replace(file: string, text: string): void {
         writeFileSync(`${file}.new`, text);
         renameSync(`${file}.new`, file);
-    }
-
-    /**
-     * Writes a `whisper-cli` for CUE_WHISPER_CLI that notes how Cue runs it (the arguments, one per line,
-     * in whisper-args.txt; its scheduling priority in whisper-priority.txt), takes `seconds` longer, as a
-     * long call would, and runs the real whisper-cli. Returns its path. It's a shell script so that it can
-     * `exec` the real one: the same process, with the priority and signals Cue gives it.
-     */
-    async whisperCliSpy(seconds = 0.5): Promise<string> {
-        const whisperCli = needWhisperCli();
-        return writeExecutable(
-            this.path('whisper-cli'),
-            [
-                '#!/bin/bash',
-                `printf '%s\\n' "$@" > ${shellQuote(this.path('whisper-args.txt'))}`,
-                `sleep ${seconds}`,
-                `ps -o pri= -p $$ | tr -d ' ' > ${shellQuote(this.path('whisper-priority.txt'))}`,
-                `exec ${shellQuote(whisperCli)} "$@"`,
-                '',
-            ].join('\n'),
-        );
     }
 
     // MARK: Waiting
@@ -480,7 +438,8 @@ export class Cue {
 
     /** What the cloud services' stand-ins noted about the backend's requests of that kind, oldest first. */
     serviceRequests<Kind extends keyof ServiceRequests>(kind: Kind): ServiceRequests[Kind][] {
-        if (kind === 'deepgram-live' && DEEPGRAM !== 'fake') fail(`serviceRequests('${kind}') needs the stand-in`);
+        if ((kind === 'deepgram-live' || kind === 'deepgram-file') && DEEPGRAM !== 'fake')
+            fail(`serviceRequests('${kind}') needs the stand-in`);
         return this.#noted(kind).map((text) => JSON.parse(text) as ServiceRequests[Kind]);
     }
 

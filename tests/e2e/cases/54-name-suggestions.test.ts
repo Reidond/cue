@@ -1,5 +1,6 @@
 import {
     assertContains,
+    assertDeepEq,
     assertEq,
     assertNotContains,
     countLines,
@@ -8,7 +9,6 @@ import {
     fixture,
     labelsOf,
     lines,
-    needWhisper,
     summaryOf,
     turnSpeakers,
 } from '../harness/index.ts';
@@ -18,8 +18,6 @@ e2eCase(
         "the notes and show on the note's page as a chip, «Participant 2 → Olena Mulesa?», whose Apply renames them " +
         "throughout the note. Suggestions for labels that aren't the call's are ignored.",
     async (cue) => {
-        needWhisper();
-
         await cue.defaults('speakerName', 'Andrii Test');
         await cue.defaults('autoAnswer', false);
         await cue.project('Library', { language: 'en' });
@@ -31,6 +29,7 @@ e2eCase(
             CUE_SNAPSHOT: cue.path('cue.png'),
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
             FAKE_DEEPGRAM_LIVE: call.live(),
+            FAKE_DEEPGRAM_FILE: call.file(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 300);
@@ -43,6 +42,10 @@ e2eCase(
         assertContains(notes, /^suggestions: \{"Participant 2": "Olena Mulesa"\}$/);
         assertNotContains(notes, /<!-- speaker/, 'the suggestion lines should be kept out of the notes');
         assertContains(notes, /^participants: Andrii Test, Participant 1, Participant 2$/);
+
+        // The account's note has the suggestion, and the label it is for.
+        const account = await (await cue.backend()).accountOf(cue.email);
+        assertDeepEq((await account.notes())[0]?.suggestions, { 'Participant 2': 'Olena Mulesa' });
 
         // Its chip, with Apply, on the note's page; the front matter row doesn't show it.
         const page = cue.page;
@@ -68,6 +71,12 @@ e2eCase(
         const speakers = turnSpeakers(notes, call.timeline);
         cue.save('speakers.tsv', speakers);
         assertEq(labelsOf(speakers, 'Karen'), 'Olena Mulesa');
+
+        // The account applied it too: no suggestion left, her name in place of the label.
+        await cue.waitFor('the account to apply the suggestion', 20, async () => {
+            const stored = (await account.notes())[0];
+            return stored !== undefined && Object.keys(stored.suggestions).length === 0 && stored.participants.includes('Olena Mulesa');
+        });
 
         // The chip is gone and the note names her.
         const applied = async (): Promise<boolean> =>

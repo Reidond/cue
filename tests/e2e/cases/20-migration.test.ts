@@ -29,6 +29,7 @@ e2eCase(
         await cue.launch();
         await cue.waitLog(/Moved your settings into the project “My project”: 1 of 2 materials copied, 1 notes moved/, 20);
         await cue.waitLog(/📦 Imported 1 project from this Mac \(1 file\)/, 20);
+        await cue.waitLog(/📦 Imported 1 notes? from this Mac/, 30);
         await cue.waitLog(/Materials for My project .*talk\.md/, 30);
 
         const project = cue.projectPath('My project');
@@ -59,6 +60,12 @@ e2eCase(
         );
         assertEq((await account.answers(remote)).length, 3, 'its prepared answers');
 
+        // ...and so did the old note, as the account's: its summary and transcript, in the project it was moved into.
+        const [stored] = await account.notes(remote);
+        assertEq(stored?.title, 'Weekly sync about the report');
+        assertEq(stored?.status, 'ready');
+        assertEq(stored?.summary.includes('send the report'), true, "the note's summary");
+
         const note = join(project, 'Notes', '2026-10-20 10.00 – Weekly sync about the report.md');
         assertFile(note, 'the old note should move into Notes/');
         if (exists(oldNotes)) fail('the emptied old recordings folder should be gone');
@@ -77,5 +84,6 @@ e2eCase(
         assertEq((await account.projects()).length, 1, 'still one project in the account');
         assertEq((await account.materials(remote)).length, 1, 'materials are not sent twice');
         assertEq(cue.findNotes().length, 1, 'still one note');
+        assertEq((await account.notes()).length, 1, 'the note is not sent twice');
     },
 );

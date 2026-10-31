@@ -9,7 +9,6 @@ import {
     fixture,
     labelsOf,
     matches,
-    needWhisper,
     print,
     turnSpeakers,
 } from '../harness/index.ts';
@@ -19,8 +18,6 @@ e2eCase(
         'out with three participants plus you, every line under the label of the voice that said it, consecutive lines ' +
         'of one voice as one turn; the participants and the summary prompt list them.',
     async (cue) => {
-        needWhisper();
-
         await cue.defaults('speakerName', 'Andrii Test');
         await cue.defaults('autoAnswer', false);
         await cue.project('Library', { language: 'en' });
@@ -30,6 +27,7 @@ e2eCase(
             CUE_REHEARSE_RECORD: '1',
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
             FAKE_DEEPGRAM_LIVE: call.live(),
+            FAKE_DEEPGRAM_FILE: call.file(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 300);
@@ -71,6 +69,10 @@ e2eCase(
             system,
             /\[Andrii Test\] is the person who recorded the call; \[Participant 1\], \[Participant 2\] and \[Participant 3\] are the other people on the call, told apart by their voices/,
         );
-        assertContains(system, /<!-- speaker: Participant 1 = Olena Mulesa -->/);
+        // ...and the names are asked for in a request of their own, with the labels as the transcript has them.
+        const names = cue.save('names-system.txt', cue.claudeRequests('names-system').join(''));
+        assertContains(names, /<!-- speaker: Participant 1 = /);
+        const asked = cue.save('names-input.txt', cue.claudeRequests('names-input').join(''));
+        assertContains(asked, /\[Participant 3\] .*budget/);
     },
 );

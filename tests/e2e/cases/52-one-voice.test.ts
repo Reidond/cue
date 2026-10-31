@@ -7,7 +7,6 @@ import {
     e2eCase,
     fixture,
     labelsOf,
-    needWhisper,
     print,
     turnSpeakers,
 } from '../harness/index.ts';
@@ -16,8 +15,6 @@ e2eCase(
     'A call with one person on the call side keeps the plain participant label: no numbers, and the participants ' +
         'are you and «Participant», as before speakers were told apart.',
     async (cue) => {
-        needWhisper();
-
         await cue.defaults('speakerName', 'Andrii Test');
         await cue.defaults('autoAnswer', false);
         await cue.project('Interviews', { language: 'en' });
@@ -27,6 +24,7 @@ e2eCase(
             CUE_REHEARSE_RECORD: '1',
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
             FAKE_DEEPGRAM_LIVE: call.live(),
+            FAKE_DEEPGRAM_FILE: call.file(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 300);

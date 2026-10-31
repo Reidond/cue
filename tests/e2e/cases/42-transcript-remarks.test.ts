@@ -1,23 +1,10 @@
 import { basename } from 'node:path';
-import {
-    assertContains,
-    assertEq,
-    assertNotContains,
-    countLines,
-    dialogue,
-    e2eCase,
-    fail,
-    fixture,
-    needWhisper,
-    summaryOf,
-} from '../harness/index.ts';
+import { assertContains, assertEq, assertNotContains, countLines, dialogue, e2eCase, fail, fixture, summaryOf } from '../harness/index.ts';
 
 e2eCase(
     'A summary that comments on the transcript anyway loses those parenthetical remarks (the words that give them ' +
         'away are in the lexicons); the rest of it, other parentheses included, stays as written.',
     async (cue) => {
-        needWhisper();
-
         await cue.defaults('speakerName', 'Андрій Тест');
         await cue.defaults('autoAnswer', false);
         await cue.project('Звіт', { language: 'uk' });
@@ -28,6 +15,7 @@ e2eCase(
             FAKE_CLAUDE_SUMMARY: fixture('summaries', 'transcript-remarks.md'),
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
             FAKE_DEEPGRAM_LIVE: call.live(),
+            FAKE_DEEPGRAM_FILE: call.file(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 180);

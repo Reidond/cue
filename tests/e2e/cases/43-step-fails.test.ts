@@ -7,49 +7,50 @@ import {
     e2eCase,
     fail,
     fixture,
-    literal,
     matches,
-    needWhisper,
     readText,
 } from '../harness/index.ts';
 
 e2eCase(
-    "When the second pass can't run (here whisper-cli is missing), the note keeps the live transcript, its page " +
-        'and the session log say what went wrong, and the summary is written all the same.',
+    "When a step of the notes Workflow keeps failing (here Deepgram's recorded-file API), the note keeps the live " +
+        'transcript, its page and the session log say what went wrong, and the summary is written all the same.',
     async (cue) => {
-        needWhisper();
-
         await cue.defaults('speakerName', 'Andrii Test');
         await cue.defaults('autoAnswer', false);
         await cue.project('Interviews', { language: 'en' });
         const call = await dialogue(fixture('dialogues', 'sync.txt'), cue.path('call'));
-        const missing = cue.path('nowhere', 'whisper-cli');
-        await cue.launch({
-            CUE_PROJECT: 'Interviews',
-            CUE_REHEARSE_RECORD: '1',
-            CUE_WHISPER_CLI: missing,
-            CUE_SNAPSHOT: cue.path('cue.png'),
-            CUE_REHEARSE_PARTICIPANT: call.wav('call'),
-            FAKE_DEEPGRAM_LIVE: call.live(),
-            CUE_REHEARSE_ME: call.wav('me'),
-        });
+        await cue.launch(
+            {
+                CUE_PROJECT: 'Interviews',
+                CUE_REHEARSE_RECORD: '1',
+                FAKE_DEEPGRAM_FILE_FAILS: '99',
+                CUE_SNAPSHOT: cue.path('cue.png'),
+                CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+                FAKE_DEEPGRAM_LIVE: call.live(),
+                FAKE_DEEPGRAM_FILE: call.file(),
+                CUE_REHEARSE_ME: call.wav('me'),
+            },
+            // The Workflow retries a failing step before it gives up; a second between tries keeps the case short.
+            { backend: { env: { NOTES_RETRY_SECONDS: '1' } } },
+        );
         await cue.waitLog(/Notes ready/, 180);
 
         const log = cue.sessionLog();
-        assertContains(
-            log,
-            new RegExp(`⚠︎ Couldn't improve the transcript: whisper-cli not found at ${literal(missing)} — the live transcript is kept$`),
-        );
+        assertContains(log, /⚠︎ Couldn't improve the transcript: .+ — the live transcript is kept$/);
         assertNotContains(log, /Transcript improved/);
         const steps = matches(
             log,
-            /Transcript saved|Improving transcript…|Couldn't improve the transcript|Writing summary…|Notes ready/,
+            /Transcript saved|Improving transcript…|Couldn't improve the transcript|Finding speakers…|Couldn't tell speakers apart|Writing summary…|Notes ready/,
         ).join(',');
+        // Finding the voices on the call side reads the recording again, which fails the same way: that step says so too, and moves on.
         assertEq(
             steps,
-            "Transcript saved,Improving transcript…,Couldn't improve the transcript,Writing summary…,Notes ready",
+            "Transcript saved,Improving transcript…,Couldn't improve the transcript,Finding speakers…,Couldn't tell speakers apart,Writing summary…,Notes ready",
             `the summary should still be written after the failed step: ${steps}`,
         );
+        // The step was tried again before the Workflow gave up.
+        const tries = cue.serviceRequests('deepgram-file').length;
+        if (tries < 4) fail(`the failing step should have been retried, Deepgram was asked ${tries} time(s)`);
 
         // The note has the live transcript: every line the live recognition heard, as it heard it.
         const notes = cue.readyNotes();
@@ -67,14 +68,19 @@ e2eCase(
         assertContains(notes, /^## Summary/);
         assertContains(notes, /^title: "E2E rehearsal notes"/);
 
+        // The account's note says the same: the step failed, and why.
+        const account = await (await cue.backend()).accountOf(cue.email);
+        const stored = (await account.notes())[0] ?? fail('the account should have the note');
+        const step = stored.steps.find((item) => item.id === 'transcript');
+        assertEq(step?.state, 'failed');
+        assertEq((step?.detail ?? '') !== '', true, 'the failed step should say why');
+        assertEq(stored.steps.find((item) => item.id === 'summary')?.state, 'done');
+
         // The note's page keeps its steps, with what went wrong.
-        // The reason's first line, with the sandbox's long path, is the one Vision may garble ("vhisper-cli not found at /var|…").
-        await cue.dashboardPage('Interviews/notes', /not found at/);
+        await cue.dashboardPage('Interviews/notes', /transcript is kept/);
         const page = cue.page;
-        assertContains(page, /whisper-cli/);
         assertContains(page, /Saving audio$/);
         assertContains(page, /Improving transcript$/);
-        assertContains(page, /transcript is kept/);
         assertContains(page, /Writing summary$/);
         assertContains(page, /^Summary$/);
     },

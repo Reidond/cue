@@ -11,7 +11,6 @@ import {
     fixture,
     labelsOf,
     lines,
-    needWhisper,
     print,
     summaryOf,
     turnSpeakers,
@@ -22,8 +21,6 @@ e2eCase(
         'transcript, the summary, the title (and so the file and its audio) and the participants, as whole words only; ' +
         'the others keep their labels.',
     async (cue) => {
-        needWhisper();
-
         await cue.defaults('speakerName', 'Andrii Test');
         await cue.defaults('autoAnswer', false);
         await cue.project('Library', { language: 'en' });
@@ -35,6 +32,7 @@ e2eCase(
             CUE_SNAPSHOT: cue.path('cue.png'),
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
             FAKE_DEEPGRAM_LIVE: call.live(),
+            FAKE_DEEPGRAM_FILE: call.file(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 300);
@@ -76,6 +74,13 @@ e2eCase(
         assertEq(labelsOf(speakers, 'Daniel'), 'Petro Ivanenko');
         assertEq(labelsOf(speakers, 'Karen'), 'Participant 2');
         assertEq(labelsOf(speakers, 'Samantha'), 'Andrii Test');
+
+        // The account has the new name too, not only the file on this Mac.
+        const account = await (await cue.backend()).accountOf(cue.email);
+        await cue.waitFor('the account to have the new name', 20, async () => {
+            const stored = (await account.notes())[0];
+            return stored?.participants.includes('Petro Ivanenko') === true && stored.title === 'Reading room plan with Petro Ivanenko';
+        });
 
         // The open note shows the new name.
         await cue.waitFor('the page to show the new name', 20, () => cue.dashboardShows(/^Petro Ivanenko opened the call/));
