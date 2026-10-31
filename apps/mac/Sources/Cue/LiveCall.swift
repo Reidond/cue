@@ -150,6 +150,8 @@ final class LiveCall {
     var onEvent: (CallEvent) -> Void = { _ in }
     /// The call is over for good: ended by the server, or it no longer knows it. Says why.
     var onGone: (String) -> Void = { _ in }
+    /// The socket could not be opened or broke (told once for each kind of trouble in a row), for the session log.
+    var onTrouble: (String) -> Void = { _ in }
     /// Where the microphone's and the call's audio goes; thread-safe, for the capture threads. It outlives the call (the app owns it).
     nonisolated let audio: AudioSink
 
@@ -214,6 +216,7 @@ final class LiveCall {
         let delays: [Double] = [0.5, 1, 2, 5]
         var attempt = 0
         var refresh = false
+        var lastTrouble = ""
         while live && !Task.isCancelled {
             var gone: String?
             var heard = false
@@ -236,10 +239,16 @@ final class LiveCall {
                     }
                 } catch {
                     // A refused upgrade says why in its status; anything else is a connection that broke.
-                    switch (socket.response as? HTTPURLResponse)?.statusCode {
+                    let status = (socket.response as? HTTPURLResponse)?.statusCode
+                    switch status {
                     case 404: gone = "The call is over."
                     case 401: refresh = true
                     default: break
+                    }
+                    let trouble = "\(error.localizedDescription)\(status.map { " (HTTP \($0))" } ?? "")"
+                    if trouble != lastTrouble {
+                        lastTrouble = trouble
+                        onTrouble(trouble)
                     }
                 }
                 socket.cancel(with: .goingAway, reason: nil)
@@ -247,6 +256,10 @@ final class LiveCall {
                 gone = why
             } catch {
                 // Offline, say: tried again below.
+                if error.localizedDescription != lastTrouble {
+                    lastTrouble = error.localizedDescription
+                    onTrouble(lastTrouble)
+                }
             }
             connected = false
             socket = nil

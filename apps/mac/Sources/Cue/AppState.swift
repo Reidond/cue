@@ -444,6 +444,8 @@ final class AppState: ObservableObject {
                 call.onEvent = { [weak self] event in self?.handle(event) }
                 let callID = info.callId
                 call.onGone = { [weak self] why in self?.callEnded(callID, why: why) }
+                call.onTrouble = { [weak self] trouble in self?.log.write("⚠︎ The live call's connection: \(trouble)") }
+                log.write("📞 Live call started")
                 liveCall = call
                 sendConfig()
                 for command in heldCommands { call.send(command) }
