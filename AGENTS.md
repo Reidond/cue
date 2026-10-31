@@ -40,14 +40,13 @@ the only way to use the app. Work on it in a Boat sandbox like everything else (
 - **Routing rule: no hand-written routing.** No `pathname.startsWith(…)` / `endsWith` / regex dispatch on a request's path, and no `fetch`
   in front of Elysia that switches on paths: every HTTP route is an Elysia route with typed `params` / `query` / `body` and TypeBox
   schemas, grouped by feature in a plugin under `src/routes/` (`.use()`d from `src/index.ts`), and the Worker's `fetch` is the Elysia
-  app's. Better Auth goes in with `.mount('/api/auth', …)`. Durable Objects are called through RPC methods on their stubs
-  (`stub.keepWarm()`), never `fetch` with a path; a DO's `fetch` exists only for the WebSocket upgrade, which the route hands over with
-  Elysia's own mechanism (`.mount()` on that route's path if a plain route cannot return the 101 under `cf dev`) and a one-line comment
-  saying why. The one path touch there is: `whole()` in `src/routes/sign-in.ts` puts `/api/auth` back on a mounted request, because
-  Elysia strips a mount's prefix when compiled (production) but not under `cf dev`; it routes nothing.
-- Elysia compiles ahead of time only in production (`aot: !import.meta.env.DEV`; workerd forbids `Function(…)` under `cf dev`). Better
-  Auth, WebSocket upgrades and anything that needs its body unread are mounted, never plain routes (Elysia reads the body first and
-  breaks them under `cf dev`); GET routes with no body, like the identity providers' callbacks, are plain routes.
+  app's. Better Auth is `.all('/api/auth/*', …)` handing it the untouched request. Durable Objects are called through RPC methods on
+  their stubs (`stub.keepWarm()`), never `fetch` with a path; a DO's `fetch` exists only for the WebSocket upgrade, which the route
+  hands over with Elysia's own mechanism and a one-line comment saying why (PR 5 finds it: a plain route's 101 is dropped under `cf dev`).
+- A route that must read its own body (Better Auth, raw uploads) needs a parser that claims the body: `parse: () => true`. Elysia
+  otherwise reads it first and the handler fails with "ReadableStream is locked"; `parse: 'none'` is ignored under `cf dev`. Elysia
+  compiles ahead of time only in production (`aot: !import.meta.env.DEV`; workerd forbids `Function(…)` under `cf dev`), so check a
+  route in both: `cf dev`, and `cf build --mode development` served by `vp preview`.
 - Routes return errors as `{error: {code, message, retryable}}` (`packages/contract`). The OpenAPI document is `/v1/openapi.json`.
 - Better Auth's tables are generated from the same config the Worker uses: `pnpm --filter api schema` rewrites
   `migrations/0002_better_auth.sql` (do it whenever a plugin or an auth option changes). Other migrations are plain SQL files.

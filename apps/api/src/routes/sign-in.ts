@@ -13,20 +13,10 @@ const resumeOf = (query: Record<string, unknown>) =>
         Object.entries(query).flatMap(([key, value]): [string, string][] => (SIGNATURE_PARAMS.includes(key) ? [] : [[key, String(value)]])),
     );
 
-// Elysia hands a mounted handler the request without the mount's prefix once compiled (production) but whole under `cf dev`'s dynamic mode
-// (checked with both); Better Auth wants its whole path. This only makes the two alike, it routes nothing.
-const AUTH_PATH = '/api/auth';
-function whole(request: Request): Request {
-    const url = new URL(request.url);
-    if (url.pathname.startsWith(`${AUTH_PATH}/`)) return request;
-    url.pathname = `${AUTH_PATH}${url.pathname === '/' ? '' : url.pathname}`;
-    return new Request(url, request);
-}
-
 /** Sign-in: Better Auth's OAuth server, the identity providers' callbacks, and the pages a browser sees. */
 export const signIn = new Elysia({ name: 'sign-in' })
     // A hook that rejects the new user surfaces from the identity provider's callback as a bare `403 {"message":"not_invited:EMAIL"}`
-    // (`onAPIError.errorURL` doesn't apply to it); a browser needs a page. This route is more specific than the mount below, so it wins.
+    // (`onAPIError.errorURL` doesn't apply to it); a browser needs a page. This route is more specific than the catch-all below, so it wins.
     .get(
         '/api/auth/callback/:provider',
         async ({ request }) => {
@@ -44,9 +34,10 @@ export const signIn = new Elysia({ name: 'sign-in' })
         },
         { params: t.Object({ provider: t.String() }), detail: { hide: true } },
     )
-    // The rest of /api/auth/* is Better Auth's. `.mount` hands it the untouched request: a plain `.all()` makes Elysia read the body
-    // first, and Better Auth then fails with "ReadableStream is locked".
-    .mount(AUTH_PATH, (request) => authFor().handler(whole(request)))
+    // The rest of /api/auth/* is Better Auth's, with the request untouched. Elysia reads a body before the handler unless a parser takes it,
+    // and Better Auth then fails with "ReadableStream is locked": `parse: 'none'` is ignored under `cf dev`, a parser that claims the body
+    // (and never reads it) is not.
+    .all('/api/auth/*', ({ request }) => authFor().handler(request), { parse: () => true, detail: { hide: true } })
     // The authorization endpoint sends signed-out people here with the signed OAuth query.
     .get('/login', ({ query }) => signInPage(resumeOf(query), PROVIDERS), {
         query: t.Record(t.String(), t.Unknown()),
