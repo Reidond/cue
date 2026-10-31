@@ -13,6 +13,7 @@ e2eCase("A recording goes into the active project's Notes/ and says which projec
         CUE_PROJECT: 'Interviews',
         CUE_REHEARSE_RECORD: '1',
         CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+        FAKE_DEEPGRAM_LIVE: call.live(),
         CUE_REHEARSE_ME: call.wav('me'),
     });
     await cue.waitLog(/Project: Interviews/, 10);

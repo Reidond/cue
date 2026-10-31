@@ -1,13 +1,10 @@
 import { copyFileSync } from 'node:fs';
-import { assertContains, assertNotContains, CLAUDE, dialogue, e2eCase, fixture, needWhisper, skip } from '../harness/index.ts';
+import { assertContains, assertNotContains, dialogue, e2eCase, fixture } from '../harness/index.ts';
 
 e2eCase(
     'The answer in view stays while you read it aloud: a question asked meanwhile waits in the New group under it, ' +
         'and its answer comes into view once you pause, the one you read moving to Answered.',
     async (cue) => {
-        needWhisper();
-        if (CLAUDE !== 'fake') skip('tells the answers apart by the stand-in claude’s replies');
-
         await cue.defaults('materials', [fixture('materials', 'talk.md')]);
         await cue.defaults('language', 'en');
         await cue.defaults('autoAnswer', true);
@@ -15,6 +12,7 @@ e2eCase(
         await cue.launch({
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
             CUE_REHEARSE_ME: call.wav('me'),
+            FAKE_DEEPGRAM_LIVE: call.live(),
             CUE_SNAPSHOT: cue.path('cue.png'),
             FAKE_CLAUDE_ANSWERS: JSON.stringify({
                 hives: 'We studied 48 hives.\n- Point about hives\nSource: talk.md',

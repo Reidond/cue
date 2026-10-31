@@ -33,6 +33,7 @@ e2eCase(
             CUE_REHEARSE_RECORD: '1',
             FAKE_CLAUDE_SUMMARY_DELAY: '10',
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+            FAKE_DEEPGRAM_LIVE: call.live(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Working audio: /, 150);

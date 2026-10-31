@@ -39,6 +39,7 @@ e2eCase(
             CUE_MEETING_TICK: '0.5',
             CUE_MIC_RELEASE: '4',
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+            FAKE_DEEPGRAM_LIVE: call.live(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
 

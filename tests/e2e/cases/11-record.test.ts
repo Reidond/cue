@@ -4,7 +4,6 @@ import {
     assertEq,
     assertFile,
     assertNotContains,
-    CLAUDE,
     dialogue,
     e2eCase,
     fail,
@@ -23,6 +22,7 @@ e2eCase('A two-sided rehearsal is recorded into notes with both sides, a summary
     await cue.launch({
         CUE_REHEARSE_RECORD: '1',
         CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+        FAKE_DEEPGRAM_LIVE: call.live(),
         CUE_REHEARSE_ME: call.wav('me'),
     });
     await cue.waitLog(/Transcript saved/, 120);
@@ -38,14 +38,12 @@ e2eCase('A two-sided rehearsal is recorded into notes with both sides, a summary
     assertContains(notes, /by Friday/);
     assertContains(notes, /^## Summary/);
     assertNotContains(notes, /^_…_$/, 'the summary placeholder should be replaced');
-    if (CLAUDE === 'fake') {
-        assertContains(notes, /^title: "E2E rehearsal notes"/);
-        if (!basename(notes).endsWith(' – E2E rehearsal notes.md')) {
-            fail(`the file should be renamed after the summary's title: ${basename(notes)}`);
-        }
-        const system = cue.save('summary-system.txt', cue.claudeRequests('summary-system').join(''));
-        assertContains(system, /\[Andrii Test\] is the person who recorded the call/);
-        const input = cue.save('summary-input.txt', cue.claudeRequests('summary-input').join(''));
-        assertContains(input, /\[Participant\].*report/);
+    assertContains(notes, /^title: "E2E rehearsal notes"/);
+    if (!basename(notes).endsWith(' – E2E rehearsal notes.md')) {
+        fail(`the file should be renamed after the summary's title: ${basename(notes)}`);
     }
+    const system = cue.save('summary-system.txt', cue.claudeRequests('summary-system').join(''));
+    assertContains(system, /\[Andrii Test\] is the person who recorded the call/);
+    const input = cue.save('summary-input.txt', cue.claudeRequests('summary-input').join(''));
+    assertContains(input, /\[Participant\].*report/);
 });

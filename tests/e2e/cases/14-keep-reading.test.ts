@@ -1,15 +1,13 @@
-import { assertContains, assertNotContains, CLAUDE, dialogue, e2eCase, fixture, needWhisper, skip } from '../harness/index.ts';
+import { assertContains, assertNotContains, dialogue, e2eCase, fixture } from '../harness/index.ts';
 
 e2eCase('An older answer opened to read stays open as new questions arrive under a New Question button.', async (cue) => {
-    needWhisper();
-    if (CLAUDE !== 'fake') skip('tells the answers apart by the stand-in claude’s replies');
-
     await cue.defaults('materials', [fixture('materials', 'talk.md')]);
     await cue.defaults('language', 'en');
     await cue.defaults('autoAnswer', true);
     const call = await dialogue(fixture('dialogues', 'three-questions.txt'), cue.path('call'));
     await cue.launch({
         CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+        FAKE_DEEPGRAM_LIVE: call.live(),
         CUE_SNAPSHOT: cue.path('cue.png'),
         FAKE_CLAUDE_ANSWERS: JSON.stringify({
             hives: 'We studied 48 hives.\n- Point about hives\nSource: talk.md',

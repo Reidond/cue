@@ -37,6 +37,7 @@ e2eCase('With "Record automatically" a meeting is recorded without a prompt, int
         CUE_MIC_RELEASE: '3',
         CUE_WHISPER_CLI: whisperCli,
         CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+        FAKE_DEEPGRAM_LIVE: call.live(),
         CUE_REHEARSE_ME: call.wav('me'),
     });
 

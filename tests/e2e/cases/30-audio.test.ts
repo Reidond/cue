@@ -7,7 +7,6 @@ import {
     assertFile,
     audioLength,
     audioSync,
-    CLAUDE,
     dialogue,
     e2eCase,
     fail,
@@ -32,6 +31,7 @@ e2eCase(
             CUE_PROJECT: 'Interviews',
             CUE_REHEARSE_RECORD: '1',
             CUE_REHEARSE_PARTICIPANT: call.wav('call'),
+            FAKE_DEEPGRAM_LIVE: call.live(),
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Transcript saved/, 120);
@@ -51,7 +51,7 @@ e2eCase(
         if (!lines(notes).includes(`audio: "${basename(audio)}"`)) {
             fail('the front matter should name the audio', lines(notes).slice(0, 12).join('\n'));
         }
-        if (CLAUDE === 'fake' && !basename(audio).endsWith(' – E2E rehearsal notes.m4a')) {
+        if (!basename(audio).endsWith(' – E2E rehearsal notes.m4a')) {
             fail(`the audio should be renamed with the notes: ${basename(audio)}`);
         }
 
