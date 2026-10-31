@@ -47,12 +47,20 @@ e2eCase(
         assertEq((await as('GET', '/v1/me')).body.usage.limitReached, false);
         assertEq((await as('POST', '/v1/calls', { body: { projectId: call.projectId } })).status, 201, 'a call');
         assertEq((await as('POST', `/v1/calls/${call.callId}/questions`, { body: { text: 'Why rooftops?' } })).status, 200, 'a question');
-        assertEq((await as('POST', `/v1/projects/${call.projectId}/materials`, { file: { path: fixture('materials', 'talk.md') } })).status, 200, 'a material');
+        assertEq(
+            (await as('POST', `/v1/projects/${call.projectId}/materials`, { file: { path: fixture('materials', 'talk.md') } })).status,
+            200,
+            'a material',
+        );
 
         // A limit of nothing stops everything at once; the default comes back with `null`.
         await backend.setLimit(OWNER, 'ann@cue.test', 0);
         assertEq((await as('POST', '/v1/calls', { body: { projectId: call.projectId } })).status, 402);
         await backend.setLimit(OWNER, 'ann@cue.test', null);
-        assertEq((await as('POST', '/v1/calls', { body: { projectId: call.projectId } })).status, 402, 'back on the default, which is spent');
+        assertEq(
+            (await as('POST', '/v1/calls', { body: { projectId: call.projectId } })).status,
+            402,
+            'back on the default, which is spent',
+        );
     },
 );

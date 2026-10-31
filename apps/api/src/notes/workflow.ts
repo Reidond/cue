@@ -69,7 +69,7 @@ const TEXT: Record<StepId, StepText> = {
 const LIMITED: Record<StepId, string> = {
     transcript: "the transcript wasn't improved — the live transcript is kept",
     speakers: "the speakers weren't told apart — the transcript is kept as it was",
-    names: "no names were suggested",
+    names: 'no names were suggested',
     summary: "the summary wasn't written — the transcript is kept",
 };
 
@@ -87,13 +87,24 @@ export class NotesWorkflow extends WorkflowEntrypoint<Env, NotesParams> {
 
         // `costs`: whether the step spends money for this note; one that does not run once the person's month is used up is marked failed with
         // the limit as the reason (the recording and the live transcript were saved before: they are not touched).
-        const guarded = async (id: StepId, work: (note: NoteRow) => Promise<string | null>, costs: (note: NoteRow) => boolean = () => true) => {
+        const guarded = async (
+            id: StepId,
+            work: (note: NoteRow) => Promise<string | null>,
+            costs: (note: NoteRow) => boolean = () => true,
+        ) => {
             const note = await loadNote(db, noteId);
             if (!parse<{ id: StepId }[]>(note.steps, []).some((candidate) => candidate.id === id)) return;
             if (costs(note) && (await step.do(`${id} limit`, async () => (await limitState(db, note.user_id)).over))) {
                 await step.do(`${id} limited`, async () => {
                     const kept = TEXT[id].kept;
-                    await setStep(db, noteId, id, 'failed', `Cue plan limit reached. ${kept}`.trim(), `⚠︎ Cue plan limit reached: ${LIMITED[id]}`);
+                    await setStep(
+                        db,
+                        noteId,
+                        id,
+                        'failed',
+                        `Cue plan limit reached. ${kept}`.trim(),
+                        `⚠︎ Cue plan limit reached: ${LIMITED[id]}`,
+                    );
                 });
                 return;
             }

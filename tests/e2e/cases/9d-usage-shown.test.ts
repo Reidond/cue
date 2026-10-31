@@ -17,7 +17,10 @@ interface Me {
 e2eCase(
     '/v1/me reports what a call cost this month, priced by the table: the spend, the limit, the spend by feature, and the period it counts in.',
     async (cue) => {
-        cue.standIns({ FAKE_CLAUDE_ANSWER: 'Because rooftops have fewer pesticides.', FAKE_DEEPGRAM_LIVE: JSON.stringify(['Where did you keep them?']) });
+        cue.standIns({
+            FAKE_CLAUDE_ANSWER: 'Because rooftops have fewer pesticides.',
+            FAKE_DEEPGRAM_LIVE: JSON.stringify(['Where did you keep them?']),
+        });
         const backend = await cue.backend();
         const call = await startCall(backend, 'ann@cue.test', { materials: [fixture('materials', 'talk.md')] });
         const me = async () => (await backend.call('GET', '/v1/me', call.token)).body as Me;
@@ -42,7 +45,8 @@ e2eCase(
         assertEq(after.usage.usd > 0, true, JSON.stringify(after.usage));
         assertEq(after.usage.limitReached, false);
         const features = after.usage.byFeature.map((row) => row.feature);
-        for (const feature of ['answer', 'live_transcript']) assertEq(features.includes(feature), true, `${feature} in ${JSON.stringify(features)}`);
+        for (const feature of ['answer', 'live_transcript'])
+            assertEq(features.includes(feature), true, `${feature} in ${JSON.stringify(features)}`);
         assertEq(
             after.usage.byFeature.every((row, index, rows) => index === 0 || rows[index - 1]!.usd >= row.usd),
             true,
@@ -63,7 +67,9 @@ e2eCase(
         assertEq(after.usage.periodEnd, Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
 
         // Speech is priced by the table: Deepgram's live rate, 0.0077 USD a minute.
-        const [speech] = await backend.rows("SELECT SUM(units) AS seconds, SUM(cost_micros) AS micros FROM usage WHERE feature = 'live_transcript'");
+        const [speech] = await backend.rows(
+            "SELECT SUM(units) AS seconds, SUM(cost_micros) AS micros FROM usage WHERE feature = 'live_transcript'",
+        );
         const expected = (Number(speech?.['seconds']) * 7700) / 60;
         assertBetween(Number(speech?.['micros']), expected - 2, expected + 2, 'priced at the live rate');
     },

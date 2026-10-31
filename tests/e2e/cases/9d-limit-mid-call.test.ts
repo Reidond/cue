@@ -40,7 +40,11 @@ e2eCase(
         await live.play('others', pcmOf(readFileSync(await bursts(cue.path('call.wav'), 6, [[1, 3]]))));
         await live.next('transcript.final', (event) => event.text === 'Where did you keep them?', 30);
         await new Promise((resolve) => setTimeout(resolve, 1500));
-        assertEq(live.of('question').some((event) => event.text === 'Where did you keep them?'), false, 'not listed');
+        assertEq(
+            live.of('question').some((event) => event.text === 'Where did you keep them?'),
+            false,
+            'not listed',
+        );
         assertEq(answers(), sent, 'still nothing sent to Claude');
 
         // Someone who connects now hears of the limit at once.

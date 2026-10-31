@@ -39,7 +39,10 @@ FROM usage WHERE user_id = ? AND created_at >= ? AND created_at < ?`,
         limitUsd: own ?? (Number.isFinite(stored) ? stored : DEFAULTS.defaultMonthlyLimitUsd),
         usd: row.micros / 1e6,
         audioSeconds: row.audio_seconds,
-        byFeature: ((features?.results ?? []) as { feature: string; micros: number }[]).map((feature) => ({ feature: feature.feature, usd: feature.micros / 1e6 })),
+        byFeature: ((features?.results ?? []) as { feature: string; micros: number }[]).map((feature) => ({
+            feature: feature.feature,
+            usd: feature.micros / 1e6,
+        })),
         periodStart: from * 1000,
         periodEnd: to * 1000,
     };

@@ -7,7 +7,8 @@ e2eCase(
         const backend = await cue.backend({ env: { RATE_LIMIT_REQUESTS: '6', RATE_LIMIT_PERIOD: '10', RATE_LIMIT_COSTLY_REQUESTS: '2' } });
         await backend.invite('bob@cue.test');
         const bob = (await backend.tokensFor('bob@cue.test')).access_token;
-        const projectId = (await backend.call('POST', '/v1/projects', bob, { body: { name: 'Bee talk', language: 'en' } })).body.id as string;
+        const projectId = (await backend.call('POST', '/v1/projects', bob, { body: { name: 'Bee talk', language: 'en' } })).body
+            .id as string;
         const call = await startCall(backend, 'ann@cue.test');
 
         // Ann has used 3 requests of 6 (the project, the call, …): a burst of /v1/me goes over.

@@ -28,12 +28,18 @@ e2eCase(
 
         // The month's money runs out: an alert, once.
         await backend.seedUsage(cue.email, [{ feature: 'answer', usd: 7.5 }]);
-        await cue.waitLog(/⚠︎ Cue plan limit reached: You've used \$10\.00 of your \$10\.00 Cue plan for this month\. It starts over on \w+ \d+ \(UTC\)\./, 60);
+        await cue.waitLog(
+            /⚠︎ Cue plan limit reached: You've used \$10\.00 of your \$10\.00 Cue plan for this month\. It starts over on \w+ \d+ \(UTC\)\./,
+            60,
+        );
 
         // Start Cue: no call is made, so nothing is answered.
         cue.control('start Bees');
         await new Promise((resolve) => setTimeout(resolve, 4000));
-        assertEq(cue.serviceRequests('anthropic-request').filter((request) => request.kind === 'answer' && request.maxTokens > 0).length, 0);
+        assertEq(
+            cue.serviceRequests('anthropic-request').filter((request) => request.kind === 'answer' && request.maxTokens > 0).length,
+            0,
+        );
         assertEq(cue.logCount(/Cue plan limit reached/), 1, 'the alert is once');
 
         // The owner raises the limit.

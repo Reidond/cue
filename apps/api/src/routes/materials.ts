@@ -170,7 +170,15 @@ export const materials = new Elysia({ name: 'materials' })
             parse: () => true,
             params: ProjectId,
             query: UploadQuery,
-            response: { 200: Material, 201: Material, 400: ApiErrorBody, ...errors, 402: ApiErrorBody, 429: ApiErrorBody, 502: ApiErrorBody },
+            response: {
+                200: Material,
+                201: Material,
+                400: ApiErrorBody,
+                ...errors,
+                402: ApiErrorBody,
+                429: ApiErrorBody,
+                502: ApiErrorBody,
+            },
             detail: { summary: 'Adds a file to a project: the body is the file, its type the Content-Type, ?name= its name' },
         },
     )

@@ -39,5 +39,8 @@ export const me = new Elysia({ name: 'me' }).use(authed).get(
             },
         };
     },
-    { response: { 200: Me, 401: ApiErrorBody, 429: ApiErrorBody }, detail: { summary: 'The signed-in account, its plan, limits and usage this month' } },
+    {
+        response: { 200: Me, 401: ApiErrorBody, 429: ApiErrorBody },
+        detail: { summary: 'The signed-in account, its plan, limits and usage this month' },
+    },
 );
