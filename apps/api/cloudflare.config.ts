@@ -26,6 +26,26 @@ export default defineConfig(({ mode }) => ({
         name: 'cue-api',
         compatibilityDate: '2026-10-23',
         entrypoint,
+        // The admin SPA (apps/admin) is Vite's client build, served under /admin with the single-page-app fallback. The fallback is not limited
+        // to /admin, so everything the Worker itself answers is listed here: a navigation to it must never get the SPA's index.html, and under
+        // `cf dev` an unlisted path gets Vite's own 404. Every new Worker route needs its prefix in this list.
+        assets: {
+            basePath: '/admin',
+            notFoundHandling: 'single-page-application',
+            htmlHandling: 'auto-trailing-slash',
+            runWorkerFirst: [
+                '/',
+                '/admin/v1/*',
+                '/v1/*',
+                '/api/*',
+                '/login',
+                '/login/*',
+                '/consent',
+                '/invite-only',
+                '/sign-in-failed',
+                '/.well-known/*',
+            ],
+        },
         env: {
             DB: bindings.d1(mode === 'development' ? { name: 'cue', id: DEV_DB_ID } : { name: 'cue' }),
             // User ids of disabled users: their access tokens (valid for up to 15 minutes) stop working at once.

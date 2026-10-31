@@ -149,7 +149,8 @@ export async function signInToAdmin(
         const landed = new URL(next);
         if (landed.pathname === '/invite-only') return { kind: 'not_invited', email: landed.searchParams.get('email') };
         if (landed.pathname === '/sign-in-failed') return { kind: 'failed', detail: next };
-        if (landed.pathname.startsWith('/admin')) return { kind: 'session', cookie: [...jar].map(([name, value]) => `${name}=${value}`).join('; ') };
+        if (landed.pathname.startsWith('/admin'))
+            return { kind: 'session', cookie: [...jar].map(([name, value]) => `${name}=${value}`).join('; ') };
     }
     return { kind: 'failed', detail: 'too many redirects' };
 }
