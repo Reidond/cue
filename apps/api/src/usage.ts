@@ -45,3 +45,6 @@ export function daysOf(month: string): string[] {
 /** `spent` (by day, in millionths of a dollar) laid over every day of the month. */
 export const fillDays = (month: string, spent: Map<string, number>) =>
     daysOf(month).map((date) => ({ date, usd: (spent.get(date) ?? 0) / 1e6 }));
+
+/** What reading one file with Workers AI `toMarkdown` costs, in millionths of a dollar: PDFs and Office files are free (images are not, and are not accepted). */
+export const TOMARKDOWN_MICROS_PER_FILE = 0;

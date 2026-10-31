@@ -50,6 +50,13 @@ export default defineConfig(({ mode }) => ({
             DB: bindings.d1(mode === 'development' ? { name: 'cue', id: DEV_DB_ID } : { name: 'cue' }),
             // User ids of disabled users: their access tokens (valid for up to 15 minutes) stop working at once.
             DENYLIST: bindings.kv(mode === 'development' ? { id: DEV_KV_ID } : {}),
+            // The files people add to their projects (the originals; their text is in D1).
+            MATERIALS: bindings.r2({ name: 'cue-materials' }),
+            // Workers AI `toMarkdown` reads PDF and Word files. Workers AI always runs on Cloudflare, even under `cf dev`, where its binding
+            // stops the dev server for want of a token: so the binding is left out unless AI_BINDING=1, and MARKDOWN_URL (the e2e suite's
+            // stand-in, harness/fake-providers.ts) answers in `toMarkdown`'s shape instead. A real deploy sets AI_BINDING=1.
+            AI: process.env.AI_BINDING === '1' ? bindings.ai() : false,
+            MARKDOWN_URL: bindings.text(process.env.MARKDOWN_URL ?? ''),
             BETTER_AUTH_SECRET: secret(mode, 'BETTER_AUTH_SECRET'),
             GOOGLE_CLIENT_ID: secret(mode, 'GOOGLE_CLIENT_ID'),
             GOOGLE_CLIENT_SECRET: secret(mode, 'GOOGLE_CLIENT_SECRET'),

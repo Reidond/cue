@@ -23,6 +23,7 @@
     "@sinclair/typebox": "~0.34.52",
     "better-auth": "1.7.14",
     "elysia": "1.4.30",
+    "fflate": "^0.8.2",
     "file-type": "^22.3.0",
     "jose": "^6.2.14",
     "openapi-types": "^12.1.3",

@@ -23,11 +23,15 @@
 //   /v1/listen     POST: a recorded file. One utterance per stretch of speech in it, "Second pass by Deepgram,
 //                  part N.", at its times. Noted as `deepgram-file`.
 //   /v1/projects   GET: the key check.
+//   /markdown      POST: Workers AI `toMarkdown`, for the Cue API (MARKDOWN_URL). A Word file's paragraphs or a PDF's text, one blank line
+//                  apart, as `{name, format: 'markdown', data, tokens}`; any other file as `{format: 'error'}`, the shape `toMarkdown` returns
+//                  per file. The file's name arrives in `x-file-name` (URL-encoded). Noted as `markdown-request`.
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { unzip } from './documents.ts';
 import { answer, judgement, pieces, record, summary, type Env } from '../tools/fake-replies.ts';
 
 /** The only keys the stand-ins take. */
@@ -47,6 +51,32 @@ export interface AnthropicRequest {
     /** The breakpoint on the system prompt. */
     systemCache?: { type: string; ttl?: string };
     messages: number;
+}
+
+/** What the `toMarkdown` stand-in noted about a file the Cue API sent it. */
+export interface MarkdownRequest {
+    name: string;
+    contentType: string;
+    bytes: number;
+}
+
+/** The paragraphs of a Word file, or the text of a PDF's show-text operators, as Markdown. */
+function markdownOf(name: string, file: Buffer): string | undefined {
+    try {
+        if (/\.docx$/i.test(name)) {
+            const xml = unzip(file)['word/document.xml'] ?? '';
+            const unescape = (text: string) => text.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
+            return [...xml.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)]
+                .map((paragraph) => unescape([...paragraph[0].matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((run) => run[1]).join('')))
+                .join('\n\n');
+        }
+        if (/\.pdf$/i.test(name)) {
+            return [...file.toString('latin1').matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)].map((shown) => shown[1]!.replace(/\\(.)/g, '$1')).join('\n\n');
+        }
+    } catch {
+        /* not a file of that kind */
+    }
+    return undefined;
 }
 
 /** What the Deepgram stand-in noted about a stream or a file: the query, the key, the audio. */
@@ -422,12 +452,28 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         socket.on('error', () => finish(false));
     }
 
+    async function markdown(request: IncomingMessage, response: ServerResponse): Promise<void> {
+        const file = await body(request);
+        const name = decodeURIComponent(String(request.headers['x-file-name'] ?? 'file'));
+        record(log, 'markdown-request', JSON.stringify({ name, contentType: String(request.headers['content-type'] ?? ''), bytes: file.length } satisfies MarkdownRequest));
+        const data = markdownOf(name, file);
+        json(
+            response,
+            200,
+            data === undefined
+                ? { name, format: 'error', data: '', error: 'This file could not be converted.' }
+                : { name, format: 'markdown', data, tokens: Math.ceil(data.length / 4) },
+        );
+    }
+
     const server = createServer((request, response) => {
         const url = new URL(request.url ?? '/', 'http://127.0.0.1');
         const handled =
             request.method === 'POST' && url.pathname === '/v1/messages'
                 ? anthropic(request, response)
-                : request.method === 'POST' && url.pathname === '/v1/listen'
+                : request.method === 'POST' && url.pathname === '/markdown'
+                  ? markdown(request, response)
+                  : request.method === 'POST' && url.pathname === '/v1/listen'
                   ? deepgramFile(request, response, url)
                   : request.method === 'GET' && url.pathname === '/v1/projects'
                     ? Promise.resolve(

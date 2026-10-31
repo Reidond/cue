@@ -1,9 +1,19 @@
 // Everything a case uses (see AGENTS.md › Testing): import it from '../harness/index.ts'.
-export { assertBetween, assertContains, assertEq, assertFile, assertNotContains } from './assert.ts';
+export {
+    assertBetween,
+    assertContains,
+    assertDeepEq,
+    assertEq,
+    assertFile,
+    assertNotContains,
+    assertTextContains,
+    assertTextNotContains,
+} from './assert.ts';
 export { afinfo, audioLength, audioSync, dialogue, excerpt, silence, speech, type Dialogue } from './audio.ts';
 export { e2eCase } from './case.ts';
 export { ANTHROPIC, CLAUDE, DEEPGRAM, FIXTURES, fixture } from './config.ts';
-export { FAKE_KEYS, type AnthropicRequest, type DeepgramRequest } from './fake-providers.ts';
+export { makeDocx, makePdf, makePptx, writeFile } from './documents.ts';
+export { FAKE_KEYS, type AnthropicRequest, type DeepgramRequest, type MarkdownRequest } from './fake-providers.ts';
 export {
     countLines,
     exists,

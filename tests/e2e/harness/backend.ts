@@ -4,6 +4,7 @@
 // and cases stay independent and safe to run from several checkouts at once (see AGENTS.md › Testing).
 import { type ChildProcess, spawn } from 'node:child_process';
 import { closeSync, openSync, readFileSync } from 'node:fs';
+import { basename, extname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { E2E_ROOT } from './config.ts';
@@ -23,6 +24,13 @@ import { sleep, within } from './time.ts';
 
 const API = join(E2E_ROOT, '..', '..', 'apps', 'api');
 const CF = join(API, 'node_modules', '.bin', 'cf');
+const CONTENT_TYPES: Record<string, string> = {
+    '.pdf': 'application/pdf',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.md': 'text/markdown',
+    '.txt': 'text/plain',
+};
 const DEV_DB_ID = '6a1c0e5b-3d6f-4f6e-9a57-2c1f8b7d4e90';
 
 export interface BackendOptions {
@@ -193,6 +201,51 @@ export class Backend {
     /** `GET path` with a bearer token (or none). */
     get(path: string, accessToken?: string): Promise<Response> {
         return fetch(new URL(path, this.url), { headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {} });
+    }
+
+    /**
+     * The Cue API with a bearer token: `method path`, a JSON `body` or the `file` as the body (its name in `?name=`, its type from the name,
+     * as the app uploads a material). Returns the status and the parsed JSON (or the text).
+     */
+    async call(
+        method: string,
+        path: string,
+        accessToken: string,
+        options: { body?: unknown; file?: { path: string; name?: string; contentType?: string } } = {},
+    ): Promise<{ status: number; body: any }> {
+        const headers: Record<string, string> = { authorization: `Bearer ${accessToken}` };
+        let payload: Buffer | string | undefined;
+        let url = path;
+        if (options.file) {
+            const bytes = readFileSync(options.file.path);
+            const name = options.file.name ?? basename(options.file.path);
+            headers['content-type'] = options.file.contentType ?? CONTENT_TYPES[extname(name).toLowerCase()] ?? 'application/octet-stream';
+            payload = bytes;
+            url += `${path.includes('?') ? '&' : '?'}name=${encodeURIComponent(name)}`;
+        } else if (options.body !== undefined) {
+            headers['content-type'] = 'application/json';
+            payload = JSON.stringify(options.body);
+        }
+        const response = await fetch(new URL(url, this.url), { method, headers, body: payload });
+        const text = await response.text();
+        try {
+            return { status: response.status, body: JSON.parse(text) };
+        } catch {
+            return { status: response.status, body: text };
+        }
+    }
+
+    /** Rows of a query on the backend's database (`cf d1 raw`): for checking what was stored, which the API does not show. */
+    async rows(sql: string): Promise<Record<string, unknown>[]> {
+        const ran = await exec(CF, ['d1', 'raw', DEV_DB_ID, '--local', '--persist-to', this.state, '--sql', sql], {
+            env: { ...process.env, CI: '1' },
+            cwd: API,
+            timeout: 60,
+        });
+        if (ran.code !== 0) fail(`querying the backend's database failed: ${sql}`, ran.output);
+        const [first] = JSON.parse(ran.output.slice(ran.output.indexOf('['))) as { results: { columns: string[]; rows: unknown[][] } }[];
+        const { columns = [], rows = [] } = first?.results ?? {};
+        return rows.map((row) => Object.fromEntries(columns.map((column, index) => [column, row[index]])));
     }
 
     // MARK: The admin API, as the admin SPA's browser calls it
