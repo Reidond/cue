@@ -390,7 +390,8 @@ final class RecordingStore: ObservableObject {
         var made: String?
         if callID == nil {
             do {
-                made = try await api.createCall(projectID: serverID, speaker: speaker, auto: false, micQuestions: false, questions: false).callId
+                made = try await api.createCall(projectID: serverID, speaker: speaker, auto: false, micQuestions: false, questions: false,
+                                           notesOnly: true).callId
             } catch {
                 abandon(id, error.localizedDescription)
                 return

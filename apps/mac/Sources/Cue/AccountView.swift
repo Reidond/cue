@@ -81,12 +81,23 @@ struct AccountSettings: View {
                     LabeledContent("Plan", value: me.plan.name)
                 }
                 Section {
-                    LabeledContent("Used this month", value: "\(me.usage.usd.formatted(.currency(code: "USD"))) · \(Int(me.usage.audioSeconds / 60)) min of audio")
+                    UsageBar(usage: me.usage, limit: me.limits.monthlyUsd)
                     LabeledContent("Monthly limit", value: me.limits.monthlyUsd.map { $0.formatted(.currency(code: "USD")) } ?? "None set")
+                    LabeledContent("Starts over", value: "\(me.usage.renewsText) (UTC)")
+                    LabeledContent("Audio", value: "\(Int(me.usage.audioSeconds / 60)) min")
                 } header: {
                     Text("Usage")
                 } footer: {
-                    Text("What the Cue plan spent on your calls this month, counted in US dollars from the models and speech recognition it used.")
+                    Text(me.usage.limitReached
+                        ? "You've used this month's allowance: Cue won't answer questions or write summaries until the month starts over or your limit is raised. Live transcripts and recordings are still kept."
+                        : "What the Cue plan spent on your calls this month, counted in US dollars from the models and speech recognition it used.")
+                }
+                if !me.usage.byFeature.isEmpty {
+                    Section("Where it went") {
+                        ForEach(me.usage.byFeature, id: \.feature) { item in
+                            LabeledContent(Self.name(of: item.feature), value: item.usd.formatted(.currency(code: "USD")))
+                        }
+                    }
                 }
                 Section {
                     Button("Sign Out", role: .destructive) { Task { await api.signOut() } }
@@ -105,5 +116,39 @@ struct AccountSettings: View {
         }
         .formStyle(.grouped)
         .onAppear { Task { await api.refreshMe() } }
+    }
+
+    /// What a usage feature is called for people.
+    private static func name(of feature: String) -> String {
+        switch feature {
+        case "answer": "Answers"
+        case "question_judge": "Spotting questions"
+        case "live_transcript": "Live transcript"
+        case "note_transcript": "Transcript clean-up"
+        case "note_names": "Suggested names"
+        case "notes_summary": "Summaries"
+        case "material_text": "Reading files"
+        default: feature
+        }
+    }
+}
+
+/// This month's spend against the limit: a bar that turns orange near it and red at it, with the amounts.
+private struct UsageBar: View {
+    let usage: CueMe.Usage
+    let limit: Double?
+
+    var body: some View {
+        let money = FloatingPointFormatStyle<Double>.Currency(code: "USD")
+        if let limit, limit > 0 {
+            ProgressView(value: min(usage.usd, limit), total: limit) {
+                Text("Used this month")
+            } currentValueLabel: {
+                Text("\(usage.usd.formatted(money)) of \(limit.formatted(money))").monospacedDigit()
+            }
+            .tint(usage.limitReached ? .red : (usage.usd / limit > 0.8 ? .orange : .accentColor))
+        } else {
+            LabeledContent("Used this month", value: usage.usd.formatted(money))
+        }
     }
 }

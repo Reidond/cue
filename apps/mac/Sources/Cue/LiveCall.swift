@@ -53,10 +53,12 @@ struct CallEvent: Decodable {
 }
 
 extension CueAPI {
-    /// Starts a call for a project. The settings can change later with a `config` command.
-    func createCall(projectID: String, speaker: String, auto: Bool, micQuestions: Bool, questions: Bool) async throws -> CallInfo {
+    /// Starts a call for a project. The settings can change later with a `config` command. `notesOnly`: a call just for a recording's notes, which
+    /// starts over already (nothing listens or answers) and is not stopped by the plan's limit.
+    func createCall(projectID: String, speaker: String, auto: Bool, micQuestions: Bool, questions: Bool, notesOnly: Bool = false) async throws -> CallInfo {
         let body: [String: Any] = [
             "projectId": projectID, "speaker": speaker, "auto": auto, "micQuestions": micQuestions, "questions": questions,
+            "notesOnly": notesOnly,
         ]
         let data = try await request("POST", "v1/calls", json: try JSONSerialization.data(withJSONObject: body))
         do {

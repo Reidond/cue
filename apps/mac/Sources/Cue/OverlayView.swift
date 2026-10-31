@@ -167,7 +167,7 @@ private struct StatusLabel: View {
         }
         .buttonStyle(.plain)
         .disabled(status.kind == .ready)
-        .help(status.kind == .problem ? "Open the dashboard to fix this" : status.text)
+        .help(state.planLimit ?? (status.kind == .problem ? "Open the dashboard to fix this" : status.text))
         .animation(.smooth(duration: 0.2), value: status.text)
     }
 }

@@ -159,6 +159,8 @@ final class AppState: ObservableObject {
     @Published private(set) var readingMaterials = false
     /// Between Start Cue and Stop Cue: the overlay is up and Cue listens for questions.
     @Published private(set) var cueRunning = false
+    /// Set while the month's allowance is spent: the sentence the backend worded (`limit_reached`). Nothing is answered meanwhile.
+    @Published private(set) var planLimit: String?
     /// The microphone and call audio are open: while Cue runs, or while a call is recorded.
     private var capturing = false
 
@@ -247,6 +249,7 @@ final class AppState: ObservableObject {
     /// One line for the control bar: what Cue is doing, or the first thing that needs attention.
     var status: (text: String, kind: StatusKind) {
         if readingMaterials { return ("Reading materials…", .working) }
+        if planLimit != nil { return ("Cue plan limit reached", .problem) }
         if !speech.ok { return (speech.detail, speech.working ? .working : .problem) }
         if !claude.ok { return (claude.detail, claude.working ? .working : .problem) }
         if !call.ok && !mic.ok { return ("No audio", .problem) }
@@ -262,6 +265,7 @@ final class AppState: ObservableObject {
     func start() {
         api.start()
         // Signing out (or losing the session) ends listening: the overlay goes, and so does anything that would answer.
+        api.$me.sink { [weak self] me in self?.usageChanged(me) }.store(in: &subscriptions)
         api.$phase.removeDuplicates().sink { [weak self] phase in if phase == .signedOut { self?.stopCue() } }.store(in: &subscriptions)
         micCapture.onSamples = { [micMeter, audioSink, audioRecorder] samples, time in
             micMeter.add(samples)
@@ -429,7 +433,11 @@ final class AppState: ObservableObject {
                 guard generation == callGeneration else { return }
                 claude = ServiceStatus(ok: false, detail: error.localizedDescription)
                 speech = ServiceStatus(ok: false, detail: error.localizedDescription)
-                log.write("⚠︎ Couldn't start the live call: \(error.localizedDescription)")
+                if case CueAPIError.limitReached(let why) = error {
+                    reachedLimit(why)
+                } else {
+                    log.write("⚠︎ Couldn't start the live call: \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -572,6 +580,33 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - The plan's limit
+
+    /// The month's allowance is spent: an alert once per time it runs out (`⚠︎ Cue plan limit reached: …` in the session log), the overlay says so,
+    /// and the live call stops answering by itself (the backend refuses). The transcript goes on, and so do the notes' live transcript.
+    private func reachedLimit(_ message: String) {
+        guard planLimit == nil else { return }
+        planLimit = message
+        let alert = NSAlert()
+        alert.messageText = "Cue plan limit reached"
+        alert.informativeText = message
+        alert.show(logging: log)
+    }
+
+    /// What `/v1/me` says about the allowance: it ran out between calls, or it has room again (a new month, a raised limit).
+    private func usageChanged(_ me: CueMe?) {
+        guard let me else {
+            planLimit = nil
+            return
+        }
+        if me.usage.limitReached {
+            reachedLimit(me.limitMessage)
+        } else if planLimit != nil {
+            planLimit = nil
+            log.write("🔓 Cue plan has room again")
+        }
+    }
+
     // MARK: - What the live call says
 
     private func handle(_ event: CallEvent) {
@@ -599,11 +634,19 @@ final class AppState: ObservableObject {
         case "prepared":
             preparedFound(event)
         case "answer.delta":
+            if planLimit != nil {
+                planLimit = nil
+                log.write("🔓 Cue plan has room again")
+            }
             if let id = event.questionId, let text = event.text { appendDelta(id, text) }
         case "answer.done":
             if let id = event.questionId { finish(id, error: event.error) }
         case "error":
-            log.write("⚠︎ \(event.message ?? "The live call had a problem")")
+            if event.code == "limit_reached" {
+                reachedLimit(event.message ?? "You've reached your Cue plan's limit for this month.")
+            } else {
+                log.write("⚠︎ \(event.message ?? "The live call had a problem")")
+            }
         default:
             break
         }

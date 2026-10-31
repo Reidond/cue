@@ -20,14 +20,39 @@ struct CueMe: Decodable, Equatable {
         let monthlyUsd: Double?
     }
     struct Usage: Decodable, Equatable {
+        struct Feature: Decodable, Equatable {
+            let feature: String
+            let usd: Double
+        }
         let month: String
         let usd: Double
         let audioSeconds: Double
+        /// The month's money is all spent: nothing that costs money starts until it starts over or the limit is raised.
+        let limitReached: Bool
+        /// Dollars by feature, dearest first.
+        let byFeature: [Feature]
+        /// Milliseconds since the epoch: the period's start, and when it starts over.
+        let periodStart: Double
+        let periodEnd: Double
+
+        var renews: Date { Date(timeIntervalSince1970: periodEnd / 1000) }
+        /// "November 1": the day the month starts over, in UTC, as the backend words it.
+        var renewsText: String {
+            Date.FormatStyle(date: .omitted, time: .omitted, locale: Locale(identifier: "en_US"), timeZone: TimeZone(identifier: "UTC")!)
+                .month(.wide).day().format(renews)
+        }
     }
     let account: Account
     let plan: Plan
     let limits: Limits
     let usage: Usage
+
+    /// The sentence for a spent allowance, as the backend words it (`limit_reached`'s message).
+    var limitMessage: String {
+        let money = FloatingPointFormatStyle<Double>.Currency(code: "USD")
+        let limit = (limits.monthlyUsd ?? usage.usd).formatted(money)
+        return "You've used \(usage.usd.formatted(money)) of your \(limit) Cue plan for this month. It starts over on \(usage.renewsText) (UTC)."
+    }
 }
 
 /// Why a call to the Cue API didn't work.
@@ -38,6 +63,8 @@ enum CueAPIError: LocalizedError {
     case cancelled
     /// The session is over (refresh token revoked or expired, user disabled): sign in again.
     case ended(String)
+    /// The month's allowance is spent (`limit_reached`, 402): says so as the backend worded it.
+    case limitReached(String)
     /// The API said no.
     case server(String)
     /// The API couldn't be reached.
@@ -48,7 +75,7 @@ enum CueAPIError: LocalizedError {
         case .notInvited(let email):
             "\(email ?? "That account") hasn't been invited to Cue yet. Cue is invite-only: ask whoever runs it to invite that email address, or sign in with another account."
         case .cancelled: "Sign-in was cancelled."
-        case .ended(let why), .server(let why): why
+        case .ended(let why), .server(let why), .limitReached(let why): why
         case .network(let why): "Couldn't reach Cue: \(why)"
         }
     }
@@ -335,6 +362,10 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
                 continue
             }
             if status == 401 { throw CueAPIError.ended(Self.message(in: data) ?? "Your session has ended. Sign in to Cue again.") }
+            if status == 402, Self.code(in: data) == "limit_reached" {
+                throw CueAPIError.limitReached(Self.message(in: data) ?? "You've reached your Cue plan's limit for this month.")
+            }
+            if status == 429 { throw CueAPIError.server(Self.message(in: data) ?? "Too many requests too quickly. Wait a moment and try again.") }
             guard (200..<300).contains(status) else { throw CueAPIError.server(Self.message(in: data) ?? "Cue answered \(status).") }
             return data
         }
@@ -415,6 +446,10 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
         } catch {
             throw CueAPIError.network(error.localizedDescription)
         }
+    }
+
+    private static func code(in data: Data) -> String? {
+        ((try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? [String: Any])?["code"] as? String
     }
 
     private static func message(in data: Data) -> String? {
