@@ -267,9 +267,14 @@ export class Cue {
         return `${this.#name}-${process.pid}@cue.test`.toLowerCase().replace(/[^a-z0-9@.-]/g, '-');
     }
 
-    /** Whether Cue has a refresh token saved (it signed in, and has not signed out), where it keeps it under CUE_HOME. */
+    /** The refresh token Cue keeps under CUE_HOME while signed in (it signed in, and has not signed out); undefined otherwise. */
+    get refreshToken(): string | undefined {
+        return existsJson(this.keysFile)['cueRefreshToken'];
+    }
+
+    /** Whether Cue has a refresh token saved, as it has between signing in and signing out. */
     get signedIn(): boolean {
-        return Boolean(existsJson(this.keysFile)['cueRefreshToken']);
+        return Boolean(this.refreshToken);
     }
 
     /**

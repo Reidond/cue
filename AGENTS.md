@@ -14,6 +14,8 @@ The repository is a Vite+ (`vp`) pnpm monorepo:
 package.json, pnpm-workspace.yaml   # apps/*, packages/*, tests/e2e; pnpm-lock.yaml is the only lockfile
 vite.config.ts                      # the one lint (oxlint) and fmt (oxfmt) configuration, overrides per package
 apps/mac/                           # the Swift app: Package.swift, Sources/Cue, Resources, scripts/build.sh
+apps/api/                           # the Cue API: an Elysia Worker on Cloudflare (cloudflare.config.ts, src/, migrations/, scripts/)
+packages/contract/                  # TypeBox schemas of the API's requests and responses
 tests/e2e/                          # the end-to-end suite, a workspace package
 scripts/changelog.sh                # release notes; repo-wide, used by the release workflow
 docs/                               # plan.md (the app), backend.md (the backend)
@@ -26,6 +28,31 @@ docs/                               # plan.md (the app), backend.md (the backend
 - Lint and format settings live only in the root `vite.config.ts`; add package
   rules as `lint.overrides` / `fmt.overrides` there, not as config files in packages.
 - TypeScript is 7 (`typescript@^7`); type-aware linting runs on its native compiler (tsgo).
+
+## The backend (`apps/api`)
+
+Cue is a client of its own Cloudflare backend (`docs/backend.md` is the design). Signing in (Google or GitHub, invite-only) is
+the only way to use the app. Work on it in a Boat sandbox like everything else (`cf dev`, `cf build`, installs).
+
+- Elysia on Cloudflare Workers, Better Auth with `@better-auth/oauth-provider` (the backend is an OAuth 2.1 server), D1 and KV.
+  The toolchain has three settings that must stay: the `vite@*` override and `autoInstallPeers: false` in `pnpm-workspace.yaml`, and
+  no `vite` dependency in `apps/api` (`node apps/api/scripts/check-vite.ts` fails when `cf` would use upstream Vite; CI runs it).
+- Elysia compiles ahead of time only in production (`aot: !import.meta.env.DEV`). Better Auth, WebSocket upgrades and anything that
+  needs its body unread go through `.mount()`, never a normal route (Elysia reads the body first and breaks them under `cf dev`).
+- Routes return errors as `{error: {code, message, retryable}}` (`packages/contract`). The OpenAPI document is `/v1/openapi.json`.
+- Better Auth's tables are generated from the same config the Worker uses: `pnpm --filter api schema` rewrites
+  `migrations/0002_better_auth.sql` (do it whenever a plugin or an auth option changes). Other migrations are plain SQL files.
+- Types of the Worker's bindings come from `cf workers types` (`apps/api/.cloudflare/types`, git-ignored): run
+  `pnpm --filter api types` before `vp check` in a fresh checkout (CI does).
+- Secrets and endpoints are in `apps/api/cloudflare.config.ts`. Under `cf dev` the secrets are text bindings read from the environment
+  (`BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, …) with throwaway defaults, so there is no `.dev.vars` to keep apart; `IDP_URL` repoints both
+  identity providers at a stand-in, `PUBLIC_URL` is the issuer, `ACCESS_TOKEN_SECONDS` the access token's life (900), `PORT` and
+  `CUE_STATE_DIR` the dev server's port and persisted state. Nothing is deployed from here: `pnpm --filter api deploy:dry` only.
+- The owner's script: `pnpm --filter api invite EMAIL` (invite), `… EMAIL --disable` (disable: banned, tokens revoked, on the KV
+  denylist so access tokens stop working at once), `… --list`. It works on the local database (`pnpm --filter api migrate` first); with
+  `--remote` it goes through `cf d1 raw` and `cf kv keys` to the deployed one, finding it by name (`CUE_D1_ID` / `CUE_KV_ID` name them
+  when that fails). The remote path has not run against a real account yet. A user is invited or an `ADMIN_EMAILS` address
+  (always invited, the `admin` role); only a provider-verified email may sign in.
 
 ## Cloud sandboxes (Boat)
 
@@ -97,6 +124,9 @@ This rule is strict and has no exceptions.
     call (someone's conversation) never goes into the repository either: case 84
     reads one from `E2E_REAL_CALL=path` (any recording macOS can read, a screen
     recording's `.mov` too) and skips without it;
+  - Google and GitHub sign-in: `tests/e2e/harness/fake-idp.ts` serves both providers' endpoints from the case's process (the backend
+    reaches it through `IDP_URL`) and approves as whoever the case chose with `backend.idp.approveAs(email)`; nothing else of sign-in is
+    faked;
   - system sources that need the user's permission or a live person (the
     microphone, call audio, the calendar database, which apps use the
     microphone, the answer to a notification): an environment hook feeds the
@@ -122,6 +152,28 @@ This rule is strict and has no exceptions.
   overlay. Call `needWindowSnapshots()` or `needOverlaySnapshots()` yourself
   before reading a snapshot another way.
 
+### The backend in a case
+
+Cue is for signed-in people, so every case that launches the app runs against the real backend: `apps/api` under `cf dev`, with
+local D1 and KV, started by the case.
+
+- **Each case has its own backend** (`cue.backend()`, `tests/e2e/harness/backend.ts`; `cue.launch()` starts it for you): its own port,
+  its own database in the case's folder, its own stand-in sign-in and, from PR 5, the Anthropic and Deepgram stand-ins of
+  `fake-providers.ts` as its upstreams (`ANTHROPIC_URL`, `DEEPGRAM_URL` in the Worker's environment). The alternative, one backend for
+  the whole run, would fix what the backend calls upstream when it starts; a case could not say what Anthropic or Deepgram answer
+  without a router in between that knows which user is which case. Per case it is simply what the stand-ins of that case say, and
+  cases stay independent and safe to run from several checkouts at once (ports are free ones, state is under `E2E_WORK`). The price is
+  `cf dev`'s start, about 6 s a case (dependencies are optimized once per checkout, the first case waits longer).
+- `cue.launch()` signs in: it invites `cue.email`, makes the stand-in approve as them, launches Cue with `CUE_API_URL` and
+  `CUE_WEB_AUTH=headless`, sends `signin` and waits for `🔑 Signed in to Cue as …`. A relaunch finds its refresh token and signs in by
+  itself. `cue.launch({…}, { signIn: false })` launches signed out, for a case that drives the sign-in; `{ backend: {…} }` gives
+  `cue.backend()` its options (`accessTokenSeconds`, `adminEmails`, `env`). `cue.refreshToken` is the token Cue keeps, `cue.signedIn`
+  whether it has one.
+- The backend's own cases need no app: `node tests/e2e/run.ts --no-app 95 96 97` builds nothing, needs no Swift tools, and runs on
+  Linux (a Boat sandbox) too. They use `backend.tokensFor(email)`, `backend.signInAs(email, { provider, verified })`,
+  `backend.refresh(token)`, `backend.revoke(token)`, `backend.get(path, accessToken)`, `backend.invite(email)` and
+  `backend.disable(email)` (the owner's script), the stand-in `backend.idp` and `backend.log` (the Worker's output).
+
 ### Running the cases
 
 The suite is TypeScript run by Node 26 or later, which strips the types
@@ -130,6 +182,7 @@ itself: no build step, no transpiler, no runtime packages.
 ```bash
 node tests/e2e/run.ts                  # build the app, then run every case
 node tests/e2e/run.ts --no-build 4 5   # the existing build; cases whose name starts with 4 or 5
+node tests/e2e/run.ts --no-app 95-     # no app at all: only cases about the backend (they run on Linux, in a Boat sandbox)
 node tests/e2e/run.ts --real-claude 45 # the real claude CLI instead of the stand-in
 node tests/e2e/run.ts --real-anthropic --real-deepgram 7 8   # the real cloud providers, keys from the keychain
 node tests/e2e/run.ts --keep           # keep every sandbox (a failed case always keeps its own)
@@ -151,7 +204,7 @@ windows stay behind all others, where snapshots still capture them.
 Each case is a TypeScript file, `tests/e2e/cases/NN-name.test.ts`, numbered
 by feature area (`0x` CLI and launch, `1x` prompter and recording, `2x`
 projects and dashboard, `3x` call audio, `4x` second-pass transcript, `5x`
-speakers, `6x` calendar, `7x` the Anthropic API and Settings › Providers, `8x` Deepgram). It declares one test, whose title says the
+speakers, `6x` calendar, `7x` the Anthropic API and Settings › Providers, `8x` Deepgram, `9x` signing in and the backend). It declares one test, whose title says the
 behaviour it checks:
 
 ```ts
@@ -248,10 +301,13 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_SNAPSHOT_METHOD=m` | How `CUE_SNAPSHOT` takes them: `desktop` (the default: each window over the desktop picture alone, so its glass refracts real pixels yet no other window covers it or shows through), `window` (the window alone: the overlay's glass over nothing), `display` (what's on screen behind the window now, other apps included, minus whatever is in front of it) or `offscreen` (the fallback, forced). |
 | `CUE_APPEARANCE=light\|dark` | Use this appearance instead of the system's. |
 | `CUE_PROJECT=name` | Make this project active at launch, creating it if there is none by that name. |
-| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `download speakers` (Download on Home's Speaker models row), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|providers\|calendar` (Settings on that tab), `provider NAME` (a provider picked in Settings › Providers: `claudeCode`, `anthropicAPI`, `whisper`, `deepgram`), `key anthropic\|deepgram [KEY]` (a key pasted into its field and saved; without one, Remove), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
+| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `download speakers` (Download on Home's Speaker models row), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|account\|providers\|calendar` (Settings on that tab), `provider NAME` (a provider picked in Settings › Providers: `claudeCode`, `anthropicAPI`, `whisper`, `deepgram`), `key anthropic\|deepgram [KEY]` (a key pasted into its field and saved; without one, Remove), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes), `signin` (Sign In on Home) and `signout` (Sign Out in Settings › Account). Until someone is signed in only `signin`, `signout`, `settings`, `page`, `size`, `provider` and `key` do anything (the rest log `⚠︎ Sign in to Cue first (…)`). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
 | `CUE_CALENDAR_EVENTS=file.json` | Read the calendar from this file instead of EventKit (no permission asked), again on every check: a JSON array of `{title, start, end}` (ISO 8601) with optional `id`, `series` (shared by a recurring event's occurrences), `calendar` (name), `url`, `location`, `notes`, `attendees` (names), `recurring`. |
 | `CUE_MIC_APPS=file` | The bundle IDs using the microphone right now, one per line, read on every check instead of Core Audio's process list. |
 | `CUE_MEETING_TICK=s` / `CUE_MIC_RELEASE=s` | Check for calls every `s` seconds instead of 5; stop a call's recording once the call app has been off the microphone for `s` seconds instead of 60. |
+| `CUE_API_URL=url` | The Cue API (`CueAPI.baseURL`, default `https://api.cue.app`): the backend a case runs. |
+| `CUE_WEB_AUTH=headless` | Sign in without the browser sheet: `CueAPI` follows the authorize URL with `URLSession` (cookies, the sign-in page's Google button) up to the redirect back to the app, which it keeps. |
+| `CUE_ME_TICK=s` | Read the account (`/v1/me`: usage, still allowed?) every `s` seconds instead of 300; a signed-out Cue with a saved refresh token tries again at the same pace. |
 | `CUE_ALLOW_CAPTURE=1` | Let screenshots see the overlay. |
 | `CUE_SHOW_SETTINGS=1` | Open Settings at launch. |
 | `CUE_BACKGROUND=1` | Stay out of the way of whoever is using the Mac (`cue.launch` sets it for every case): Cue never activates itself or takes keyboard focus, and has no Dock icon, menu bar icon or hot keys; its windows sit behind every other window — just above the desktop picture, under the desktop's icons, in every Space — where `CUE_SNAPSHOT` still captures each one alone (drawn as an inactive app's window). An alert goes only to the session log (`⚠︎ …`) instead of waiting for a click. |
@@ -280,6 +336,8 @@ or `⚠︎ Couldn't improve the transcript: …`, `👥 Finding speakers…`,
 `✅ Speakers: N …` or `⚠︎ Couldn't tell speakers apart: …`, `✍️ Writing summary…`,
 `💡 Suggested name: LABEL → NAME`, `✏️ Renamed “OLD” to “NEW” in …`,
 `👥 Speaker models downloaded: … MB`,
+`🔑 Signed in to Cue as EMAIL`, `🔑 Signed out of Cue` (Sign Out, or after `⚠︎ Your Cue session ended: …`),
+`🔑 Cue access refreshed`, `⚠︎ Not invited: EMAIL`, `⚠︎ Couldn't sign in to Cue: …`, `⚠︎ Sign in to Cue first`,
 `📝 Notes ready: …`, `📅 Recording “Title” into Project`, `🔔 Record “Title”?`
 for every notification, `⚠︎ Nothing was recorded: …` for every alert,
 `🧐 Question judge ready: Claude Haiku` or

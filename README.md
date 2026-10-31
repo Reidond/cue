@@ -67,7 +67,10 @@ brew install whisper-cpp
 open apps/mac/build/Cue.app
 ```
 
-Cue opens its dashboard. On **Home**:
+Cue opens its dashboard. Cue is for invited people: **Home** first shows **Sign In**, with Google or GitHub (the account your invitation
+went to; if it isn't on the list, Cue says so), and nothing else works until it succeeds. Cue's backend (`apps/api`, on Cloudflare) does
+the signing in, and later the listening, answering and note-taking; **Settings › Account** shows who is signed in, this month's usage,
+and Sign Out. Then, on **Home**:
 
 1. **Download** the speech model (1.6 GB, once) and the speaker models
    (22 MB; otherwise the first recording downloads them), and allow **Microphone** and
@@ -306,10 +309,14 @@ only for the type check):
 ```bash
 node tests/e2e/run.ts                 # build, then run every case
 node tests/e2e/run.ts --no-build 1    # only cases whose name starts with 1
+node tests/e2e/run.ts --no-app 95-    # the backend's own cases: no app needed, they run on Linux too
 node tests/e2e/run.ts --real-claude   # use the real Claude Code instead of the stand-in
 node tests/e2e/run.ts --real-anthropic --real-deepgram 7 8   # the real cloud providers
 pnpm install && vp check              # format, lint and type-check the TypeScript (Vite+)
 ```
+
+Every case that launches Cue runs against its own copy of the backend (`apps/api` under `cf dev`, local D1) with a stand-in for Google
+and GitHub sign-in, and signs in first (see `AGENTS.md` › The backend in a case).
 
 The cloud providers have stand-ins too, served from the case itself; the real
 ones need keys, which the runner takes from your login keychain. Add each once,
@@ -367,8 +374,10 @@ CUE_HOME=$(mktemp -d) CUE_NO_LIVE_AUDIO=1 CUE_APPEARANCE=dark CUE_SNAPSHOT=/tmp/
   apps/mac/build/Cue.app/Contents/MacOS/Cue    # /tmp/cue-dashboard.png; /tmp/cue.png is captured once Start Cue shows it
 ```
 
-`CUE_HOME=dir` keeps all files and settings in `dir` (API keys too, in
-`dir/Keychain.json`, instead of the keychain), `CUE_CLAUDE_BIN` swaps in
+`CUE_HOME=dir` keeps all files and settings in `dir` (API keys and the sign-in's refresh token too, in
+`dir/Keychain.json`, instead of the keychain), `CUE_API_URL` points Cue at another backend (the default is `https://api.cue.app`),
+`CUE_WEB_AUTH=headless` signs in without the browser sheet (the redirects followed by hand), `CUE_ME_TICK` sets how often (seconds)
+Cue reads its account again, `CUE_CLAUDE_BIN` swaps in
 another `claude` and `CUE_WHISPER_CLI` another `whisper-cli` for the second
 pass, `CUE_ANTHROPIC_URL` and `CUE_DEEPGRAM_URL` point Cue at other servers for
 the Anthropic API and Deepgram, `CUE_SPEAKER_MODELS=dir` keeps the speaker models in `dir`,
@@ -377,7 +386,7 @@ the Anthropic API and Deepgram, `CUE_SPEAKER_MODELS=dir` keeps the speaker model
 (`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
 `ask TEXT`, `timestamp 00:00:12`, `assign EVENT | PROJECT`,
 `notification record|dismiss`, `rename NAME | NEW`, `apply LABEL`,
-`download speakers`, `show TEXT`, `newest`, `prepare`, `record`, `settings providers`,
+`download speakers`, `show TEXT`, `newest`, `prepare`, `record`, `settings providers`, `signin`, `signout`,
 `provider deepgram`, `key anthropic KEY`, `size 820 700`; see `AGENTS.md`) and keeps notifications in the
 session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` reads the
 calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs using the

@@ -56,6 +56,13 @@ jobs:
           node-version: latest
           cache: true
 
+      - name: Worker toolchain (cf must build with Vite+)
+        run: node apps/api/scripts/check-vite.ts
+
+      - name: Worker types
+        working-directory: apps/api
+        run: ./node_modules/.bin/cf workers types
+
       - name: Check (format, lint, types)
         run: vp check
 
