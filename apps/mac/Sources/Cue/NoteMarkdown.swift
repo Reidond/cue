@@ -85,7 +85,10 @@ enum NoteMarkdown {
         for line in tail.components(separatedBy: "\n") {
             if let match = line.firstMatch(of: #/^\*\*(\d+):(\d{2}):(\d{2}) · (.+)\*\*$/#) {
                 flush()
-                let seconds = (Double(match.1) ?? 0) * 3600 + (Double(match.2) ?? 0) * 60 + (Double(match.3) ?? 0)
+                let hours: Double = Double(match.1) ?? 0
+                let minutes: Double = Double(match.2) ?? 0
+                let secs: Double = Double(match.3) ?? 0
+                let seconds: Double = hours * 3600 + minutes * 60 + secs
                 current = (seconds, String(match.4), [])
             } else if current != nil {
                 if line.trimmingCharacters(in: .whitespaces).isEmpty { flush() } else { current?.lines.append(line) }
