@@ -53,6 +53,17 @@ e2eCase('Projects are kept in the account with all their settings, and each pers
     assertEq(listed[0]?.namesAndTerms, 'Varroa, Kyiv; Linden.\nTetiana Kovalenko');
     assertEq(listed[0]?.lastUsedAt ?? undefined, 1_700_000_000_000);
 
+    // What the Mac app sends after an edit: all the fields, times with fractions of a millisecond.
+    const full = await backend.call('PATCH', `/v1/projects/${project.id}`, a, {
+        body: { name: 'Bees', occasion: '', language: 'pl', namesAndTerms: '', lastUsedAt: 1_700_000_001_234.567 },
+    });
+    assertEq(full.status, 200, 'a full update');
+    assertEq(
+        (await backend.call('PATCH', `/v1/projects/${project.id}`, a, { body: { createdAt: 1 } })).status,
+        400,
+        'a field that cannot be changed',
+    );
+
     // Another person's view: nothing of Ann's, and her project's address finds nothing.
     assertEq((await backend.call('GET', '/v1/projects', b)).body.projects.length, 0, "Bob sees none of Ann's projects");
     await backend.call('POST', '/v1/projects', b, { body: { name: 'Bob only' } });
