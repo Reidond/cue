@@ -4,6 +4,7 @@ import {
     assertBetween,
     assertContains,
     assertEq,
+    assertTurnsAt,
     assertFile,
     audioLength,
     audioSync,
@@ -76,12 +77,9 @@ e2eCase(
         if (!sync.ok) fail('the two sides should be in sync', sync.output);
         print(sync.output);
 
+        // The transcript's timestamps are times in the audio: each turn starts where the timeline puts its line.
         print(heardReport(call.timeline, cue.serviceRequests('deepgram-file')));
-        // The transcript's timestamps are times in the audio (timeline: 0.50 call, 5.35 me, 9.24 call, 12.48 me).
-        assertContains(notes, /^\*\*00:00:00 · Participant\*\*$/);
-        assertContains(notes, /^\*\*00:00:05 · Andrii Test\*\*$/);
-        assertContains(notes, /^\*\*00:00:09 · Participant\*\*$/);
-        assertContains(notes, /^\*\*00:00:12 · Andrii Test\*\*$/);
+        assertTurnsAt(notes, call.timeline, ['Participant', 'Andrii Test', 'Participant', 'Andrii Test']);
 
         // The mixed audio went up with the recording: the account has it for playing, and serves it in ranges.
         const backend = await cue.backend();

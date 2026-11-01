@@ -1,6 +1,7 @@
 import {
     assertContains,
     assertEq,
+    assertTurnsAt,
     assertFile,
     assertNotContains,
     countLines,
@@ -52,7 +53,7 @@ e2eCase(
         await cue.waitLog(/✅ Transcript improved: [0-9]+ segments \([0-9.]+ s for 0:[0-9]{2} of audio\)/, 1);
 
         // The second pass's words («п'ятниці» with its apostrophe), each line at the moment it was said in
-        // the recording (timeline: 0.50 call, 6.63 me, 12.88 call, 17.28 me, 20.66 call), both speakers.
+        // the recording (each turn where the timeline puts its line), both speakers.
         const notes = cue.readyNotes();
         assertFile(notes);
         print(heardReport(call.timeline, cue.serviceRequests('deepgram-file')));
@@ -60,11 +61,7 @@ e2eCase(
         assertContains(notes, /до п['’ʼ]ятниці/);
         assertContains(notes, /узгодженості даних/);
         assertNotContains(notes, /дотатниці|у згодженості/, "the live recognition's mistakes should be replaced");
-        assertContains(notes, /^\*\*00:00:00 · Учасник\*\*$/);
-        assertContains(notes, /^\*\*00:00:06 · Андрій Тест\*\*$/);
-        assertContains(notes, /^\*\*00:00:12 · Учасник\*\*$/);
-        assertContains(notes, /^\*\*00:00:17 · Андрій Тест\*\*$/);
-        assertContains(notes, /^\*\*00:00:20 · Учасник\*\*$/);
+        assertTurnsAt(notes, call.timeline, ['Учасник', 'Андрій Тест', 'Учасник', 'Андрій Тест', 'Учасник']);
         assertEq(countLines(notes, /^\*\*[0-9]{2}:[0-9]{2}:[0-9]{2} · /), 5, 'each line of the call should be its own turn');
 
         // How the backend asked Deepgram: one request per side, the owner's key, Nova-3, the project's language, its terms, voices told apart on the call side only.

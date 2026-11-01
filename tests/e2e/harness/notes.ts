@@ -1,5 +1,6 @@
 // Reading a note Cue wrote: its summary, and who its transcript says said each line of a dialogue.
 import { lines } from './files.ts';
+import { fail } from './results.ts';
 
 /** A note's summary: from its title to the transcript marker (without the marker), as text. */
 export function summaryOf(notes: string): string {
@@ -68,4 +69,29 @@ export function heardReport(timeline: string, heard: { side: string; seconds: nu
             return `${request.side} (${fixed(request.seconds)} s): ${stretches}`;
         }),
     ].join('\n');
+}
+
+/**
+ * That the transcript has a turn under each label (`labels`, one per line of the timeline, in the order they start) within `tolerance` seconds of
+ * where the timeline puts the line: the timeline is this machine's own (its voices speak at their own pace), the turns' clock is the audio's.
+ */
+export function assertTurnsAt(notes: string, timeline: string, labels: string[], tolerance = 1.5): void {
+    const turns = lines(notes).flatMap((line) => {
+        const turn = /^\*\*([0-9]{2}:[0-9]{2}:[0-9]{2}) · (.+)\*\*$/.exec(line);
+        return turn ? [{ time: seconds(turn[1] ?? ''), label: turn[2] ?? '' }] : [];
+    });
+    const starts = lines(timeline)
+        .map((row) => Number(row.split('\t')[0]))
+        .filter((start) => Number.isFinite(start))
+        .toSorted((a, b) => a - b);
+    if (starts.length !== labels.length) fail(`the timeline has ${starts.length} lines, not ${labels.length}`, timeline);
+    labels.forEach((label, index) => {
+        const start = starts[index] ?? 0;
+        if (!turns.some((turn) => turn.label === label && Math.abs(turn.time - start) <= tolerance)) {
+            fail(
+                `line ${index + 1} of the call (at ${start.toFixed(2)} s) should start a turn of ${label}`,
+                turns.map((turn) => `${turn.time} ${turn.label}`).join('\n'),
+            );
+        }
+    });
 }

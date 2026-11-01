@@ -202,7 +202,7 @@ function samplesOf(wav: Buffer): { rate: number; samples: Float32Array } | undef
     return undefined;
 }
 
-/** Stretches of speech, in seconds: 20 ms frames well above silence, pauses under half a second bridged. */
+/** Stretches of speech, in seconds: 20 ms frames well above silence, pauses under a second bridged (a dialogue leaves 1.2 s between lines; a voice pauses at a comma). */
 function stretches(rate: number, samples: Float32Array): [number, number][] {
     const frame = Math.round(rate / 50),
         found: [number, number][] = [];
@@ -213,7 +213,7 @@ function stretches(rate: number, samples: Float32Array): [number, number][] {
         const end = Math.min(samples.length, (index + 1) * frame);
         for (let at = index * frame; at < end; at++) sum += samples[at]! * samples[at]!;
         if (Math.sqrt(sum / (end - index * frame)) < 0.01) continue;
-        if (start !== undefined && index - last > 25) {
+        if (start !== undefined && index - last > 50) {
             if (last + 1 - start >= 15) found.push([start / 50, (last + 1) / 50]);
             start = undefined;
         }

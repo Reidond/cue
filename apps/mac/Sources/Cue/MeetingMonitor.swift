@@ -219,8 +219,8 @@ final class MeetingMonitor: ObservableObject {
         let pending = asking
         pending.forEach(withdraw)
         Task {
-            guard let project = await self.project(for: call.event) else {
-                // No project yet (nobody is signed in, so "Meetings" can't be created): the next check tries again.
+            // Not signed in yet (or "Meetings" can't be created): the next check tries again.
+            guard self.state.api.isSignedIn, let project = await self.project(for: call.event), self.state.api.isSignedIn else {
                 self.settled.remove(call.key)
                 return
             }
