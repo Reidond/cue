@@ -4,6 +4,7 @@ import { describe, send, stream } from '../call/anthropic.ts';
 import { lexiconFor } from '../call/lexicon.ts';
 import { ANSWER_MODEL, noThinking, type Tokens, type UsageRow } from '../call/models.ts';
 import { speechUsage, tokenUsage } from '../pricing.ts';
+import { termsOf } from '../projects.ts';
 import { limitState, recordUsage } from '../usage.ts';
 import { participantsOf, turnsFor, userLabel } from './compose.ts';
 import { transcribe } from './deepgram.ts';
@@ -163,11 +164,16 @@ async function project(db: D1Database, note: NoteRow) {
 
 const usage = (note: NoteRow, db: D1Database, rows: UsageRow[]) => recordUsage(db, note.user_id, rows);
 
-/** Speech recognition's rows: the audio Deepgram heard, per side. */
-const speechRows = (seconds: Record<string, number>): UsageRow[] =>
-    Object.entries(seconds)
-        .filter(([, value]) => value > 0)
-        .map(([side, value]) => speechUsage('note_transcript', 'recorded', `nova-3:${side}`, value));
+/** Speech recognition's row: the audio Deepgram heard on one side (speakers on the call side), with the project's keyterms if it has any. */
+const speechRows = (side: 'me' | 'others', seconds: number, namesAndTerms: string): UsageRow[] =>
+    seconds > 0
+        ? [
+              speechUsage('note_transcript', 'recorded', `nova-3:${side}`, seconds, {
+                  diarize: side === 'others',
+                  keyterms: termsOf(namesAndTerms).length > 0,
+              }),
+          ]
+        : [];
 
 async function audioOf(note: NoteRow, side: 'me' | 'others'): Promise<R2ObjectBody> {
     const key = parse<AudioKeys>(note.audio, {})[side];
@@ -185,7 +191,7 @@ async function improveTranscript(db: D1Database, note: NoteRow): Promise<string 
     // Each side's audio is billed as soon as Deepgram has read it, so one side failing does not lose the other's usage.
     const side = async (which: 'me' | 'others') => {
         const read = await transcribe(await audioOf(note, which), which, options);
-        await usage(note, db, speechRows({ [which]: read.seconds }));
+        await usage(note, db, speechRows(which, read.seconds, namesAndTerms));
         return read;
     };
     const [me, others] = await Promise.all([side('me'), side('others')]);
@@ -236,7 +242,7 @@ async function findSpeakers(db: D1Database, note: NoteRow): Promise<string | nul
             language: note.spoken_language ?? note.language,
             namesAndTerms,
         });
-        await usage(note, db, speechRows({ others: read.seconds }));
+        await usage(note, db, speechRows('others', read.seconds, namesAndTerms));
         voices = read.voices;
     }
     const { lines: labelled, count } = labelVoices(lines, voices);

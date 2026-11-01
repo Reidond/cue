@@ -641,7 +641,8 @@ export class Call extends DurableObject<Env> {
             const total = this.#streams[channel]?.seconds ?? 0;
             const delta = total - (this.#billedSeconds[channel] ?? 0);
             this.#billedSeconds[channel] = total;
-            if (delta > 0) rows.push(speechUsage('live_transcript', 'live', SPEECH_MODEL, delta));
+            const addOns = { diarize: channel === 'others', keyterms: this.#terms.length > 0 };
+            if (delta > 0) rows.push(speechUsage('live_transcript', 'live', `${SPEECH_MODEL}:${channel}`, delta, addOns));
         }
         await recordUsage(env.DB, meta.userId, rows);
     }
