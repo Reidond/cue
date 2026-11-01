@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { assertEq, bursts, e2eCase, fail, LiveClient, pcmOf, startCall } from '../harness/index.ts';
+import { assertEq, bursts, DEEPGRAM, e2eCase, fail, LiveClient, pcmOf, skip, startCall } from '../harness/index.ts';
 
 e2eCase(
     'When Deepgram drops a live stream partway, the call says speech recognition is unavailable, opens it again, and goes on transcribing.',
     async (cue) => {
+        if (DEEPGRAM !== 'fake') skip("scripts Deepgram's replies through the stand-in");
         // The first utterance loses its connection as it starts.
         cue.standIns({ FAKE_DEEPGRAM_DROP: '1', FAKE_DEEPGRAM_LIVE: JSON.stringify(['First.', 'The second goes through.']) });
         const backend = await cue.backend();

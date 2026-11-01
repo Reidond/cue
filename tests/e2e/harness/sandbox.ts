@@ -279,7 +279,11 @@ export class Cue {
             CUE_WEB_AUTH: 'headless',
             ...env,
         };
-        const app = spawn(CUE_BIN, [], { env: this.#launched, stdio: ['ignore', out, out] });
+        // In US English whatever the Mac's own region, so amounts read as $2.50 and dates as Nov 1 (the argument domain wins over the user's).
+        const app = spawn(CUE_BIN, ['-AppleLocale', 'en_US', '-AppleLanguages', '(en)'], {
+            env: this.#launched,
+            stdio: ['ignore', out, out],
+        });
         closeSync(out);
         app.on('error', (error) => appendFileSync(this.path('cue.out'), `couldn't start Cue: ${error.message}\n`));
         this.#app = app;

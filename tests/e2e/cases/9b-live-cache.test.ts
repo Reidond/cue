@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { assertEq, bursts, e2eCase, fail, fixture, LiveClient, pcmOf, startCall } from '../harness/index.ts';
+import { assertEq, bursts, DEEPGRAM, e2eCase, fail, fixture, LiveClient, pcmOf, skip, startCall } from '../harness/index.ts';
 
 e2eCase(
     "The prompt cache is written before the first question and kept warm while the call is quiet, for Claude's answers and for the judge alike.",
     async (cue) => {
+        if (DEEPGRAM !== 'fake') skip("scripts Deepgram's replies through the stand-in");
         cue.standIns({ FAKE_DEEPGRAM_LIVE: JSON.stringify(['How many hives did you study?']), FAKE_CLAUDE_ANSWER: 'We studied 48 hives.' });
         // The caches live an hour; here the call looks every second and warms any that has been quiet for two.
         const backend = await cue.backend({ env: { CACHE_TICK_SECONDS: '1', CACHE_REFRESH_SECONDS: '2' } });

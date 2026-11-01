@@ -1,9 +1,23 @@
 import { readFileSync } from 'node:fs';
-import { assertContains, assertDeepEq, assertEq, bursts, e2eCase, fail, fixture, LiveClient, pcmOf, startCall } from '../harness/index.ts';
+import {
+    assertContains,
+    assertDeepEq,
+    assertEq,
+    bursts,
+    DEEPGRAM,
+    e2eCase,
+    fail,
+    fixture,
+    LiveClient,
+    pcmOf,
+    skip,
+    startCall,
+} from '../harness/index.ts';
 
 e2eCase(
     'A call streamed to the backend gets its live transcript, both sides apart; its question is spotted, matched to a prepared answer and answered.',
     async (cue) => {
+        if (DEEPGRAM !== 'fake') skip("scripts Deepgram's replies through the stand-in");
         cue.standIns({
             FAKE_DEEPGRAM_LIVE: JSON.stringify([
                 'Thank you for the talk. How many hives did you study?',

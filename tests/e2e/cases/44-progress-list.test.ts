@@ -39,6 +39,8 @@ e2eCase(
         const stepsGone = async (): Promise<boolean> =>
             (await cue.dashboardShows(/^Summary$/)) && countLines(page, /^.{0,3}(Improving transcript|Writing summary)$/u) === 0;
         await cue.waitFor('the steps to leave the page', 20, stepsGone);
-        assertContains(page, /by Friday/);
+        // The summary's sentence: when the Mac's text wraps it before "Friday", the window is made wider (not on a screen too small for that).
+        if (countLines(page, /by Friday/) === 0) cue.control('size 1400 900');
+        await cue.waitFor('the summary', 20, () => cue.dashboardShows(/by Friday/));
     },
 );

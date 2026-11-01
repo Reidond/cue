@@ -1,8 +1,9 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { assertEq, bursts, e2eCase, fail, FAKE_KEYS, LiveClient, pcmOf, startCall } from '../harness/index.ts';
+import { assertEq, bursts, DEEPGRAM, e2eCase, fail, FAKE_KEYS, LiveClient, pcmOf, skip, startCall } from '../harness/index.ts';
 
 e2eCase("The owner's keys reach Anthropic and Deepgram, and the user's token never does; nobody else can join a call.", async (cue) => {
+    if (DEEPGRAM !== 'fake') skip("scripts Deepgram's replies through the stand-in");
     cue.standIns({ FAKE_DEEPGRAM_LIVE: JSON.stringify(['Is this on?']) });
     const backend = await cue.backend();
     const call = await startCall(backend, 'ann@cue.test');

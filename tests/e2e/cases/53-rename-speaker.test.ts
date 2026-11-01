@@ -4,6 +4,7 @@ import {
     assertEq,
     assertFile,
     assertNotContains,
+    countLines,
     dialogue,
     e2eCase,
     fail,
@@ -82,8 +83,11 @@ e2eCase(
             return stored?.participants.includes('Petro Ivanenko') === true && stored.title === 'Reading room plan with Petro Ivanenko';
         });
 
-        // The open note shows the new name.
+        // The open note shows the new name, in its summary and on its transcript's turns. A window captured on screen shows only what's
+        // scrolled into it, so when the turns are below it the window is made taller (never asked to on a small screen, which would cut it shorter).
+        const turn = /^Petro Ivanenko( 00:[0-9:]+)?$/;
         await cue.waitFor('the page to show the new name', 20, () => cue.dashboardShows(/^Petro Ivanenko opened the call/));
-        assertContains(cue.page, /^Petro Ivanenko( 00:[0-9:]+)?$/);
+        if (countLines(cue.page, turn) === 0) cue.control('size 1060 1400');
+        await cue.waitFor('a turn to show the new name', 20, () => cue.dashboardShows(turn));
     },
 );

@@ -11,8 +11,13 @@ e2eCase("A project's settings changed on one launch are still there on the next,
     cue.control('set Bee talk | names | Varroa, Kyiv; linden');
     await cue.waitLog(/Saved “Bee talk” to your account/, 15);
 
+    // The first save may be the new project's own, or land before the later edits: wait for the one that has them all.
     const account = await (await cue.backend()).accountOf(cue.email);
-    const saved = await account.project('Bee talk');
+    let saved = await account.project('Bee talk');
+    await cue.waitFor('the settings to reach the account', 15, async () => {
+        saved = await account.project('Bee talk');
+        return saved.occasion !== '' && saved.terms.length > 0;
+    });
     assertEq(saved.occasion, 'A talk at the city council', 'the occasion reached the account');
     assertEq(saved.language, 'uk');
     assertDeepEq(saved.terms, ['Varroa', 'Kyiv', 'linden']);

@@ -354,7 +354,13 @@ sandboxes, each case's log, the tools, the dialogue and speaker-model caches
 — is in `E2E_WORK` (by default one folder per checkout under `$TMPDIR`).
 A run stays out of the way of whoever is using the Mac: every Cue it launches
 has `CUE_BACKGROUND=1`, so it never comes to the front or takes focus, and its
-windows stay behind all others, where snapshots still capture them.
+windows stay behind all others, where snapshots still capture them. Every
+Cue it launches is in US English too (`-AppleLocale en_US`), whatever the
+Mac's region, so cases can look for `$2.50` and `Nov 1`. A window
+captured on screen shows only what is scrolled into view: a case that reads
+text far down a page, and doesn't find it, makes the window taller
+(`size W H`). Only then, because a window asked to be larger than the screen
+is cut to it, smaller than it was (GitHub's runner has a small screen).
 
 ### Writing a case
 
@@ -426,8 +432,7 @@ anything that runs a process or waits returns a promise — await it. From
   matched line by line, ignoring case, as `grep -i -E` would), `assertEq`,
   `assertBetween`, `fail(message, …dumps)`, `skip(reason)`, and
   `needWindowSnapshots`,
-  `needOverlaySnapshots`, `needRealClaude`, `needRealAnthropic`,
-  `needRealDeepgram`, `needVoice`, `needReachable`.
+  `needOverlaySnapshots`, `needRealDeepgram`, `needVoice`, `needReachable`.
 
 Look at the existing cases before writing a new one, and keep each case
 focused on one user-visible behaviour. Write only TypeScript that Node can
