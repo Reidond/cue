@@ -3,3 +3,6 @@ build/
 .swiftpm/
 .DS_Store
 node_modules/
+.cloudflare/
+.dev.vars*
+!.dev.vars.example

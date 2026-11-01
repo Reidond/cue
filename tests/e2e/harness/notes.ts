@@ -1,5 +1,6 @@
 // Reading a note Cue wrote: its summary, and who its transcript says said each line of a dialogue.
 import { lines } from './files.ts';
+import { fail } from './results.ts';
 
 /** A note's summary: from its title to the transcript marker (without the marker), as text. */
 export function summaryOf(notes: string): string {
@@ -34,15 +35,18 @@ export function turnSpeakers(notes: string, timeline: string): string {
         const turn = /^\*\*([0-9]{2}:[0-9]{2}:[0-9]{2}) · (.+)\*\*$/.exec(line);
         return turn ? [{ time: seconds(turn[1] ?? ''), label: turn[2] ?? '' }] : [];
     });
-    return lines(timeline).map((row) => {
-        const [start = '', , , voice = ''] = row.split('\t');
-        let best = '?', nearest = 2;
-        for (const turn of turns) {
-            const distance = Math.abs(Number(start) - turn.time);
-            if (distance <= nearest) [nearest, best] = [distance, turn.label];
-        }
-        return `${voice}\t${best}\n`;
-    }).join('');
+    return lines(timeline)
+        .map((row) => {
+            const [start = '', , , voice = ''] = row.split('\t');
+            let best = '?',
+                nearest = 2;
+            for (const turn of turns) {
+                const distance = Math.abs(Number(start) - turn.time);
+                if (distance <= nearest) [nearest, best] = [distance, turn.label];
+            }
+            return `${voice}\t${best}\n`;
+        })
+        .join('');
 }
 
 /** The labels `turnSpeakers` found for a voice, sorted, each once, comma-separated. */
@@ -52,4 +56,42 @@ export function labelsOf(speakers: string, voice: string): string {
         return rowVoice === voice && label !== undefined ? [label] : [];
     });
     return [...new Set(labels)].sort().join(',');
+}
+
+/** Where the timeline puts each line, and where the stand-in heard speech in the audio the backend sent it: to read when the two differ. */
+export function heardReport(timeline: string, heard: { side: string; seconds: number; heard: [number, number][] }[]): string {
+    const fixed = (value: number) => value.toFixed(2);
+    const placed = lines(timeline).map((row) => row.split('\t').slice(0, 4).join(' '));
+    return [
+        `timeline: ${placed.join(' | ')}`,
+        ...heard.map((request) => {
+            const stretches = request.heard.map(([from, to]) => `${fixed(from)}-${fixed(to)}`).join(' ');
+            return `${request.side} (${fixed(request.seconds)} s): ${stretches}`;
+        }),
+    ].join('\n');
+}
+
+/**
+ * That the transcript has a turn under each label (`labels`, one per line of the timeline, in the order they start) within `tolerance` seconds of
+ * where the timeline puts the line: the timeline is this machine's own (its voices speak at their own pace), the turns' clock is the audio's.
+ */
+export function assertTurnsAt(notes: string, timeline: string, labels: string[], tolerance = 1.5): void {
+    const turns = lines(notes).flatMap((line) => {
+        const turn = /^\*\*([0-9]{2}:[0-9]{2}:[0-9]{2}) · (.+)\*\*$/.exec(line);
+        return turn ? [{ time: seconds(turn[1] ?? ''), label: turn[2] ?? '' }] : [];
+    });
+    const starts = lines(timeline)
+        .map((row) => Number(row.split('\t')[0]))
+        .filter((start) => Number.isFinite(start))
+        .toSorted((a, b) => a - b);
+    if (starts.length !== labels.length) fail(`the timeline has ${starts.length} lines, not ${labels.length}`, timeline);
+    labels.forEach((label, index) => {
+        const start = starts[index] ?? 0;
+        if (!turns.some((turn) => turn.label === label && Math.abs(turn.time - start) <= tolerance)) {
+            fail(
+                `line ${index + 1} of the call (at ${start.toFixed(2)} s) should start a turn of ${label}`,
+                turns.map((turn) => `${turn.time} ${turn.label}`).join('\n'),
+            );
+        }
+    });
 }

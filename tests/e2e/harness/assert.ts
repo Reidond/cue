@@ -26,12 +26,15 @@ export function assertContains(file: string, pattern: RegExp, message?: string):
 export function assertNotContains(file: string, pattern: RegExp, message?: string): void {
     const found = matchingLines(file, pattern);
     if (found.length === 0) return;
-    const shown = found.slice(0, 20).map(({ number, line }) => `${number}:${line}`).join('\n');
+    const shown = found
+        .slice(0, 20)
+        .map(({ number, line }) => `${number}:${line}`)
+        .join('\n');
     fail(message ?? `${basename(file)} should not match /${pattern.source}/`, `--- matches in ${file}`, shown);
 }
 
 export function assertEq<T extends string | number | boolean | undefined>(actual: T, expected: T, message?: string): void {
-    if (actual !== expected) fail(message ?? `expected '${expected}', got '${actual}'`);
+    if (actual !== expected) fail(`${message ?? 'values differ'}: expected '${expected}', got '${actual}'`);
 }
 
 /** low ≤ value ≤ high; a value that couldn't be measured fails. */
@@ -40,3 +43,23 @@ export function assertBetween(value: number | undefined, low: number, high: numb
         fail(message ?? `expected ${value ?? ''} to be between ${low} and ${high}`);
     }
 }
+
+/** Two JSON-like values (arrays, objects) are equal. */
+export function assertDeepEq(actual: unknown, expected: unknown, message?: string): void {
+    const [a, b] = [JSON.stringify(actual), JSON.stringify(expected)];
+    if (a !== b) fail(message ?? 'values differ', `--- expected\n${b}`, `--- got\n${a}`);
+}
+
+/** `text` (not a file) has a line matching the pattern. */
+export function assertTextContains(text: string, pattern: RegExp, message?: string): void {
+    if (lineMatches(text, pattern)) return;
+    fail(message ?? `the text should match /${pattern.source}/`, text.slice(0, 6000));
+}
+
+/** `text` has no line matching the pattern. */
+export function assertTextNotContains(text: string, pattern: RegExp, message?: string): void {
+    if (!lineMatches(text, pattern)) return;
+    fail(message ?? `the text should not match /${pattern.source}/`, text.slice(0, 6000));
+}
+
+const lineMatches = (text: string, pattern: RegExp) => text.split('\n').some((line) => withFlags(pattern, 'i').test(line));

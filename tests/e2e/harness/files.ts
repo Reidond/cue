@@ -33,7 +33,7 @@ export function literal(text: string): string {
 
 /** The pattern with `add` among its flags and without the stateful g / y. */
 export function withFlags(pattern: RegExp, add = ''): RegExp {
-    const flags = new Set([...pattern.flags.replace(/[gy]/g, ''), ...add]);
+    const flags = new Set((pattern.flags.replace(/[gy]/g, '') + add).split(''));
     return new RegExp(pattern.source, [...flags].join(''));
 }
 
@@ -92,7 +92,9 @@ export function isDirectory(path: string): boolean {
 /** A folder's visible entries, sorted (`ls`); none when it doesn't exist. */
 export function listDir(dir: string): string[] {
     try {
-        return readdirSync(dir).filter((name) => !name.startsWith('.')).sort();
+        return readdirSync(dir)
+            .filter((name) => !name.startsWith('.'))
+            .sort();
     } catch {
         return [];
     }
@@ -121,7 +123,8 @@ export function findFiles(dir: string, name: RegExp, exclude?: RegExp): string[]
 /** Two paths to the same file (`test -ef`). */
 export function sameFile(a: string, b: string): boolean {
     try {
-        const first = statSync(a), second = statSync(b);
+        const first = statSync(a),
+            second = statSync(b);
         return first.dev === second.dev && first.ino === second.ino;
     } catch {
         return false;

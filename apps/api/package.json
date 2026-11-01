@@ -1,0 +1,43 @@
+{
+  "name": "api",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "cf dev",
+    "build": "cf build",
+    "deploy": "cf deploy",
+    "deploy:dry": "cf deploy --dry-run",
+    "types": "cf workers types",
+    "typecheck": "cf workers types && tsc",
+    "migrate": "node scripts/migrate.ts",
+    "migrate:remote": "node scripts/migrate-remote.ts",
+    "schema": "node tools/gen-schema.ts migrations/0002_better_auth.sql",
+    "check-vite": "node scripts/check-vite.ts",
+    "invite": "node scripts/invite.ts"
+  },
+  "dependencies": {
+    "@better-auth/oauth-provider": "1.7.14",
+    "@cue/contract": "workspace:*",
+    "@elysiajs/openapi": "^1.4.0",
+    "@sinclair/typebox": "~0.34.52",
+    "better-auth": "1.7.14",
+    "elysia": "1.4.30",
+    "fflate": "^0.8.2",
+    "file-type": "^22.3.0",
+    "jose": "^6.2.14",
+    "openapi-types": "^12.1.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "beta",
+    "@elysiajs/eden": "1.4.9",
+    "@types/node": "^26.6.5",
+    "admin": "workspace:*",
+    "cf": "1.0.0-beta.26",
+    "typescript": "^7.0.2"
+  }
+}

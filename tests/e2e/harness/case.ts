@@ -17,7 +17,7 @@ function describe(error: unknown): string {
  * either way Cue is stopped and its settings are removed, and a failed case keeps its sandbox.
  */
 export function e2eCase(title: string, body: (cue: Cue) => Promise<void>): void {
-    test(title, async (t) => {
+    void test(title, async (t) => {
         const cue = await Cue.open(basename(t.filePath ?? process.argv[1] ?? 'case', '.test.ts'));
         // Interrupted (Ctrl-C, or the runner stopping): clean up as a failed case would, then go.
         const interrupted = (signal: NodeJS.Signals): void => {

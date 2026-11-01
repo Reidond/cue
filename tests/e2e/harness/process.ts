@@ -13,6 +13,8 @@ export interface Ran {
 
 export interface RunOptions {
     env?: NodeJS.ProcessEnv;
+    /** The folder it runs in; the current one by default. */
+    cwd?: string;
     /** Written to its stdin, which is then closed; without it, stdin is empty. */
     input?: string;
     /** Seconds after which it is killed (its code is then 137). */
@@ -24,12 +26,21 @@ export function exec(command: string, args: readonly string[] = [], options: Run
     return new Promise((resolve) => {
         const child = spawn(command, args, {
             env: options.env ?? process.env,
+            cwd: options.cwd,
             stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         });
-        let stdout = '', stderr = '', output = '';
+        let stdout = '',
+            stderr = '',
+            output = '';
         const timer = options.timeout === undefined ? undefined : setTimeout(() => child.kill('SIGKILL'), options.timeout * 1000);
-        child.stdout?.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; output += chunk; });
-        child.stderr?.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; output += chunk; });
+        child.stdout?.setEncoding('utf8').on('data', (chunk: string) => {
+            stdout += chunk;
+            output += chunk;
+        });
+        child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
+            stderr += chunk;
+            output += chunk;
+        });
         child.on('error', (error) => resolve({ code: 127, stdout, stderr: error.message, output: error.message }));
         child.on('close', (code, signal) => {
             clearTimeout(timer);

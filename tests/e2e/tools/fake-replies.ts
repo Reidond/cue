@@ -1,8 +1,8 @@
-// What the stand-ins for Claude reply — for the `claude` CLI (fake-claude.ts) and the Anthropic API
-// (harness/fake-providers.ts) alike — and how they note what Cue sent them, as TIME-PID-KIND.txt in a
-// folder, so cases can check it (see `Cue.claudeRequests`).
+// What the stand-in for the Anthropic API (harness/fake-providers.ts) replies, and how it notes what the
+// backend sent it, as TIME-PID-KIND.txt in a folder, so cases can check it (see `Cue.claudeRequests`).
 //
-// FAKE_CLAUDE_ANSWER (text) and FAKE_CLAUDE_SUMMARY (a file) set the replies; FAKE_CLAUDE_ANSWERS (JSON
+// FAKE_CLAUDE_ANSWER (text) and FAKE_CLAUDE_SUMMARY (a file) set the replies, FAKE_CLAUDE_NAMES (JSON, label → name) the names found for the
+// call's people (else the speaker lines of the summary file); FAKE_CLAUDE_ANSWERS (JSON
 // `{"pattern": "answer"}`) answers a question matching a pattern (a regex, ignoring case) its own way.
 // The judge finds the sentences of what was just said that end in "?", unless FAKE_CLAUDE_JUDGEMENTS
 // (JSON `{"pattern": "reply"}`, the first pattern matching what was just said wins) gives its reply.
@@ -51,11 +51,16 @@ export function answer(content: string, env: Env): string {
 export function judgement(content: string, env: Env): string {
     if (content.startsWith('Connection check')) return '—';
     const said = content.split('Just said:\n')[1] ?? '';
-    const own = Object.entries(JSON.parse(env['FAKE_CLAUDE_JUDGEMENTS'] ?? '{}') as Record<string, string>)
-        .find(([pattern]) => new RegExp(pattern, 'i').test(said))?.[1];
+    const own = Object.entries(JSON.parse(env['FAKE_CLAUDE_JUDGEMENTS'] ?? '{}') as Record<string, string>).find(([pattern]) =>
+        new RegExp(pattern, 'i').test(said),
+    )?.[1];
     if (own !== undefined) return own;
-    const questions = said.split('\n').map((line) => line.replace(/^\[[^\]]*\] /, '')).join(' ')
-        .split(/(?<=[.?!…])\s+/).filter((sentence) => sentence.includes('?') && sentence.trim().split(/\s+/).length >= 2);
+    const questions = said
+        .split('\n')
+        .map((line) => line.replace(/^\[[^\]]*\] /, ''))
+        .join(' ')
+        .split(/(?<=[.?!…])\s+/)
+        .filter((sentence) => sentence.includes('?') && sentence.trim().split(/\s+/).length >= 2);
     return questions.length > 0 ? questions.map((question) => `Q: ${question.trim()}`).join('\n') : '—';
 }
 
@@ -73,4 +78,20 @@ The participant asked when the report is due, and it was agreed to send it by Fr
 /** The notes a summary request gets. */
 export function summary(env: Env): string {
     return readOrUndefined(env['FAKE_CLAUDE_SUMMARY']) ?? defaultSummary;
+}
+
+/** The speaker lines of a summary file: `<!-- speaker: LABEL = NAME -->`, the way the names prompt asks for them. */
+function speakerLines(text: string): string[] {
+    return text.split('\n').filter((line) => /^\s*<!--\s*speaker:/.test(line));
+}
+
+/** The names a names request gets: FAKE_CLAUDE_NAMES (JSON, label → name) as speaker lines, else those of the FAKE_CLAUDE_SUMMARY file. */
+export function names(env: Env): string {
+    const own = env['FAKE_CLAUDE_NAMES'];
+    if (own !== undefined) {
+        return Object.entries(JSON.parse(own) as Record<string, string>)
+            .map(([label, name]) => `<!-- speaker: ${label} = ${name} -->`)
+            .join('\n');
+    }
+    return speakerLines(readOrUndefined(env['FAKE_CLAUDE_SUMMARY']) ?? '').join('\n');
 }

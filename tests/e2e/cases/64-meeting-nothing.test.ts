@@ -3,7 +3,9 @@ import { assertContains, assertNotContains, e2eCase, minutesFromNow, sleep } fro
 e2eCase('With "Do nothing" Cue lists the call but never asks or records, even with call apps on the microphone.', async (cue) => {
     cue.calendar([
         {
-            title: 'Weekly design sync', start: minutesFromNow(-2), end: minutesFromNow(30),
+            title: 'Weekly design sync',
+            start: minutesFromNow(-2),
+            end: minutesFromNow(30),
             url: 'https://meet.google.com/abc-defg-hij',
         },
     ]);

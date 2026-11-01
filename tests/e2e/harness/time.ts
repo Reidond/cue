@@ -9,7 +9,13 @@ export function sleep(seconds: number): Promise<void> {
 export async function within(promise: Promise<unknown>, seconds: number): Promise<boolean> {
     const timer = new AbortController();
     const timedOut = setTimeout(seconds * 1000, false, { signal: timer.signal }).catch(() => false);
-    const settled = await Promise.race([promise.then(() => true, () => true), timedOut]);
+    const settled = await Promise.race([
+        promise.then(
+            () => true,
+            () => true,
+        ),
+        timedOut,
+    ]);
     timer.abort();
     return settled;
 }

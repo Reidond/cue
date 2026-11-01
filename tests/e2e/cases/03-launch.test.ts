@@ -7,7 +7,7 @@ e2eCase('Cue launches in the sandbox, reads its materials and shows the overlay 
     await cue.waitLog(/Materials .*talk\.md/, 30);
     // The old settings became "My project"; Start Cue shows the overlay for it.
     cue.control('start My project');
-    // The status says "Starting speech recognition…" until whisper-server is up, which takes a while without a GPU.
+    // The status says "Starting speech recognition…" until the live call is up on the backend (Claude warmed, speech streams open).
     let overlay = '';
     await cue.waitFor('the overlay to settle on its status', 120, async () => {
         overlay = await cue.snapshotText(cue.path('cue.png'));

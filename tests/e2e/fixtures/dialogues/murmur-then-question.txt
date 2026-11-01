@@ -2,7 +2,7 @@
 # participant asks a question and goes on to explain it after a short breath.
 call | Daniel | Let me think about that for a second.
 pause | 2
-me   | Samantha | Mm-hm.
+me   | Samantha | Yes, yes, I see what you mean.
 pause | 4
 call | Daniel | How many hives did you study?
 pause | 1.2

@@ -1,0 +1,19 @@
+packages:
+  - apps/*
+  - packages/*
+  - tests/e2e
+
+# Build scripts the Worker toolchain needs.
+allowBuilds:
+  esbuild: true
+  workerd: true
+
+# Vite+ replaces Vite everywhere, including the copy `cf` and @cloudflare/vite-plugin spawn
+# (docs/backend.md; the backend spike's FINDINGS § 1). Keep all three settings: the override here,
+# `autoInstallPeers: false` below, and no `vite` dependency in apps/api. Without any of them `cf`
+# quietly builds with upstream Vite. `pnpm --filter api check-vite` fails when any of them is missing (CI runs it).
+overrides:
+  vite@*: npm:@voidzero-dev/vite-plus-core@1.4.0
+
+# Otherwise pnpm installs upstream `vite` as the plugin's peer, and the override does not reach it.
+autoInstallPeers: false

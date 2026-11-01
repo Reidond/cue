@@ -1,4 +1,4 @@
-# Builds the app and runs the end-to-end suite on every pull request (and only there).
+# Checks the TypeScript, builds the app and runs the end-to-end suite on every pull request (and only there).
 name: CI
 
 on:
@@ -22,11 +22,12 @@ jobs:
       - name: SwiftPM cache
         uses: actions/cache@v4
         with:
-          path: .build
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          path: apps/mac/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/mac/Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
 
       - name: Build
+        working-directory: apps/mac
         run: |
           set -o pipefail
           ./scripts/build.sh 2>&1 | tee build.log
@@ -50,17 +51,20 @@ jobs:
             curl -fL --retry 3 -o "$model" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
           fi
 
-      - uses: actions/setup-node@v4
+      - uses: voidzero-dev/setup-vp@v1.22.0
         with:
           node-version: latest
-          cache: npm
-          cache-dependency-path: tests/e2e/package-lock.json
+          cache: true
 
-      - name: Type-check the end-to-end tests
-        working-directory: tests/e2e
-        run: |
-          npm ci
-          npm run typecheck
+      - name: Worker toolchain (cf must build with Vite+)
+        run: node apps/api/scripts/check-vite.ts
+
+      - name: Worker types
+        working-directory: apps/api
+        run: ./node_modules/.bin/cf workers types
+
+      - name: Check (format, lint, types)
+        run: vp check
 
       - name: End-to-end tests
         env:
@@ -77,13 +81,15 @@ jobs:
             ${{ runner.temp }}/e2e/*.log
             ${{ runner.temp }}/e2e/*/cue.out
             ${{ runner.temp }}/e2e/*/*.txt
+            ${{ runner.temp }}/e2e/*/backend.log
+            ${{ runner.temp }}/e2e/*/claude/*
             ${{ runner.temp }}/e2e/*/*.png
             ${{ runner.temp }}/e2e/*/home/Application Support/Cue/sessions/*.md
           if-no-files-found: ignore
 
       - name: Keep the app
         if: always()
-        run: if [[ -d build/Cue.app ]]; then ditto -c -k --keepParent build/Cue.app Cue.zip; fi
+        run: if [[ -d apps/mac/build/Cue.app ]]; then ditto -c -k --keepParent apps/mac/build/Cue.app Cue.zip; fi
 
       - uses: actions/upload-artifact@v4
         if: always()

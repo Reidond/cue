@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 // Runs Cue's end-to-end cases against the built app.
 //
-//   node tests/e2e/run.ts [--no-build] [--real-claude] [--real-anthropic] [--real-deepgram] [--keep] [PREFIX…]
+//   node tests/e2e/run.ts [--no-build] [--no-app] [--real-deepgram] [--keep] [PREFIX…]
 //
-//   --no-build        use the existing build/Cue.app
-//   --real-claude     use the real `claude` CLI instead of tools/fake-claude.ts
-//   --real-anthropic  use the real Anthropic API (its key from the keychain) instead of the stand-in
-//   --real-deepgram   use the real Deepgram (its key from the keychain) instead of the stand-in
+//   --no-build        use the existing apps/mac/build/Cue.app
+//   --no-app          don't build or need Cue.app: only the cases about the backend run (no Swift tools; any case that launches Cue fails)
+//   --real-deepgram   the backend talks to the real Deepgram (its key from the keychain) instead of the stand-in
 //   --keep            keep every case's sandbox (failed cases are always kept)
 //   PREFIX…           run only cases whose file name starts with one of these
 //
@@ -22,8 +21,11 @@ const E2E = import.meta.dirname;
 const ROOT = resolve(E2E, '..', '..');
 
 function usage(): string {
-    return readFileSync(import.meta.filename, 'utf8').split('\n').slice(1, 13)
-        .map((line) => line.replace(/^\/\/ ?/, '')).join('\n');
+    return readFileSync(import.meta.filename, 'utf8')
+        .split('\n')
+        .slice(1, 14)
+        .map((line) => line.replace(/^\/\/ ?/, ''))
+        .join('\n');
 }
 
 function executable(path: string): boolean {
@@ -39,12 +41,14 @@ function modified(path: string): number {
     return statSync(path).mtimeMs;
 }
 
-let build = true, claude = 'fake', anthropic = 'fake', deepgram = 'fake', keep = false;
+let build = true,
+    withApp = true,
+    deepgram = 'fake',
+    keep = false;
 const prefixes: string[] = [];
 for (const arg of process.argv.slice(2)) {
     if (arg === '--no-build') build = false;
-    else if (arg === '--real-claude') claude = 'real';
-    else if (arg === '--real-anthropic') anthropic = 'real';
+    else if (arg === '--no-app') withApp = false;
     else if (arg === '--real-deepgram') deepgram = 'real';
     else if (arg === '--keep') keep = true;
     else if (arg === '-h' || arg === '--help') {
@@ -53,25 +57,19 @@ for (const arg of process.argv.slice(2)) {
     } else prefixes.push(arg);
 }
 
-if (build) {
+if (build && withApp) {
     console.log('Building Cue…');
-    const built = spawnSync(join(ROOT, 'scripts', 'build.sh'), { stdio: ['inherit', 'ignore', 'inherit'] });
+    const built = spawnSync(join(ROOT, 'apps', 'mac', 'scripts', 'build.sh'), { stdio: ['inherit', 'ignore', 'inherit'] });
     if (built.status !== 0) {
         console.log('Build failed');
         process.exit(1);
     }
 }
-const app = join(ROOT, 'build', 'Cue.app');
-if (!executable(join(app, 'Contents', 'MacOS', 'Cue'))) {
+const app = join(ROOT, 'apps', 'mac', 'build', 'Cue.app');
+if (withApp && !executable(join(app, 'Contents', 'MacOS', 'Cue'))) {
     console.log(`No ${app} — run without --no-build`);
     process.exit(1);
 }
-const fakeClaude = join(E2E, 'tools', 'fake-claude.ts');
-if (claude === 'fake' && !executable(fakeClaude)) {
-    console.log(`${fakeClaude} must be executable: Cue runs it as the claude CLI`);
-    process.exit(1);
-}
-
 // One work folder per checkout, so worktrees running cases at once keep their own tools.
 const checkout = createHash('sha1').update(`${ROOT}\n`).digest('hex').slice(0, 8);
 const work = process.env['E2E_WORK'] || join(process.env['TMPDIR'] || tmpdir(), `cue-e2e-${checkout}`);
@@ -80,8 +78,11 @@ mkdirSync(bin, { recursive: true });
 mkdirSync(join(work, 'cache'), { recursive: true });
 
 // The helpers that need Apple's frameworks, rebuilt when their source changes.
-for (const source of readdirSync(join(E2E, 'tools')).filter((name) => name.endsWith('.swift')).sort()) {
-    const path = join(E2E, 'tools', source), tool = join(bin, basename(source, '.swift'));
+for (const source of readdirSync(join(E2E, 'tools'))
+    .filter((name) => withApp && name.endsWith('.swift'))
+    .sort()) {
+    const path = join(E2E, 'tools', source),
+        tool = join(bin, basename(source, '.swift'));
     if (executable(tool) && modified(path) <= modified(tool)) continue;
     const compiled = spawnSync('swiftc', ['-O', '-o', tool, path], { encoding: 'utf8' });
     writeFileSync(`${tool}.log`, `${compiled.stdout ?? ''}${compiled.stderr ?? ''}`);
@@ -102,22 +103,24 @@ if (cases.length === 0) {
 
 // What every case reads (see harness/config.ts).
 Object.assign(process.env, {
-    CUE_APP: app, E2E_WORK: work, E2E_CLAUDE: claude, E2E_ANTHROPIC: anthropic, E2E_DEEPGRAM: deepgram, E2E_KEEP: keep ? '1' : '0',
+    CUE_APP: app,
+    E2E_WORK: work,
+    E2E_DEEPGRAM: deepgram,
+    E2E_KEEP: keep ? '1' : '0',
 });
 
 // What this machine can do that the cases about to run depend on, probed once (harness/capabilities.ts):
 // a case that needs what's missing skips with the reason.
-const needs = new Set<'speech' | 'snapshots'>();
+const needs = new Set<'snapshots'>();
 for (const name of cases) {
     const source = readFileSync(join(E2E, 'cases', name), 'utf8');
-    if (/needWhisper\(/.test(source)) needs.add('speech');
     if (/snapshotText|dashboardPage|dashboardShows/.test(source)) needs.add('snapshots');
 }
 const capabilitiesFile = join(work, 'cache', 'capabilities.json');
 const { probeMachine } = await import('./harness/capabilities.ts');
 const capabilities = await probeMachine(needs, capabilitiesFile);
 process.env['E2E_CAPABILITIES'] = capabilitiesFile;
-const names = { speech: 'Speech recognition', windows: 'Window snapshots', overlay: 'Overlay snapshots' } as const;
+const names = { windows: 'Window snapshots', overlay: 'Overlay snapshots' } as const;
 for (const [name, found] of Object.entries(capabilities) as [keyof typeof names, { ok: boolean; detail: string }][]) {
     console.log(`${names[name]}: ${found.ok ? 'yes' : 'no'} — ${found.detail}`);
 }
@@ -150,7 +153,9 @@ process.on('SIGINT', () => {
     stopping = true;
 });
 
-let passed = 0, failed = 0, skipped = 0;
+let passed = 0,
+    failed = 0,
+    skipped = 0;
 const failures: string[] = [];
 const column = (name: string): string => name.padEnd(32);
 
@@ -180,11 +185,17 @@ function finish(file: string, seconds: number, outcome: Outcome): void {
     }
 }
 
-console.log(`Running ${cases.length} case(s), Claude: ${claude}, Anthropic API: ${anthropic}, Deepgram: ${deepgram}`);
+console.log(`Running ${cases.length} case(s), Deepgram: ${deepgram}`);
 const done = new Set<string>();
 for await (const event of run({ files, concurrency: 1, signal: stop.signal })) {
-    if (event.type !== 'test:stdout' && event.type !== 'test:stderr' && event.type !== 'test:pass'
-        && event.type !== 'test:fail' && event.type !== 'test:complete') continue;
+    if (
+        event.type !== 'test:stdout' &&
+        event.type !== 'test:stderr' &&
+        event.type !== 'test:pass' &&
+        event.type !== 'test:fail' &&
+        event.type !== 'test:complete'
+    )
+        continue;
     const file = caseFile(event.data);
     const outcome = file === undefined ? undefined : outcomes.get(file);
     if (file === undefined || outcome === undefined) continue;

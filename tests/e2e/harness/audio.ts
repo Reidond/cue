@@ -1,5 +1,6 @@
 // Spoken audio for Cue to hear, made with macOS voices, and measurements of the audio it saved.
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { E2E_BIN, E2E_CACHE } from './config.ts';
@@ -24,7 +25,7 @@ function wavHeader(data: number): Buffer {
     header.write('RIFF', 0);
     header.writeUInt32LE(36 + data, 4);
     header.write('WAVEfmt ', 8);
-    header.writeUInt32LE(16, 16);  // PCM: format 1, 1 channel, 16 kHz, 32 000 bytes a second, 2 a frame, 16 bits
+    header.writeUInt32LE(16, 16); // PCM: format 1, 1 channel, 16 kHz, 32 000 bytes a second, 2 a frame, 16 bits
     header.writeUInt16LE(1, 20);
     header.writeUInt16LE(1, 22);
     header.writeUInt32LE(16_000, 24);
@@ -68,7 +69,21 @@ export interface Dialogue {
     timeline: string;
     /** The side's audio: the lines of that side, silence while the others talk. */
     wav(side: string): string;
+    /**
+     * FAKE_DEEPGRAM_LIVE for the Deepgram stand-in: what each line says, in the order the lines start, so that the live transcript is the script (the
+     * stand-in tells speech from silence by loudness and has no ears). The voices of the `call` side are numbered from 0 in the order they first speak.
+     */
+    live(): string;
+    /**
+     * FAKE_DEEPGRAM_FILE for the Deepgram stand-in's recorded files (the backend's second pass): what each side says, line by line in the order the lines
+     * start, with the call side's voices numbered from 0 in the order they first speak. `said` replaces a side's lines (its array is complete: fewer
+     * entries than the audio has stretches of speech means the rest is not heard; an entry with no text is a stretch Deepgram hears nothing in).
+     */
+    file(said?: { me?: Said[]; others?: Said[] }): string;
 }
+
+/** What a stretch of speech says in the recorded-file stand-in: its text, and on the call side the voice (from 0). */
+export type Said = string | { text: string; speaker?: number };
 
 /** The voices a dialogue script uses: the middle field of its `side | voice | text` lines. */
 function voicesIn(script: string): string[] {
@@ -92,7 +107,31 @@ export async function dialogue(script: string, out: string): Promise<Dialogue> {
     }
     await mkdir(out, { recursive: true });
     await cp(cache, out, { recursive: true });
-    return { dir: out, timeline: join(out, 'timeline.tsv'), wav: (side) => join(out, `${side}.wav`) };
+    const timeline = join(out, 'timeline.tsv');
+    const rows = () =>
+        linesOf(readFileSync(timeline, 'utf8'))
+            .map((line) => line.split('\t'))
+            .filter((fields) => fields.length >= 5)
+            .map(([start, , side, voice, ...text]) => ({ start: Number(start), side: side!, voice: voice!, text: text.join('\t') }))
+            .sort((a, b) => a.start - b.start);
+    /** The lines in order, the call side's with their voice numbered from 0 in the order the voices first speak. */
+    const said = (): { side: string; said: Said }[] => {
+        const voices: string[] = [];
+        return rows().map((row) => {
+            if (row.side === 'me') return { side: 'me', said: row.text };
+            if (!voices.includes(row.voice)) voices.push(row.voice);
+            return { side: 'others', said: { text: row.text, speaker: voices.indexOf(row.voice) } };
+        });
+    };
+    const live = (): string => JSON.stringify(said().map((row) => row.said));
+    const file = (replaced: { me?: Said[]; others?: Said[] } = {}): string => {
+        const all = said();
+        return JSON.stringify({
+            me: replaced.me ?? all.filter((row) => row.side === 'me').map((row) => row.said),
+            others: replaced.others ?? all.filter((row) => row.side === 'others').map((row) => row.said),
+        });
+    };
+    return { dir: out, timeline, wav: (side) => join(out, `${side}.wav`), live, file };
 }
 
 /** What `afinfo` says about an audio file. */
