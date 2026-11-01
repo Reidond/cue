@@ -123,7 +123,9 @@ node scripts/migrate-remote.ts                                      # applies mi
 rm /tmp/cue-secrets.env
 ```
 
-`cf deploy` provisions what the bindings need (`--provision` is its default): the `cue` D1 database, the denylist KV namespace and the two R2 buckets. The Durable Object
+`cf deploy` provisions what the bindings need (`--provision` is its default): the `cue` D1 database and the two R2 buckets, found again by name on later deploys. The
+denylist KV namespace (`cue-api-denylist`) exists already and is pinned by its id in `cloudflare.config.ts` (`DENYLIST_ID`): a KV binding has no name, so a new account
+makes one (`cf kv namespaces create cue-api-denylist`) and puts its id there before the first deploy. The Durable Object
 classes (`Call`, `Janitor`) and the `cue-notes` Workflow come with the Worker. If the migrations cannot find the database by name, give its id: `CUE_D1_ID=… node scripts/migrate-remote.ts`
 (`cf d1 list` shows it).
 

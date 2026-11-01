@@ -8,6 +8,9 @@ import * as entrypoint from './src/index.ts' with { type: 'cf-worker' };
 // (apps/mac/scripts/build.sh). `PUBLIC_URL` in the environment overrides it (a case's backend, a dry run elsewhere).
 const productionUrl = readFileSync(join(import.meta.dirname, 'production-url.txt'), 'utf8').trim();
 
+// The deployed denylist (the KV namespace "cue-api-denylist" the first deploy made; `cf kv namespaces list`).
+const DENYLIST_ID = '4dd0de7bfe4e47578c46fb3fa972f3b7';
+
 // Where sign-in with Google and GitHub goes. `IDP_URL` repoints both at a stand-in (the e2e harness' fake-idp.ts, which
 // serves both providers' endpoints under /google and /github); a real deploy leaves it unset.
 const idp = process.env.IDP_URL;
@@ -86,8 +89,9 @@ export default defineConfig(({ mode }) => ({
             RETENTION_DAY_SECONDS: bindings.text(process.env.RETENTION_DAY_SECONDS ?? '86400'),
             RETENTION_TICK_SECONDS: bindings.text(process.env.RETENTION_TICK_SECONDS ?? '3600'),
             DB: bindings.d1(mode === 'development' ? { name: 'cue', id: DEV_DB_ID } : { name: 'cue' }),
-            // User ids of disabled users: their access tokens (valid for up to 15 minutes) stop working at once.
-            DENYLIST: bindings.kv(mode === 'development' ? { id: DEV_KV_ID } : {}),
+            // User ids of disabled users: their access tokens (valid for up to 15 minutes) stop working at once. A KV binding has no name to be
+            // found by (D1 and R2 have), so a deploy that provisioned it and then failed would try to make it again: the deployed one is pinned by id.
+            DENYLIST: bindings.kv({ id: mode === 'development' ? DEV_KV_ID : DENYLIST_ID }),
             // Per user: 10 requests a second on average for everything (a sign-in's import of a library of notes is hundreds), 30 a minute for
             // what costs money. Namespace ids only have to differ within the account.
             RATE_LIMIT: bindings.rateLimit({ namespace: '4101', simple: { limit: rate('RATE_LIMIT_REQUESTS', 600), period: ratePeriod } }),
