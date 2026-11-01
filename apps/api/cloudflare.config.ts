@@ -46,11 +46,11 @@ export default defineConfig(({ mode }) => ({
         workersDev: false,
         previewUrls: false,
         observability: { enabled: true },
-        // The admin SPA (apps/admin) is Vite's client build, served under /admin with the single-page-app fallback. The fallback is not limited
-        // to /admin, so everything the Worker itself answers is listed here: a navigation to it must never get the SPA's index.html, and under
-        // `cf dev` an unlisted path gets Vite's own 404. Every new Worker route needs its prefix in this list.
+        // The admin SPA (apps/admin) is Vite's client build, served under /admin with the single-page-app fallback (from the root: no `basePath`,
+        // which Cloudflare refuses to an account without it; apps/admin/vite.preset.ts puts the files where /admin finds them). The fallback is
+        // not limited to /admin, so everything the Worker itself answers is listed here: a navigation to it must never get the SPA's index.html,
+        // and under `cf dev` an unlisted path gets Vite's own 404. Every new Worker route needs its prefix in this list.
         assets: {
-            basePath: '/admin',
             notFoundHandling: 'single-page-application',
             htmlHandling: 'auto-trailing-slash',
             runWorkerFirst: [
