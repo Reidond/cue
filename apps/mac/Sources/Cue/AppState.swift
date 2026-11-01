@@ -249,7 +249,7 @@ final class AppState: ObservableObject {
     /// One line for the control bar: what Cue is doing, or the first thing that needs attention.
     var status: (text: String, kind: StatusKind) {
         if readingMaterials { return ("Reading materials…", .working) }
-        if planLimit != nil { return ("Cue plan limit reached", .problem) }
+        if planLimit != nil { return ("Plan limit reached", .problem) }
         if !speech.ok { return (speech.detail, speech.working ? .working : .problem) }
         if !claude.ok { return (claude.detail, claude.working ? .working : .problem) }
         if !call.ok && !mic.ok { return ("No audio", .problem) }

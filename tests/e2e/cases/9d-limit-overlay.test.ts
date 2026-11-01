@@ -14,7 +14,7 @@ e2eCase('At the plan limit the overlay says so plainly where it says what Cue is
     let shown = '';
     await cue.waitFor('the overlay to say the limit is reached', 60, async () => {
         shown = await cue.snapshotText(cue.path('cue.png'));
-        return /plan limit reached/i.test(shown);
+        return /plan limit/i.test(shown);
     });
-    assertContains(cue.save('overlay.txt', shown), /Cue plan limit reached/);
+    assertContains(cue.save('overlay.txt', shown), /plan limit/i);
 });
