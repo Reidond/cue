@@ -1,4 +1,4 @@
-import { assertContains, assertEq, countLines, e2eCase, minutesFromNow, sleep } from '../harness/index.ts';
+import { assertEq, countLines, e2eCase, minutesFromNow, sleep } from '../harness/index.ts';
 
 e2eCase(
     'The project picked for a recurring meeting on Upcoming is remembered for its next occurrence, after ' + 'relaunch.',
@@ -19,8 +19,13 @@ e2eCase(
             { title: 'Board meeting', start: minutesFromNow(90), end: minutesFromNow(120), url: 'https://acme.webex.com/meet/board' },
         ]);
         await cue.launch({ CUE_SNAPSHOT: cue.path('cue.png') });
+        // The page can be read with one call's row on it before the other's picker: wait for what is checked, not only for a title.
         await cue.dashboardPage('upcoming', /Board meeting/);
-        assertEq(countLines(text, /Meetings/), 2, 'both calls go to Meetings at first');
+        await cue.waitFor(
+            'both calls to go to Meetings at first',
+            20,
+            async () => (await cue.dashboardShows(/Board meeting/)) && countLines(text, /Meetings/) === 2,
+        );
         cue.control('assign Weekly sync | Research');
         // The sidebar lists Research; the meeting's picker shows it too.
         await cue.waitFor(
@@ -48,8 +53,11 @@ e2eCase(
         await cue.launch({ CUE_SNAPSHOT: cue.path('cue.png') });
         await cue.dashboardPage('upcoming', /Kickoff/);
         // Vision on GitHub's runners sometimes runs the title together ("Weeklysync").
-        assertContains(text, /Weekly ?sync/);
-        assertEq(countLines(text, /Research/), 2, 'the next Weekly sync should still go to Research');
-        assertEq(countLines(text, /Meetings/), 1, 'a new call goes to Meetings');
+        await cue.waitFor(
+            'the next Weekly sync to go to Research, and Kickoff to Meetings',
+            20,
+            async () =>
+                (await cue.dashboardShows(/Weekly ?sync/)) && countLines(text, /Research/) === 2 && countLines(text, /Meetings/) === 1,
+        );
     },
 );
