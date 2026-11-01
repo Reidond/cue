@@ -82,8 +82,10 @@ e2eCase(
             return stored?.participants.includes('Petro Ivanenko') === true && stored.title === 'Reading room plan with Petro Ivanenko';
         });
 
-        // The open note shows the new name.
+        // The open note shows the new name, in its summary and on its transcript's turns: tall enough that the transcript is in
+        // view, as a window captured on screen shows only what's scrolled into it.
+        cue.control('size 1060 1400');
         await cue.waitFor('the page to show the new name', 20, () => cue.dashboardShows(/^Petro Ivanenko opened the call/));
-        assertContains(cue.page, /^Petro Ivanenko( 00:[0-9:]+)?$/);
+        await cue.waitFor('a turn to show the new name', 20, () => cue.dashboardShows(/^Petro Ivanenko( 00:[0-9:]+)?$/));
     },
 );

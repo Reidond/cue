@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { assertEq, bursts, e2eCase, fail, fixture, LiveClient, pcmOf, startCall } from '../harness/index.ts';
+import { assertEq, bursts, DEEPGRAM, e2eCase, fail, fixture, LiveClient, pcmOf, skip, startCall } from '../harness/index.ts';
 
 e2eCase(
     'Questions asked in the Ask field are answered at once, over the socket and as server-sent events; with Auto off, noticed ones wait for Prepare Answer.',
     async (cue) => {
+        if (DEEPGRAM !== 'fake') skip("scripts Deepgram's replies through the stand-in");
         cue.standIns({ FAKE_CLAUDE_ANSWER: 'Because rooftops have fewer pesticides.\n• Linden flowers\nSource: talk.md' });
         const backend = await cue.backend();
         const call = await startCall(backend, 'ann@cue.test', { materials: [fixture('materials', 'talk.md')], call: { auto: false } });

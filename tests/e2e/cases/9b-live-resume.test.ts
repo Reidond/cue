@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { assertEq, bursts, e2eCase, fail, fixture, LiveClient, pcmOf, startCall } from '../harness/index.ts';
+import { assertEq, bursts, DEEPGRAM, e2eCase, fail, fixture, LiveClient, pcmOf, skip, startCall } from '../harness/index.ts';
 
 e2eCase(
     'A client that drops and reconnects to the same call resumes it: it hears what it missed, the conversation goes on, and speech recognition was never restarted.',
     async (cue) => {
+        if (DEEPGRAM !== 'fake') skip("scripts Deepgram's replies through the stand-in");
         cue.standIns({
             FAKE_DEEPGRAM_LIVE: JSON.stringify(['And what did you find?']),
             FAKE_CLAUDE_ANSWERS: JSON.stringify({ 'many hives': 'Forty eight hives.', 'where were': 'On six rooftops in Kyiv.' }),
@@ -69,6 +70,7 @@ e2eCase(
 );
 
 e2eCase('A call nobody comes back to is ended on its own, and what it heard is kept.', async (cue) => {
+    if (DEEPGRAM !== 'fake') skip("scripts Deepgram's replies through the stand-in");
     cue.standIns({ FAKE_DEEPGRAM_LIVE: JSON.stringify(['Is this recorded?']) });
     const backend = await cue.backend({ env: { CACHE_TICK_SECONDS: '1', CALL_GRACE_SECONDS: '3' } });
     const call = await startCall(backend, 'ann@cue.test');
