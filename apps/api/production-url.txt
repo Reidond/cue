@@ -1,1 +1,1 @@
-https://cue-api.YOUR-SUBDOMAIN.workers.dev
+https://cue.sands.red

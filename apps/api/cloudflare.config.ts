@@ -40,8 +40,10 @@ export default defineConfig(({ mode }) => ({
         name: 'cue-api',
         compatibilityDate: '2026-10-23',
         entrypoint,
-        // Served on <name>.<account subdomain>.workers.dev for now (no custom domain, no previews), and watched in the dashboard.
-        workersDev: true,
+        // Served on the production address's own host (a custom domain: Cloudflare makes its DNS record and certificate on deploy), and only
+        // there: the issuer and the sign-in cookies are that host's. No previews; watched in the dashboard.
+        domains: mode === 'development' ? [] : [new URL(productionUrl).hostname],
+        workersDev: false,
         previewUrls: false,
         observability: { enabled: true },
         // The admin SPA (apps/admin) is Vite's client build, served under /admin with the single-page-app fallback. The fallback is not limited

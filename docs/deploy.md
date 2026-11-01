@@ -18,13 +18,9 @@ Nothing here has been run against a real Cloudflare account: the spike and the p
 
 ## 0. Before anything: the address
 
-The Worker is served on `https://cue-api.<your workers.dev subdomain>.workers.dev`. The subdomain is the account's (Cloudflare dashboard › Workers & Pages ›
-the right-hand side shows `<subdomain>.workers.dev`; set one there if the account has none). Put the full address in `apps/api/production-url.txt` and commit it
-**before** the first deploy: the OAuth apps below, the token issuer and the Mac app all use it. It ships as `https://cue-api.cue.workers.dev`, which is a guess.
-
-```bash
-printf 'https://cue-api.YOUR-SUBDOMAIN.workers.dev\n' > apps/api/production-url.txt
-```
+The Worker is served on `https://cue.sands.red`, a custom domain on the account's `sands.red` zone, and only there (`workersDev: false`). The address is
+`apps/api/production-url.txt`; `cloudflare.config.ts` publishes the Worker to its host (`domains`), and `cf deploy` makes the DNS record and the certificate. The OAuth
+apps below, the token issuer and the Mac app all use it, so a new address is a commit to that file before anything else.
 
 ## 1. The Cloudflare API token
 
@@ -51,21 +47,21 @@ pnpm install
 
 ## 2. The OAuth apps (sign-in with Google and GitHub)
 
-Both use the callback `https://cue-api.YOUR-SUBDOMAIN.workers.dev/api/auth/callback/<provider>`. People sign in to the Mac app and to the admin through them; the app itself is
+Both use the callback `https://cue.sands.red/api/auth/callback/<provider>`. People sign in to the Mac app and to the admin through them; the app itself is
 a client of the backend's own OAuth server, which needs nothing from you.
 
 **Google** (console.cloud.google.com › APIs & Services › Credentials › Create credentials › OAuth client ID; configure the consent screen first, External, and add yourself as a
 test user, or publish it):
 
 - Application type: Web application.
-- Authorized JavaScript origins: `https://cue-api.YOUR-SUBDOMAIN.workers.dev`
-- Authorized redirect URIs: `https://cue-api.YOUR-SUBDOMAIN.workers.dev/api/auth/callback/google`
+- Authorized JavaScript origins: `https://cue.sands.red`
+- Authorized redirect URIs: `https://cue.sands.red/api/auth/callback/google`
 - Scopes: `openid`, `email`, `profile` (the defaults). Keep the client id and secret.
 
 **GitHub** (github.com › Settings › Developer settings › OAuth Apps › New OAuth App):
 
-- Homepage URL: `https://cue-api.YOUR-SUBDOMAIN.workers.dev`
-- Authorization callback URL: `https://cue-api.YOUR-SUBDOMAIN.workers.dev/api/auth/callback/github`
+- Homepage URL: `https://cue.sands.red`
+- Authorization callback URL: `https://cue.sands.red/api/auth/callback/github`
 - Generate a client secret. Keep the client id and secret. (The app asks for `read:user` and `user:email`.)
 
 Only a provider-verified email may sign in, and only an invited one (or the owner's).
@@ -147,8 +143,8 @@ node scripts/invite.ts --remote friend@example.com --disable
 
 Check, in this order:
 
-1. `curl https://cue-api.YOUR-SUBDOMAIN.workers.dev/v1/openapi.json` answers a JSON document. (The Worker is up.)
-2. Open `https://cue-api.YOUR-SUBDOMAIN.workers.dev/admin/`, sign in with Google and again with GitHub, as an owner. The admin loads (Overview, Users, Invites, Settings). A signed-in
+1. `curl https://cue.sands.red/v1/openapi.json` answers a JSON document. (The Worker is up.)
+2. Open `https://cue.sands.red/admin/`, sign in with Google and again with GitHub, as an owner. The admin loads (Overview, Users, Invites, Settings). A signed-in
    member who is not an owner sees "Not allowed". Invite the first person under Invites.
 3. Build the Mac app (`apps/mac/scripts/build.sh` stamps the address in), start it, sign in. It lists your projects (none yet), and Settings › Account shows the plan and a usage bar.
 4. Make a project, add a file, Start Cue and speak (or play a call): the transcript streams, questions get answers. Stop it: the notes appear with a summary.
@@ -156,9 +152,9 @@ Check, in this order:
 
 ## Before you spend money: prices
 
-`apps/api/src/pricing.ts` is the one table every `usage` row is priced by (Anthropic per million tokens, Deepgram per minute). They are list prices written from memory and the
-spike: **compare them with Anthropic's and Deepgram's pricing pages and with the first invoices**, because the monthly limits enforce against them. The default limit is 20 USD a
-person (Admin › Settings).
+`apps/api/src/pricing.ts` is the one table every `usage` row is priced by (Anthropic per million tokens, Deepgram per minute, with its speaker and keyterm add-ons). They are the
+list prices of November 2026, from Anthropic's and Deepgram's pricing pages: **compare them with the first invoices, and again whenever a provider changes its prices**, because the
+monthly limits enforce against them. The default limit is 20 USD a person (Admin › Settings).
 
 ## What a real deploy has not verified
 
@@ -174,8 +170,8 @@ The spike and the pull requests could not check these without a real account; lo
 - **Deepgram from Workers.** The Call Durable Object holds an outbound WebSocket per channel to `api.deepgram.com` (Nova-3, with `diarize`). Under `cf dev` it talks to a stand-in. Watch the first real call's
   logs (Workers › cue-api › Observability) for `speech` status events and reconnects.
 - **The remote scripts.** `scripts/invite.ts --remote` and `scripts/migrate-remote.ts` find the database by name through `cf d1 list`; neither has run against a real account.
-- **Workflows and Durable Object migrations on first upload**, the **sign-in on `workers.dev`** (cookies are `Secure`, set on that host) and **`cf deploy --provision`** creating the R2 buckets by name.
-- **Prices** (above).
+- **Workflows and Durable Object migrations on first upload**, the **custom domain** (its DNS record and certificate, made by `cf deploy`), the **sign-in on `cue.sands.red`** (cookies are `Secure`, set on that host) and **`cf deploy --provision`** creating the R2 buckets by name.
+- **Prices** against the first invoices (above).
 
 ## Rolling back
 

@@ -66,11 +66,16 @@ e2eCase(
         assertEq(after.usage.periodStart, Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
         assertEq(after.usage.periodEnd, Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
 
-        // Speech is priced by the table: Deepgram's live rate, 0.0077 USD a minute.
-        const [speech] = await backend.rows(
-            "SELECT SUM(units) AS seconds, SUM(cost_micros) AS micros FROM usage WHERE feature = 'live_transcript'",
+        // Speech is priced by the table, per side: Deepgram's live rate, 0.0077 USD a minute, and 0.0020 more for the call side's speakers
+        // (the project has no names or terms, so no keyterms).
+        const sides = await backend.rows(
+            "SELECT model, SUM(units) AS seconds, SUM(cost_micros) AS micros FROM usage WHERE feature = 'live_transcript' GROUP BY model",
         );
-        const expected = (Number(speech?.['seconds']) * 7700) / 60;
-        assertBetween(Number(speech?.['micros']), expected - 2, expected + 2, 'priced at the live rate');
+        const others = sides.find((side) => side['model'] === 'nova-3:others');
+        assertEq(others !== undefined, true, `the call side has a row of its own, got ${JSON.stringify(sides)}`);
+        for (const side of sides) {
+            const expected = (Number(side['seconds']) * (side['model'] === 'nova-3:others' ? 9700 : 7700)) / 60;
+            assertBetween(Number(side['micros']), expected - 2, expected + 2, `${String(side['model'])} priced at the live rate`);
+        }
     },
 );
