@@ -356,10 +356,11 @@ A run stays out of the way of whoever is using the Mac: every Cue it launches
 has `CUE_BACKGROUND=1`, so it never comes to the front or takes focus, and its
 windows stay behind all others, where snapshots still capture them. Every
 Cue it launches is in US English too (`-AppleLocale en_US`), whatever the
-Mac's region, so cases can look for `$2.50` and `Nov 1`. A snapshot taken on
-screen shows only what is scrolled into view (an offscreen one, as on CI,
-can show more): a case that reads text far down a page makes the window tall
-enough first (`size W H`).
+Mac's region, so cases can look for `$2.50` and `Nov 1`. A window
+captured on screen shows only what is scrolled into view: a case that reads
+text far down a page, and doesn't find it, makes the window taller
+(`size W H`). Only then, because a window asked to be larger than the screen
+is cut to it, smaller than it was (GitHub's runner has a small screen).
 
 ### Writing a case
 
