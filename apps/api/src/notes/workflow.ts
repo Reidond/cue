@@ -38,7 +38,8 @@ const took = (since: number) => ((Date.now() - since) / 1000).toFixed(1);
 /** A failure's reason as a session-log line has it: no full stop at the end. */
 const reasonOf = (error: unknown) => {
     const message = error instanceof Error && error.message !== '' ? error.message : describe(error);
-    return message.replace(/[. ]+$/, '');
+    // A step that gave up for good arrives as "NonRetryableError: the reason".
+    return message.replace(/^NonRetryableError:\s*/, '').replace(/[. ]+$/, '');
 };
 
 /** What a step says about itself while it runs and when it fails; `kept` is what the note keeps then. */

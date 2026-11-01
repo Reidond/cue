@@ -56,3 +56,16 @@ export function labelsOf(speakers: string, voice: string): string {
     });
     return [...new Set(labels)].sort().join(',');
 }
+
+/** Where the timeline puts each line, and where the stand-in heard speech in the audio the backend sent it: to read when the two differ. */
+export function heardReport(timeline: string, heard: { side: string; seconds: number; heard: [number, number][] }[]): string {
+    const fixed = (value: number) => value.toFixed(2);
+    const placed = lines(timeline).map((row) => row.split('\t').slice(0, 4).join(' '));
+    return [
+        `timeline: ${placed.join(' | ')}`,
+        ...heard.map((request) => {
+            const stretches = request.heard.map(([from, to]) => `${fixed(from)}-${fixed(to)}`).join(' ');
+            return `${request.side} (${fixed(request.seconds)} s): ${stretches}`;
+        }),
+    ].join('\n');
+}

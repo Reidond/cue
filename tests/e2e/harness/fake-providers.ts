@@ -121,6 +121,8 @@ export interface DeepgramFileRequest {
     seconds: number;
     bytes: number;
     contentType: string;
+    /** The stretches of speech it found in the audio, in seconds: where each utterance starts and ends. */
+    heard: [number, number][];
     /** Failed on purpose (FAKE_DEEPGRAM_FILE_FAILS). */
     failed?: boolean;
 }
@@ -436,6 +438,7 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
                 seconds: decoded ? decoded.samples.length / decoded.rate : 0,
                 bytes: audio.length,
                 contentType: String(request.headers['content-type'] ?? ''),
+                heard: decoded ? stretches(decoded.rate, decoded.samples) : [],
                 ...extra,
             } satisfies DeepgramFileRequest);
         if (key !== FAKE_KEYS.deepgram) {

@@ -219,7 +219,11 @@ final class MeetingMonitor: ObservableObject {
         let pending = asking
         pending.forEach(withdraw)
         Task {
-            guard let project = await self.project(for: call.event) else { return }
+            guard let project = await self.project(for: call.event) else {
+                // No project yet (nobody is signed in, so "Meetings" can't be created): the next check tries again.
+                self.settled.remove(call.key)
+                return
+            }
             self.state.log.write("📅 Recording “\(call.title)” into \(project.name)")
             self.state.startRecording(into: project, meeting: call.event.map { MeetingDetails(title: $0.title, attendees: $0.attendees) }, by: trigger)
             self.recording = call

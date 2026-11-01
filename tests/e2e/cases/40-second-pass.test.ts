@@ -9,7 +9,9 @@ import {
     fail,
     FAKE_KEYS,
     fixture,
+    heardReport,
     matches,
+    print,
 } from '../harness/index.ts';
 
 e2eCase(
@@ -53,6 +55,7 @@ e2eCase(
         // the recording (timeline: 0.50 call, 6.63 me, 12.88 call, 17.28 me, 20.66 call), both speakers.
         const notes = cue.readyNotes();
         assertFile(notes);
+        print(heardReport(call.timeline, cue.serviceRequests('deepgram-file')));
         assertContains(notes, /^## Транскрипт$/);
         assertContains(notes, /до п['’ʼ]ятниці/);
         assertContains(notes, /узгодженості даних/);

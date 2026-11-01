@@ -6,6 +6,7 @@ import {
     countLines,
     dialogue,
     e2eCase,
+    heardReport,
     fixture,
     labelsOf,
     matches,
@@ -50,6 +51,7 @@ e2eCase(
         assertNotContains(notes, /· Participant\*\*$/, "every call-side turn should have its speaker's number");
 
         // Each line of the dialogue is under its voice's label: one label per voice, a different one for each.
+        print(heardReport(call.timeline, cue.serviceRequests('deepgram-file')));
         const speakers = turnSpeakers(notes, call.timeline);
         const table = cue.save('speakers.tsv', speakers);
         print(speakers);

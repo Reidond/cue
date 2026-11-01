@@ -38,7 +38,7 @@ export {
     writeExecutable,
 } from './files.ts';
 export { bursts, LiveClient, pcmOf, startCall, type StartedCall } from './live.ts';
-export { labelsOf, summaryOf, turnSpeakers } from './notes.ts';
+export { heardReport, labelsOf, summaryOf, turnSpeakers } from './notes.ts';
 export {
     beginUpload,
     getNote,

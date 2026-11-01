@@ -9,6 +9,7 @@ import {
     audioSync,
     dialogue,
     e2eCase,
+    heardReport,
     fail,
     findFiles,
     fixture,
@@ -75,6 +76,7 @@ e2eCase(
         if (!sync.ok) fail('the two sides should be in sync', sync.output);
         print(sync.output);
 
+        print(heardReport(call.timeline, cue.serviceRequests('deepgram-file')));
         // The transcript's timestamps are times in the audio (timeline: 0.50 call, 5.35 me, 9.24 call, 12.48 me).
         assertContains(notes, /^\*\*00:00:00 · Participant\*\*$/);
         assertContains(notes, /^\*\*00:00:05 · Andrii Test\*\*$/);
