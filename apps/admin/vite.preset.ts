@@ -10,8 +10,17 @@ import type { UserConfig } from 'vite';
 export function adminClient(): UserConfig {
     const src = join(import.meta.dirname, 'src');
     return {
-        base: '/admin/',
         plugins: [
+            // The SPA lives under /admin. Vite's dev server serves it there by its base; a build can't, because a Worker's assets are served from
+            // the root (`assets.basePath` is not available to every account): it keeps index.html at the root, where the single-page-app fallback
+            // finds it for every /admin/… navigation, and its scripts and styles under /admin/assets.
+            {
+                name: 'admin-base',
+                config: (_, { command }) =>
+                    command === 'build'
+                        ? { base: '/', environments: { client: { build: { assetsDir: 'admin/assets' } } } }
+                        : { base: '/admin/' },
+            },
             // File-based routes: src/routes/*.tsx become src/routeTree.gen.ts (kept in the repository, as TanStack's own docs do).
             tanstackRouter({ target: 'react', routesDirectory: join(src, 'routes'), generatedRouteTree: join(src, 'routeTree.gen.ts') }),
             // The React Compiler memoizes components itself: no hand-written useMemo / useCallback / memo here.
