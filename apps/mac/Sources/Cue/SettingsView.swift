@@ -11,7 +11,7 @@ enum SettingsTab: String, CaseIterable {
     var size: CGSize {
         switch self {
         case .general: CGSize(width: 500, height: 660)
-        case .account: CGSize(width: 500, height: 440)
+        case .account: CGSize(width: 500, height: 600)
         case .calendar: CGSize(width: 500, height: 440)
         }
     }

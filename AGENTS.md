@@ -118,7 +118,7 @@ What a person may spend, and what stops them. `docs/backend.md` › Limits has t
 - **`/v1/me`** reports `limits.monthlyUsd`, and `usage`: `usd`, `audioSeconds`, `limitReached`, `byFeature` (dearest first), `periodStart`, `periodEnd`.
 - **The Mac**: `CueMe` decodes them; Settings › Account has the usage bar (`UsageBar`), the limit, when it starts over and where the money went. `AppState.planLimit` is set by
   a `limit_reached` from `POST /v1/calls`, by the socket's `error` event, or by `/v1/me` (`CUE_ME_TICK`) saying `limitReached`: an alert once (`⚠︎ Cue plan limit reached: SENTENCE`), the
-  overlay's status line says "Cue plan limit reached", and `🔓 Cue plan has room again` when it clears (a raised limit, a new month, an answer arriving).
+  overlay's status line says "Plan limit reached", and `🔓 Cue plan has room again` when it clears (a raised limit, a new month, an answer arriving).
 - **In a case** (`9d-…`, all but `9d-limit-app` and `9d-limit-overlay` run with `--no-app`): `backend.setLimit(owner, email, usd | null)` (the admin API; the backend needs
   `adminEmails`) and `backend.seedUsage` put a person over or under; `cue.backend({ env: { RATE_LIMIT_REQUESTS: '6', RATE_LIMIT_PERIOD: '10', … } })` makes `rate_limited` easy to see.
 
