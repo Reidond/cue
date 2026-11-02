@@ -4,7 +4,9 @@ Cue is a macOS overlay prompter and call notetaker: SwiftPM executable in
 `apps/mac/Sources/Cue`, resources in `apps/mac/Resources/`, built into
 `apps/mac/build/Cue.app` by `apps/mac/scripts/build.sh`. See `README.md` for
 what it does. `docs/backend.md` is the design of the Cloudflare backend and
-admin app that are being added beside it.
+admin app that are being added beside it. Cue for Windows (`apps/windows`, C# on
+WinUI 3) is the Mac app's port: built into `apps/windows/build/ARCH/Cue.exe` and an
+MSI by `apps/windows/scripts/build.ps1`; see its section below.
 
 ## Layout
 
@@ -14,6 +16,7 @@ The repository is a Vite+ (`vp`) pnpm monorepo:
 package.json, pnpm-workspace.yaml   # apps/*, packages/*, tests/e2e; pnpm-lock.yaml is the only lockfile
 vite.config.ts                      # the one lint (oxlint) and fmt (oxfmt) configuration, overrides per package
 apps/mac/                           # the Swift app: Package.swift, Sources/Cue, Resources, scripts/build.sh
+apps/windows/                       # the Windows app: Cue.slnx, Cue/ (WinUI 3), Installer/ (WiX MSI), scripts/{build,setup}.ps1
 apps/api/                           # the Cue API: an Elysia Worker on Cloudflare (cloudflare.config.ts, src/, migrations/, scripts/)
 apps/admin/                         # the owner's admin SPA (React): built as the api Worker's client assets, served at /admin
 packages/contract/                  # TypeBox schemas of the API's requests and responses
@@ -202,6 +205,63 @@ After a call the recording goes up and the backend makes the notes. `docs/backen
   `syncWithAccount` imports notes without a `note:` (`📦 Imported N notes from this Mac`) and writes the account's notes the library lacks (`☁️ Restored N notes from your account`).
   Rename, Apply, ✕ and Move to Trash are `PATCH` / `DELETE` and then the same file edits as before; the player streams `…/audio/mixed` when the `.m4a` isn't on disk.
 
+## Cue for Windows (`apps/windows`)
+
+The port of the Mac app to WinUI 3 (C#, .NET 10 LTS, Windows App SDK 2), in slices: the foundation (the shell, storage, session log, test hooks, sign-in
+and account, installer, CI and the e2e harness on Windows), then projects and materials, the live call and its overlay, recordings and notes, meetings and
+the calendar, each plugging into the pieces below. Fluent idioms are the HIG rule here: `NavigationView`, `TitleBar`, Mica, light and dark by the system,
+standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (the system browser signs in).
+
+- **Layout**: `Cue.slnx`, `Cue/` (the app: `Core/` has no UI, `Views/` the pages, `MainWindow`), `Installer/` (WiX), `scripts/{build,setup}.ps1`.
+  The app is unpackaged (`WindowsPackageType=None`) and self-contained (`SelfContained`, `WindowsAppSDKSelfContained`): `Cue.exe` and the .NET and
+  Windows App SDK runtimes sit in one folder, so the MSI needs no runtime installer. x64 and arm64; Windows 11 and Windows 10 22H2 (`TargetPlatformMinVersion` 10.0.19041).
+- **Build**: `powershell -ExecutionPolicy Bypass -File apps\windows\scripts\build.ps1 [-Arch x64|arm64] [-Version 2.0.1] [-Msi] [-Output DIR]` is the one
+  entry point (you, the suite, CI, release): it publishes to `apps\windows\build\ARCH\Cue.exe` and with `-Msi` makes `build\Cue-VERSION-ARCH.msi` (`dotnet
+  build` of `Installer\Installer.wixproj`, WiX `WixToolset.Sdk` 6.0.2: no Visual Studio). Warnings fail it (`TreatWarningsAsErrors`; the installer's ICE rules
+  it ignores on purpose are named in the wixproj). The version is the Mac's, `CFBundleShortVersionString` of `apps/mac/Resources/Info.plist` plus the patch
+  (`-Version`, which release.yml computes from the tags), and goes into both the app (`Env.Version`, `Cue-Version: windows/VERSION`) and the MSI; the
+  backend's address is stamped from `apps/api/production-url.txt` (assembly metadata `CueApiUrl`; `CUE_API_URL` overrides it; a plain `dotnet build`
+  talks to `cf dev`). WiX 7 makes its user accept the OSMF EULA (`AcceptEula`: a fee above $10k revenue a year): that is the owner's call, so
+  the repository stays on 6.0.2. `scripts/setup.ps1 [-Install]` installs the toolchain on a fresh Windows (git, .NET 10 SDK, Node.js 26, pnpm; `-Install` runs
+  `pnpm install`); on Windows for Arm Node.js is the x64 build on purpose and the x64 Visual C++ runtime is added, as workerd and Vite+'s native
+  packages exist for x64 only and run emulated.
+- **The MSI** (`Installer/Package.wxs`): per machine into `Program Files\Cue`, a Start menu shortcut, an entry in Apps, a stable `UpgradeCode` with `MajorUpgrade` (a newer
+  MSI replaces an older one, an older one is refused), nothing in the registry; the person's settings, library and notes stay on uninstall. It is unsigned: the release notes
+  say what SmartScreen shows. The URL protocol the Mac needs is not needed (below).
+- **Sign-in** (`Core/CueApi.cs`, `Core/LoopbackReceiver.cs`): the Mac's OAuth 2.1 + PKCE flow as its own trusted client `cue-windows` (`migrations/0008_windows_client.sql`,
+  `OAUTH.windowsClientId`), through the system browser and a **loopback redirect** (RFC 8252 §7.3): Cue listens on `127.0.0.1` at a port the system gives it and sends
+  `http://127.0.0.1:PORT/oauth/callback`; the client is registered as `http://127.0.0.1/oauth/callback` and Better Auth's oauth-provider accepts any port for it (and nothing
+  else). Chosen over a registered URI scheme with `AppInstance` redirection because it needs nothing registered (not by the MSI, not by a dev build), no second process
+  to hand the callback over, no browser "Open Cue?" prompt, and the case runs the real listener. The pages a failed sign-in ends at (`/invite-only`, `/sign-in-failed`) send the
+  person back to the app that started it: `/login/:provider` leaves a `cue_return` cookie with the authorization request's redirect URI (the Mac's scheme, or a loopback address with a
+  port), and `src/pages.ts` builds "Return to Cue" from it (the Mac's when there is none). The refresh token is in Windows Credential Manager (`Core/SecretStore.cs`); under
+  `CUE_HOME` in `CUE_HOME/Keychain.json` as on the Mac. `CUE_WEB_AUTH=headless` follows the authorize URL with `HttpClient` and cookies, presses the stand-in provider's
+  button, and ends where a browser would, at Cue's own listener.
+- **Where the next slices plug in**: `AppState` (`Core/AppState.cs`: the log, preferences, `Api`, `Dashboard`, `Control`, `PlanLimit`; one instance, `App.State`); `CueApi.Request(method, path, query, json,
+  file, body, contentType, timeout)` and `Bearer()` for every call (a bearer token refreshed on its own, `{error: {code, message, retryable}}` as `CueApiException`: kinds
+  `LimitReached`, `RateLimited`, `PlanPaused`, `Ended`, `Network`, `Server`; `OnSignedIn` runs before Cue counts as signed in); `state.Control.Register("new", run, needsSignIn)` for a `CUE_CONTROL`
+  command; `DashboardModel.PageResolvers` for `page NAME` and `DashboardPage` + `MainWindow` for navigation items (a page is a `Page` that gets the `AppState` as its navigation parameter,
+  and shows a `SignInView` while signed out); `Settings` tabs in `SettingsPage`; `SessionLog.Write` (use `SessionLog.Warning` for `⚠︎`, whose second character is U+FE0E); `Storage.AppSupport` and
+  `Storage.Documents` for paths (**keep every `DispatcherQueueTimer` in a field**: one that only a local variable holds is garbage-collected and silently stops, which looked like commands and snapshots going missing now and then); `SettingsFile`/`Preferences` for settings (`settings.json`).
+- **Where it is built and tested**: never on this Mac. The Windows 11 VM of vmpal (VM "Windows VM 1", Arm; `vmpal_*` tools, agent control on): share the worktree read-only
+  (`vmpal_update_vm` `sharedFolders` with name `cue-src`: it is `Z:\cue-src`), copy it to the VM's own disk (`robocopy Z:\cue-src C:\src\cue /MIR /XD node_modules .git build obj bin .vs`; never
+  build on the share), run `setup.ps1 -Install` once (from an elevated shell: `vmpal_exec_admin`), then `node tests\e2e\run.ts w0- 9e-` there with `vmpal_exec` (short `waitSeconds`, then `vmpal_exec_result`).
+  A process started by `vmpal_exec` ends with the command: to look at a window yourself start Cue with `Invoke-CimMethod -ClassName Win32_Process -MethodName Create`, and read the window
+  with `vmpal_screenshot` in both themes (`CUE_APPEARANCE=light|dark`). The VM snapshot `cue-toolchain` has the toolchain installed and the repository's packages in `C:\src\cue`.
+  `w1-installer` installs per machine, so it needs an elevated process (`vmpal_exec_admin`; a CI runner is one) and skips without.
+- **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks) and `w1-…` (the installer) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
+  them together with the cases that never launch the app (the source has no `.launch(`, `.cli(` or `.control(`: the backend's own, `9a-…` to `9e-…`, `95`–`99`). `9e-windows-sign-in` signs in as `cue-windows` end to end
+  and runs anywhere with `--no-app`. A case reads what the window shows with `windowText(pid)` (`tools/uia.ps1`: the text of its UI Automation tree, exact (no recognition errors) and complete, what is scrolled out of view too),
+  and `windowsOf(pid)` is `tools/windows.ps1` (the foreground, the windows' sizes and styles: the twin of `appWindows`); `ocr` is `tools/ocr.ps1` (Windows' own `Windows.Media.Ocr`; it needs the English recognizer,
+  `Language.OCR~~~en-US~0.0.1.0`, which `setup.ps1` adds) for what a snapshot shows; `cue.defaults()` edits `settings.json`; `cue.stop()` sends `quit` through the control file and kills the tree after 10 s.
+- **Hooks that differ** (the rest of the table below applies as it reads; the audio ones arrive with their slice): `CUE_HOME` has the Mac's layout (`CUE_HOME/Application Support/Cue`, `CUE_HOME/Documents`, sessions in
+  `Application Support/Cue/sessions/*.md`) and keeps settings in `Application Support/Cue/settings.json`, the refresh token in `CUE_HOME/Keychain.json` (without it: `%APPDATA%\Cue`, `Documents\Cue`, Credential Manager);
+  `CUE_LOCALE=en-US` makes numbers, dates and Windows' own strings that culture (the harness sets it: the Mac's `-AppleLocale`); `CUE_BACKGROUND=1` shows the window without activating it, as a tool window (no taskbar button) that a
+  click doesn't activate, at the bottom of the z-order, with the process opted out of power throttling, and an alert goes only to the session log; `CUE_SNAPSHOT=png` writes `…-dashboard.png` every 2 s with `PrintWindow`
+  (Settings is a page of the dashboard, so there is no `-settings.png`; `CUE_SNAPSHOT_METHOD` doesn't apply; `📸 Snapshots: window capture (PrintWindow), in the dark appearance`); `CUE_APPEARANCE`, `CUE_SHOW_SETTINGS`,
+  `CUE_ME_TICK`, `CUE_API_URL`, `CUE_WEB_AUTH=headless` as on the Mac; `CUE_CONTROL` commands now: `signin [google|github]`, `signout`, `settings general|account`, `page home|upcoming`, `size W H`, `quit`
+  (`signin`, `signout`, `settings`, `page`, `size` and `quit` work signed out; any other command then logs `⚠︎ Sign in to Cue first (NAME ignored)`).
+
 ## Cloud sandboxes (Boat)
 
 Use a Boat sandbox for builds, tests, untrusted code, Docker, and long jobs.
@@ -229,7 +289,8 @@ Boat supplies Linux VMs. Run portable checks such as `vp check` there. Building 
 frameworks: use the existing macOS CI runner or an explicitly authorized remote
 Mac, never this computer. The macOS test and snapshot recipes below apply on that
 runner; a Linux check is not evidence that the app builds or passes its native
-cases. Report unavailable native checks as not-run or skipped with their reason.
+cases. Report unavailable native checks as not-run or skipped with their reason. Cue for Windows is built and tested on Windows, never on this computer: in
+the Windows 11 VM (vmpal, see its section), or on CI's Windows runners.
 An SSH connection does not keep a sandbox alive: check `boat info "$id"` and
 extend its lifetime before long work.
 
@@ -343,6 +404,8 @@ node tests/e2e/run.ts --no-build 4 5   # the existing build; cases whose name st
 node tests/e2e/run.ts --no-app 95-     # no app at all: only cases about the backend (they run on Linux, in a Boat sandbox)
 node tests/e2e/run.ts --real-deepgram 83 84   # the backend's Deepgram is the real one, its key from the keychain
 node tests/e2e/run.ts --keep           # keep every sandbox (a failed case always keeps its own)
+node tests\e2e\run.ts                  # on Windows: build apps/windows (build.ps1), then the w… cases and the backend's own (no app launched)
+node tests\e2e\run.ts --no-build w0-  # on Windows: the app already built (apps\windows\build\ARCH\Cue.exe)
 pnpm install && vp check               # format, lint, type-check; run it before you commit
 ```
 
@@ -367,7 +430,7 @@ is cut to it, smaller than it was (GitHub's runner has a small screen).
 Each case is a TypeScript file, `tests/e2e/cases/NN-name.test.ts`, numbered
 by feature area (`0x` CLI and launch, `1x` prompter and recording, `2x`
 projects and dashboard, `3x` call audio, `4x` the notes' second pass (upload, steps, retries), `5x`
-speakers, `6x` calendar, `7x` the backend's Anthropic calls, `8x` Deepgram through the backend, `9x` signing in, the backend and the admin: the admin's are `9a-…`, the live calls' `9b-…`, the notes' `9c-…`, the limits, usage and rate limits' `9d-…`). It declares one test, whose title says the
+speakers, `6x` calendar, `7x` the backend's Anthropic calls, `8x` Deepgram through the backend, `9x` signing in, the backend and the admin: the admin's are `9a-…`, the live calls' `9b-…`, the notes' `9c-…`, the limits, usage and rate limits' `9d-…`, the Windows app's OAuth client `9e-…`; `wN-…` are Windows-only: `w0-…` the Windows app, `w1-…` its installer). It declares one test, whose title says the
 behaviour it checks:
 
 ```ts
@@ -511,7 +574,7 @@ updating the cases.
 
 - Never run the app for testing without `CUE_HOME`: it would read and change
   the user's real settings, library and notes (and run migrations on them).
-- Build with `apps/mac/scripts/build.sh` before running cases; the build must be
+- Build with `apps/mac/scripts/build.sh` (`apps/windows/scripts/build.ps1` for Windows) before running cases; the build must be
   warning-free for new code.
 - Match the surrounding code: comment density, naming, SwiftUI and HIG idioms
   (standard controls, semantic colours, system Liquid Glass).
@@ -529,15 +592,19 @@ updating the cases.
   snapshot cases skip there, with the probe's reason, if the probe finds those unreadable: CI covers the build, the
   command-line modes, the dashboard and the speech cases. **Run the
   whole suite on an authorized remote Mac before merging** and put its summary
-  in the PR. Keep CI green; never fake what's missing.
+  in the PR. Keep CI green; never fake what's missing. The `windows` job (x64 on `windows-latest`, arm64 on `windows-11-arm`) sets up the toolchain
+  (`setup.ps1 -Install`), builds the app and the MSI (`build.ps1 -Msi`: warnings fail it), and runs `run.ts --no-build` there: the `w…` cases and the backend's own; `build-and-test` requires it, and it keeps the MSI as an artifact.
 - `.github/workflows/deploy.yml` runs on pushes to `main` that touch `apps/api`, `apps/admin`, `packages/contract` or their build (and on demand), never on a fork: `vp check`, the remote
   migrations, `cf deploy`, the migrations again, a check that the Worker answers. It needs the secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` and the variable `ADMIN_EMAILS`. Do not
   run it, or `cf deploy` without `--dry-run`, from here.
 - `.github/workflows/release.yml` runs on every push to `main`: it builds
-  `Cue.app`, zips it and publishes a GitHub release `v<version>.<patch>`
+  `Cue.app` (macOS runner) and the two Windows installers (`Cue-VERSION-x64.msi`, `Cue-VERSION-arm64.msi`, both from one `windows-latest` runner: the arm64 one is cross-built),
+  and publishes a GitHub release `v<version>.<patch>` with all three
   (`<version>` is `CFBundleShortVersionString` in `apps/mac/Resources/Info.plist`,
-  bump it for a new minor or major) with `scripts/changelog.sh` as its notes:
+  bump it for a new minor or major; one version for both platforms) with `scripts/changelog.sh` as its notes:
   every change on `main` since the previous release, one line each, with a
-  merged pull request's own commits listed under it. Write commit subjects and
+  merged pull request's own commits listed under it, then how to install on each platform (the MSI is unsigned: the notes say what SmartScreen shows).
+  Write commit subjects and
   pull request titles that read well in that list.
-  `scripts/changelog.sh v2.0.0` prints the notes of an earlier release.
+  `scripts/changelog.sh v2.0.0` prints the notes of an earlier release. Run by hand (Actions › Release › Run workflow) it is a dry run: it builds the
+  Windows installers, keeps them as the `Cue-windows` artifact and publishes nothing.

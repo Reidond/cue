@@ -1,5 +1,6 @@
-# Checks the TypeScript, builds the app and runs the end-to-end suite on every pull request (and only there). The suite is split across
-# four macOS runners (`run.ts --shard`); `build-and-test`, the check main requires, passes when the check and every shard did.
+# Checks the TypeScript, builds the apps and runs the end-to-end suite on every pull request (and only there). The Mac suite is split across
+# four macOS runners (`run.ts --shard`); Cue for Windows is built and tested on a Windows runner for each processor (its own cases and the
+# backend's). `build-and-test`, the check main requires, passes when the check, every shard and the Windows jobs did.
 name: CI
 
 on:
@@ -104,12 +105,81 @@ jobs:
           path: Cue.zip
           if-no-files-found: ignore
 
+  windows:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: windows-latest, arch: x64 }
+          - { runner: windows-11-arm, arch: arm64 }
+    name: windows (${{ matrix.arch }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # Node.js is the x64 build on both: the backend's workerd and Vite+'s native packages exist for x64 only, and Windows for Arm runs them.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          architecture: x64
+
+      - name: NuGet cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('apps/windows/**/*.csproj', 'apps/windows/**/*.wixproj') }}
+          restore-keys: nuget-${{ runner.os }}-${{ matrix.arch }}-
+
+      - name: Toolchain
+        run: powershell -ExecutionPolicy Bypass -File apps/windows/scripts/setup.ps1 -Install
+
+      - name: Build the app and the installer
+        run: powershell -ExecutionPolicy Bypass -File apps/windows/scripts/build.ps1 -Arch ${{ matrix.arch }} -Msi
+
+      - name: Worker types
+        working-directory: apps/api
+        run: node node_modules/cf/bin/cf workers types
+
+      - name: End-to-end tests
+        env:
+          E2E_WORK: ${{ runner.temp }}\e2e
+        run: node tests/e2e/run.ts --no-build
+
+      - name: Keep the e2e logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-windows-${{ matrix.arch }}
+          # Logs, session logs and snapshots only, not the sandboxes.
+          path: |
+            ${{ runner.temp }}\e2e\*.log
+            ${{ runner.temp }}\e2e\*\cue.out
+            ${{ runner.temp }}\e2e\*\*.txt
+            ${{ runner.temp }}\e2e\*\backend.log
+            ${{ runner.temp }}\e2e\*\*.png
+            ${{ runner.temp }}\e2e\*\*.html
+            ${{ runner.temp }}\e2e\*\home\Application Support\Cue\sessions\*.md
+            ${{ runner.temp }}\e2e\*\home\Application Support\Cue\crash.log
+          if-no-files-found: ignore
+
+      - name: Keep the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cue-windows-${{ matrix.arch }}
+          path: apps/windows/build/Cue-*.msi
+          if-no-files-found: error
+
   build-and-test:
-    needs: [check, e2e]
+    needs: [check, e2e, windows]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: The check and every shard passed
+      - name: The check, every shard and the Windows jobs passed
         run: |
-          echo "check: ${{ needs.check.result }}, e2e: ${{ needs.e2e.result }}"
-          [[ "${{ needs.check.result }}" == success && "${{ needs.e2e.result }}" == success ]]
+          echo "check: ${{ needs.check.result }}, e2e: ${{ needs.e2e.result }}, windows: ${{ needs.windows.result }}"
+          [[ "${{ needs.check.result }}" == success && "${{ needs.e2e.result }}" == success && "${{ needs.windows.result }}" == success ]]

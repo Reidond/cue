@@ -279,12 +279,30 @@ When the call app has let go of the microphone for a minute, Cue stops,
 writes the notes and tells you in a notification; click it to open them. You
 can also record a call in progress from its row in Upcoming.
 
+## Cue for Windows
+
+A native Windows port (WinUI 3, `apps/windows`) is on its way, one piece at a time. So far it is the foundation: the dashboard window
+(Home, Upcoming, Settings; Mica, light and dark), signing in to the same invite-only Cue account in your browser (Google or GitHub), Settings ›
+Account with the month's usage and Sign Out, the session log and the test hooks, the installer and its CI. Projects, the live call and its
+overlay, recordings and notes, and meetings from your calendar follow.
+
+- **Install**: download `Cue-VERSION-x64.msi` (or `-arm64.msi` for Windows on Arm) from the Releases page and open it. It installs Cue for
+  everyone on the PC, adds it to the Start menu, replaces an older Cue, and needs no .NET or Windows App SDK installed. The installer is not
+  signed yet: Windows SmartScreen says **Windows protected your PC**; choose **More info › Run anyway**. Windows 11, or Windows 10 22H2.
+- **Build** (on Windows; `scripts\setup.ps1` installs git, the .NET 10 SDK, Node.js and pnpm on a fresh PC):
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File apps\windows\scripts\build.ps1 -Msi   # apps\windows\build\ARCH\Cue.exe and Cue-VERSION-ARCH.msi
+  ```
+
+- **Test**: `node tests\e2e\run.ts` on Windows runs the `w…` cases (the app and its installer) and the backend's own cases; see `AGENTS.md`.
+
 ## Releases
 
 Every change merged into `main` is built and published on the
-[Releases](https://github.com/Reidond/cue/releases) page with a changelog. The
-builds are signed ad hoc, not notarized: the first time, right-click Cue.app ›
-**Open**.
+[Releases](https://github.com/Reidond/cue/releases) page with a changelog: Cue.app
+for the Mac and the two Windows installers. The Mac builds are signed ad hoc, not
+notarized: the first time, right-click Cue.app › **Open**.
 
 ## Testing
 

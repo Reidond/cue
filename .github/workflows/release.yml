@@ -1,11 +1,14 @@
-# Every push to main builds Cue.app (apps/mac) and publishes it as a GitHub release, with the
-# changes since the previous release as its notes. Versions are CFBundleShortVersionString
-# from apps/mac/Resources/Info.plist plus a patch number: 2.0.0, 2.0.1, … It does not deploy the backend: deploy.yml does, when main changes it.
+# Every push to main builds Cue.app (apps/mac) and the Windows installers of Cue (apps/windows) and publishes them as one GitHub release, with the
+# changes since the previous release as its notes. Versions are CFBundleShortVersionString from apps/mac/Resources/Info.plist plus a patch number:
+# 2.0.0, 2.0.1, … for both platforms. It does not deploy the backend: deploy.yml does, when main changes it.
+#
+# Run by hand (Actions › Release › Run workflow) it is a dry run: it builds the two Windows installers and keeps them as artifacts, and publishes nothing.
 name: Release
 
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,13 +18,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # tags, for the version
+
+      - name: Version
+        id: version
+        run: |
+          base=$(sed -n '/<key>CFBundleShortVersionString<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' apps/mac/Resources/Info.plist)
+          last=$(git tag -l "v$base.*" --sort=-v:refname | head -n 1)
+          if [[ -n $last ]]; then patch=$((${last##*.} + 1)); else patch=0; fi
+          echo "version=$base.$patch" >> "$GITHUB_OUTPUT"
+
+  mac:
+    needs: version
+    if: github.event_name == 'push'
     runs-on: macos-26
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # tags and history, for the version and the changelog
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -34,23 +54,70 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('apps/mac/Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
 
-      - name: Version
-        id: version
-        run: |
-          base=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" apps/mac/Resources/Info.plist)
-          last=$(git tag -l "v$base.*" --sort=-v:refname | head -n 1)
-          if [[ -n $last ]]; then patch=$((${last##*.} + 1)); else patch=0; fi
-          echo "version=$base.$patch" >> "$GITHUB_OUTPUT"
-
       - name: Build
         env:
-          CUE_VERSION: ${{ steps.version.outputs.version }}
+          CUE_VERSION: ${{ needs.version.outputs.version }}
           CUE_BUILD: ${{ github.run_number }}
         working-directory: apps/mac
         run: ./scripts/build.sh
 
       - name: Package
-        run: ditto -c -k --keepParent apps/mac/build/Cue.app "Cue-${{ steps.version.outputs.version }}.zip"
+        run: ditto -c -k --keepParent apps/mac/build/Cue.app "Cue-${{ needs.version.outputs.version }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cue-mac
+          path: Cue-${{ needs.version.outputs.version }}.zip
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    # One x64 runner builds both installers: the arm64 one is cross-built (nothing is run).
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: NuGet cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-release-${{ hashFiles('apps/windows/**/*.csproj', 'apps/windows/**/*.wixproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Build the installers
+        env:
+          CUE_VERSION: ${{ needs.version.outputs.version }}
+        shell: pwsh
+        run: |
+          foreach ($arch in 'x64', 'arm64') {
+            ./apps/windows/scripts/build.ps1 -Arch $arch -Version $env:CUE_VERSION -Msi
+          }
+          Get-ChildItem apps/windows/build -Filter 'Cue-*.msi' | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cue-windows
+          path: apps/windows/build/Cue-*.msi
+          if-no-files-found: error
+
+  publish:
+    needs: [version, mac, windows]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # tags and history, for the changelog
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
 
       - name: Release notes
         run: |
@@ -60,15 +127,26 @@ jobs:
             scripts/changelog.sh
             echo
             cat <<'NOTES'
-          ## Install
+          ## Install on a Mac
 
-          1. Download `Cue-${{ steps.version.outputs.version }}.zip`, unzip it and move **Cue.app** to Applications.
+          1. Download `Cue-${{ needs.version.outputs.version }}.zip`, unzip it and move **Cue.app** to Applications.
           2. This build is signed ad hoc and not notarized: the first time, right-click Cue.app › **Open**
              (or run `xattr -dr com.apple.quarantine /Applications/Cue.app`). macOS asks for the
              microphone and screen-audio permissions again after each update.
           3. Cue is invite-only: sign in with the Google or GitHub account that was invited. The app talks to the Cue backend; see the README.
 
           Requires macOS 26 or later on Apple silicon.
+
+          ## Install on Windows
+
+          1. Download `Cue-${{ needs.version.outputs.version }}-x64.msi` (Intel and AMD PCs) or `Cue-${{ needs.version.outputs.version }}-arm64.msi` (Windows on Arm, such as a
+             Copilot+ PC with a Snapdragon), and open it. It installs Cue for everyone on the PC (Windows asks for permission), puts it in the Start menu, and replaces an
+             older Cue.
+          2. The installer is not signed yet, so Windows SmartScreen says **Windows protected your PC** (and a browser may ask to confirm the download first): choose
+             **More info › Run anyway**. Nothing else is needed: the .NET and Windows App SDK runtimes are part of Cue.
+          3. Cue is invite-only: **Sign In** opens your browser; use the Google or GitHub account that was invited.
+
+          Requires Windows 11, or Windows 10 version 22H2.
           NOTES
           } > notes.md
           cat notes.md
@@ -76,7 +154,7 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          gh release create "v$VERSION" "Cue-$VERSION.zip" --title "Cue $VERSION" \
-            --notes-file notes.md --target "$GITHUB_SHA"
+          gh release create "v$VERSION" "assets/Cue-$VERSION.zip" "assets/Cue-$VERSION-x64.msi" "assets/Cue-$VERSION-arm64.msi" \
+            --title "Cue $VERSION" --notes-file notes.md --target "$GITHUB_SHA"
