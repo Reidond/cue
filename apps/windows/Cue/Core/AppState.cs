@@ -17,6 +17,7 @@ public enum SettingsTab
 {
     General,
     Account,
+    Calendar,
 }
 
 /// <summary>The pages of a project, picked in the bar under its name.</summary>
@@ -129,6 +130,12 @@ public sealed class AppState : Observable
     /// <summary>The notes of the calls: the Markdown copies in the projects' folders and what the account makes of each recording.</summary>
     public RecordingStore Recordings { get; }
 
+    /// <summary>The calls in the calendar the person watches, and where their notes go.</summary>
+    public MeetingCalendar Calendar { get; }
+
+    /// <summary>Notices calls (a calendar call plus a call app on the microphone, or a call app alone) and offers to record them.</summary>
+    public MeetingMonitor Meetings { get; }
+
     /// <summary>Plays the audio of the note open in the dashboard; the transcript's timestamps jump in it.</summary>
     public NotePlayer Player { get; }
 
@@ -142,6 +149,8 @@ public sealed class AppState : Observable
         Projects = new ProjectStore(Api, Log, Preferences);
         Recordings = new RecordingStore(this);
         Player = new NotePlayer(this);
+        Calendar = new MeetingCalendar(Preferences);
+        Meetings = new MeetingMonitor(this);
         // The projects are the account's: once someone is signed in they are loaded (and the ones found in the library imported), and one is chosen.
         Api.OnSignedIn = async () =>
         {
@@ -168,6 +177,7 @@ public sealed class AppState : Observable
         };
         ProjectCommands.Register(this);
         RecordingCommands.Register(this);
+        MeetingCommands.Register(this);
         // After the projects: it follows the one Cue answers from.
         Live = new LiveModel(this);
     }
@@ -179,6 +189,7 @@ public sealed class AppState : Observable
     public async Task<Project> RenameProject(Project project, string name)
     {
         var renamed = await Projects.Rename(project, name);
+        if (renamed.Id != project.Id) Calendar.ProjectRenamed(project.Id, renamed.Id);
         if (Dashboard.ProjectId == project.Id) Dashboard.ProjectId = renamed.Id;
         return renamed;
     }
@@ -213,6 +224,7 @@ public sealed class AppState : Observable
         };
         // Before the account is restored: the live call watches for it to be signed in.
         Live.Start();
+        Meetings.Start();
         Api.Start(Queue);
         Control.StartFromEnvironment();
     }
@@ -220,6 +232,7 @@ public sealed class AppState : Observable
     public void Quit()
     {
         Live.Shutdown();
+        Meetings.Shutdown();
         Microsoft.UI.Xaml.Application.Current.Exit();
     }
 

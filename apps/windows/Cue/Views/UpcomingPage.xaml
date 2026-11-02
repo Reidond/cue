@@ -5,12 +5,9 @@
     <Grid>
         <Border x:Name="SignInHost" />
         <ScrollViewer x:Name="SignedIn" Visibility="Collapsed">
-            <StackPanel Padding="36,24" Spacing="12" MaxWidth="760" HorizontalAlignment="Left">
+            <StackPanel Padding="36,24" Spacing="16" MaxWidth="760" HorizontalAlignment="Left">
                 <TextBlock Text="Upcoming" Style="{StaticResource TitleTextBlockStyle}" />
-                <TextBlock
-                    Text="The calls in your calendar will be here, to record into a project, as Cue for Windows gets them."
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    TextWrapping="Wrap" />
+                <StackPanel x:Name="Body" Spacing="16" />
             </StackPanel>
         </ScrollViewer>
     </Grid>
