@@ -11,6 +11,7 @@ public sealed partial class HomePage : Page
 {
     private AppState state = null!;
     private string recentShown = "";
+    private string upcomingShown = "";
 
     public HomePage() => InitializeComponent();
 
@@ -21,7 +22,10 @@ public sealed partial class HomePage : Page
         state.Api.PropertyChanged += OnChanged;
         state.Projects.PropertyChanged += OnChanged;
         state.Recordings.Changed += OnRecordings;
+        state.Calendar.PropertyChanged += OnChanged;
+        state.Meetings.PropertyChanged += OnChanged;
         recentShown = "";
+        upcomingShown = "";
         Render();
     }
 
@@ -30,6 +34,8 @@ public sealed partial class HomePage : Page
         state.Api.PropertyChanged -= OnChanged;
         state.Projects.PropertyChanged -= OnChanged;
         state.Recordings.Changed -= OnRecordings;
+        state.Calendar.PropertyChanged -= OnChanged;
+        state.Meetings.PropertyChanged -= OnChanged;
     }
 
     private void OnChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => Render();
@@ -47,7 +53,61 @@ public sealed partial class HomePage : Page
         var none = state.Projects.Projects.Count == 0;
         FirstProject.Visibility = none ? Visibility.Visible : Visibility.Collapsed;
         Recent.Visibility = none ? Visibility.Collapsed : Visibility.Visible;
+        Upcoming.Visibility = none ? Visibility.Collapsed : Visibility.Visible;
         if (!none) ShowRecent();
+        if (!none) ShowUpcoming();
+    }
+
+    /// <summary>The next calls from the calendar (three at most), each a way into Upcoming.</summary>
+    private void ShowUpcoming()
+    {
+        var now = DateTimeOffset.Now;
+        var next = state.Calendar.Events.Where(item => item.End > now).Take(3).ToList();
+        var signature = string.Join('\n', next.Select(item => $"{item.Id}\t{item.Title}\t{item.Start:O}\t{state.Meetings.RecordingEvent?.Id == item.Id}"));
+        if (signature == upcomingShown) return;
+        upcomingShown = signature;
+        Upcoming.Children.Clear();
+        if (next.Count == 0) return;
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.Children.Add(new TextBlock { Text = "Upcoming Calls", Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] });
+        var all = new HyperlinkButton { Content = "See all", VerticalAlignment = VerticalAlignment.Center };
+        all.Click += (_, _) => state.Dashboard.Page = DashboardPage.Upcoming;
+        Grid.SetColumn(all, 1);
+        header.Children.Add(all);
+        Upcoming.Children.Add(header);
+        Upcoming.Children.Add(Ui.Card([.. next.Select(CallRow)]));
+    }
+
+    private Button CallRow(CalendarEvent item)
+    {
+        var recording = state.Meetings.RecordingEvent?.Id == item.Id;
+        var text = new StackPanel { Spacing = 2 };
+        text.Children.Add(new TextBlock { Text = item.Title, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1 });
+        text.Children.Add(new TextBlock
+        {
+            Text = $"{Times.Clock(item.Start)}–{Times.Clock(item.End)} · {item.Service.Name()}" + (recording ? " · Recording" : ""),
+            Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+            Foreground = Ui.Theme("TextFillColorSecondaryBrush"),
+        });
+        var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(0, 4, 0, 4) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.Children.Add(new FontIcon { Glyph = "\uE787", FontSize = 20, Foreground = Ui.Theme("TextFillColorSecondaryBrush"), VerticalAlignment = VerticalAlignment.Center });
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(text);
+        var clear = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        var button = new Button { Content = grid, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Background = clear, BorderThickness = new Thickness(0) };
+        button.Resources["ButtonBackground"] = clear;
+        button.Resources["ButtonBackgroundPointerOver"] = Ui.Theme("SubtleFillColorSecondaryBrush");
+        button.Resources["ButtonBackgroundPressed"] = Ui.Theme("SubtleFillColorTertiaryBrush");
+        button.Resources["ButtonBorderBrush"] = clear;
+        button.Resources["ButtonBorderBrushPointerOver"] = clear;
+        button.Resources["ButtonBorderBrushPressed"] = clear;
+        AutomationProperties.SetName(button, $"Upcoming call: {item.Title}");
+        button.Click += (_, _) => state.Dashboard.Page = DashboardPage.Upcoming;
+        return button;
     }
 
     /// <summary>The newest notes across the projects, each a way into its page.</summary>

@@ -22,6 +22,7 @@
                         TextAlignment="Center" />
                     <Button Content="New Project" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Center" Click="OnNewProject" />
                 </StackPanel>
+                <StackPanel x:Name="Upcoming" Spacing="10" Margin="0,12,0,0" />
                 <StackPanel x:Name="Recent" Spacing="10" Margin="0,12,0,0" />
             </StackPanel>
         </ScrollViewer>

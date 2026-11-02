@@ -68,6 +68,16 @@ export async function click(pid: number, name: string): Promise<void> {
     if (ran.stdout.trim() !== 'ok') fail(`nothing named "${name}" to click in the program's windows`, ran.output);
 }
 
+/**
+ * A real click on a button of the notification (toast) Windows is showing (tools/toast.ps1: UI Automation cannot see the shell's toast, so it is found by
+ * reading the corner of the screen). True when the button was there and was clicked; the banner is up for about five seconds, so ask again.
+ */
+export async function clickToast(button: string): Promise<boolean> {
+    const ran = await powershell('toast.ps1', button);
+    if (ran.code !== 0) fail('toast.ps1 failed', ran.output);
+    return ran.stdout.trim() === 'ok';
+}
+
 /** Types letters, digits and spaces on the keyboard, one after another, into whatever has the focus (tools/keys.ps1). */
 export async function typeText(text: string): Promise<void> {
     const ran = await powershell('keys.ps1', 'type', text);

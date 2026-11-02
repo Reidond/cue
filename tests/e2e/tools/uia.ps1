@@ -18,5 +18,12 @@ foreach ($window in $root.FindAll([System.Windows.Automation.TreeScope]::Childre
         $pattern = $null
         if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) { $value = $pattern.Current.Value }
         if ($value -and $value -ne $name) { [Console]::Out.WriteLine($value) }
+        # A WinUI combo box has no value, only its selection: the item it shows is what a screen reader reads after its name.
+        if ($element.Current.ControlType -eq [System.Windows.Automation.ControlType]::ComboBox -and $element.TryGetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern, [ref]$pattern)) {
+            foreach ($chosen in $pattern.Current.GetSelection()) {
+                $shown = $chosen.Current.Name
+                if ($shown -and $shown -ne $name) { [Console]::Out.WriteLine($shown) }
+            }
+        }
     }
 }

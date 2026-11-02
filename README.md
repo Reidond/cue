@@ -301,7 +301,10 @@ to the backend, the overlay with the questions and answers (above other windows,
 a Windows 11 app), the Win+Alt shortcuts and the icon in the notification area; and recordings and notes: the Record button in the overlay and on a
 project's Notes page (or Win+Alt+C) records a call, its live transcript is saved at once in the project's `Notes` folder as Markdown, the audio goes up to
 the account, which reads it again, tells the voices apart and writes a summary, and the notes page shows the note with a player, name suggestions and
-speakers you can rename. Meetings from your calendar follow.
+speakers you can rename; and meetings: the calls with a Meet, Zoom, Teams or Webex link in the calendars Windows keeps (the accounts added in
+Settings › Accounts, and the apps that write to them) are listed on Upcoming and on Home, each with the project its notes go to. When a call starts and
+Zoom, Teams, Webex, Slack or a browser is using the microphone, Cue shows a Windows notification with Record and Not Now (or records on its own, or does
+nothing: Settings › Calendar), and stops recording a minute after the app lets go of the microphone.
 
 - **Install**: download `Cue-VERSION-x64.msi` (or `-arm64.msi` for Windows on Arm) from the Releases page and open it. It installs Cue for
   everyone on the PC, adds it to the Start menu, replaces an older Cue, and needs no .NET or Windows App SDK installed. The installer is not
@@ -396,10 +399,11 @@ more except for the last), `CUE_UPLOAD_BREAK=n` cuts the upload's connection onc
 `show TEXT`, `newest`, `prepare`, `record`, `settings account`, `signin`, `signout`,
 `size 820 700`; see `AGENTS.md`) and keeps notifications in the
 session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` reads the
-calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs using the
+calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs (on Windows the
+programs' file names or package family names) using the
 microphone from a text file, both again on every check; `CUE_MEETING_TICK` and
 `CUE_MIC_RELEASE` shorten the 5 s check and the 60 s wait after a call app lets
-go of the microphone. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay
+go of the microphone. On Windows `CUE_SYSTEM_NOTIFICATIONS=1` shows the real notifications even under `CUE_CONTROL`. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay
 (snapshots always can). On Windows `CUE_SURFACES=1` gives a test run the overlay on top of other windows, the
 tray icon and the shortcuts that `CUE_BACKGROUND` otherwise leaves out (`AGENTS.md › Live call on Windows`).
 `cd apps/mac && swift scripts/make_icon.swift` regenerates the app icon.
