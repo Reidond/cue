@@ -52,28 +52,58 @@ ${buttons}`,
     );
 }
 
+/** The cookie `/login/:provider` leaves, so that the pages a sign-in can end at know which app to send the person back to. */
+export const RETURN_COOKIE = 'cue_return';
+
+// The redirects an app signs in with: the Mac's custom scheme, or the Windows app's loopback address with the port it was given.
+const LOOPBACK_REDIRECT = /^http:\/\/127\.0\.0\.1:\d{1,5}\/oauth\/callback$/;
+
+/** The redirect URI of the app that started this sign-in (its authorization request's), when it is one of the apps' own; else null. */
+export function appRedirect(requested: unknown): string | null {
+    return requested === OAUTH.macRedirectUri || (typeof requested === 'string' && LOOPBACK_REDIRECT.test(requested)) ? requested : null;
+}
+
+/** The app to go back to: the one the `cue_return` cookie says (the Mac's when there is none or it is not one of ours). */
+function returnTarget(cookies: string | null | undefined): string {
+    const raw = cookies
+        ?.split(';')
+        .map((part) => part.trim())
+        .find((part) => part.startsWith(`${RETURN_COOKIE}=`))
+        ?.slice(RETURN_COOKIE.length + 1);
+    let value: string | null = null;
+    try {
+        value = raw === undefined ? null : decodeURIComponent(raw);
+    } catch {
+        // A cookie that is not ours to read.
+    }
+    return appRedirect(value) ?? OAUTH.macRedirectUri;
+}
+
 /** The redirect back to the app that ends a sign-in which didn't work: the app says why. */
-function backToCue(error: string, description: string, email?: string | null): string {
-    const back = new URL(OAUTH.macRedirectUri);
+function backToCue(to: string, error: string, description: string, email?: string | null): string {
+    const back = new URL(to);
     back.searchParams.set('error', error);
     back.searchParams.set('error_description', description);
     if (email) back.searchParams.set('email', email);
     return escapeHtml(back.toString());
 }
 
-/** `/invite-only`: the person signed in with the identity provider but isn't on the list (or the provider didn't verify their email). */
-export function inviteOnlyPage(email: string | null): Response {
+/**
+ * `/invite-only`: the person signed in with the identity provider but isn't on the list (or the provider didn't verify their email).
+ * `cookies` is the request's `Cookie` header, which says which app they came from.
+ */
+export function inviteOnlyPage(email: string | null, cookies?: string | null): Response {
     return page(
         'Cue is invite-only',
         `<h1>Cue is invite-only</h1>
 <p>${email ? `${escapeHtml(email)} isn't` : `This account isn't`} on the list. Ask whoever runs Cue to invite the email address of your Google or GitHub account.</p>
-<a class="button primary" href="${backToCue('access_denied', 'not_invited', email)}">Return to Cue</a>`,
+<a class="button primary" href="${backToCue(returnTarget(cookies), 'access_denied', 'not_invited', email)}">Return to Cue</a>`,
         403,
     );
 }
 
 /** `/sign-in-failed`: any other reason a sign-in ended; `error` is what Better Auth reported (a disabled account says it is banned). */
-export function signInFailedPage(error: string | null): Response {
+export function signInFailedPage(error: string | null, cookies?: string | null): Response {
     const disabled = /ban|disabled/i.test(error ?? '');
     const why = disabled
         ? 'This account has been disabled. Ask whoever runs Cue about it.'
@@ -82,7 +112,7 @@ export function signInFailedPage(error: string | null): Response {
         'Cue sign-in failed',
         `<h1>Sign-in failed</h1>
 <p>${why}</p>
-<a class="button primary" href="${backToCue('access_denied', disabled ? 'account_disabled' : 'failed')}">Return to Cue</a>`,
+<a class="button primary" href="${backToCue(returnTarget(cookies), 'access_denied', disabled ? 'account_disabled' : 'failed')}">Return to Cue</a>`,
         disabled ? 403 : 400,
     );
 }

@@ -71,10 +71,12 @@ Prompts live in `apps/api/prompts/` (moved from the app's `Resources/prompt.md` 
   People sign in on its page with Google or GitHub (Generic OAuth plugin, endpoints from config).
 - Invites are an email allowlist in D1; the first sign-in is accepted only with a provider-verified,
   invited email (`databaseHooks.user.create.before`), otherwise "Cue is invite-only".
-- Clients are public clients: Authorization Code + PKCE (Mac: `ASWebAuthenticationSession`, redirect
-  `com.andriishafar.cue:/oauth/callback`). Access token: JWT, 15 min, checked against the JWKS with no
-  D1 read. Refresh token: rotating, 60 days, in the keychain. Sign Out revokes it; disabling a user
-  revokes their tokens and puts them on a KV denylist.
+- Clients are public clients: Authorization Code + PKCE (Mac, client `cue-mac`: `ASWebAuthenticationSession`, redirect
+  `com.andriishafar.cue:/oauth/callback`; Windows, client `cue-windows`: the system browser and a loopback redirect
+  `http://127.0.0.1:PORT/oauth/callback` on a port the app is given, RFC 8252 §7.3, registered without a port). Access token: JWT, 15 min, checked against the JWKS with no
+  D1 read. Refresh token: rotating, 60 days, in the keychain (Windows Credential Manager). Sign Out revokes it; disabling a user
+  revokes their tokens and puts them on a KV denylist. A sign-in that ends at the invite-only or failed page sends the person back to the app
+  that started it (a `cue_return` cookie holds that app's redirect URI).
 - The owner (`ADMIN_EMAILS`) gets the `admin` role (Better Auth admin plugin) for the admin SPA.
 
 ### Cue API v1 (Cue's own API)

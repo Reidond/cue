@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers';
 import { Elysia, t } from 'elysia';
 import { PROVIDERS } from '../auth.ts';
 import { authFor } from '../context.ts';
-import { inviteOnlyPage, signInFailedPage, signInPage } from '../pages.ts';
+import { appRedirect, inviteOnlyPage, RETURN_COOKIE, signInFailedPage, signInPage } from '../pages.ts';
 
 // The query `/oauth2/authorize` signed and sent to `/login`, minus its signature: what the browser must go back to once signed in.
 const SIGNATURE_PARAMS = ['sig', 'exp', 'ba_param', 'ba_iat', 'ba_pl'];
@@ -64,6 +64,16 @@ export const signIn = new Elysia({ name: 'sign-in' })
             if (!url) return signInFailedPage(null);
             const headers = new Headers({ location: url });
             for (const cookie of res.headers.getSetCookie()) headers.append('set-cookie', cookie);
+            // The pages a failed sign-in ends at (invite-only, failed) send the person back to the app that started it: the Mac's custom scheme,
+            // or the Windows app's loopback address, whose port only this request knows.
+            const app = appRedirect(query.redirect_uri);
+            if (app && query.next !== 'admin') {
+                const secure = env.PUBLIC_URL.startsWith('https:') ? '; Secure' : '';
+                headers.append(
+                    'set-cookie',
+                    `${RETURN_COOKIE}=${encodeURIComponent(app)}; Path=/; Max-Age=900; HttpOnly; SameSite=Lax${secure}`,
+                );
+            }
             return new Response(null, { status: 302, headers });
         },
         {
@@ -72,11 +82,11 @@ export const signIn = new Elysia({ name: 'sign-in' })
             detail: { hide: true },
         },
     )
-    .get('/invite-only', ({ query }) => inviteOnlyPage(query.email ?? null), {
+    .get('/invite-only', ({ query, request }) => inviteOnlyPage(query.email ?? null, request.headers.get('cookie')), {
         query: t.Object({ email: t.Optional(t.String()) }),
         detail: { hide: true },
     })
-    .get('/sign-in-failed', ({ query }) => signInFailedPage(query.error ?? null), {
+    .get('/sign-in-failed', ({ query, request }) => signInFailedPage(query.error ?? null, request.headers.get('cookie')), {
         query: t.Object({ error: t.Optional(t.String()), error_description: t.Optional(t.String()) }),
         detail: { hide: true },
     });

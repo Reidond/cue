@@ -5,6 +5,7 @@ import { APIError } from 'better-auth/api';
 import { admin, genericOAuth, jwt } from 'better-auth/plugins';
 
 export const MAC_CLIENT_ID = OAUTH.macClientId;
+export const WINDOWS_CLIENT_ID = OAUTH.windowsClientId;
 export const API_AUDIENCE = OAUTH.audience;
 
 export const PROVIDERS = ['google', 'github'] as const;
@@ -147,7 +148,7 @@ export function createAuth(env: AuthEnv, database: Parameters<typeof betterAuth>
             oauthProvider({
                 loginPage: '/login',
                 consentPage: '/consent',
-                cachedTrustedClients: new Set([MAC_CLIENT_ID]),
+                cachedTrustedClients: new Set([MAC_CLIENT_ID, WINDOWS_CLIENT_ID]),
                 resources: [API_AUDIENCE],
                 accessTokenExpiresIn: Number(env.ACCESS_TOKEN_SECONDS),
                 refreshTokenExpiresIn: 60 * 24 * 60 * 60,

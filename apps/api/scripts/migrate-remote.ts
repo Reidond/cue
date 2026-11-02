@@ -3,14 +3,14 @@
 // `--if-exists` lets the first run say so and succeed, and the second one does the work. Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { cfBin, cfEnv } from './cf.ts';
 
 const root = join(import.meta.dirname, '..');
-const cf = join(root, 'node_modules', '.bin', 'cf');
 const ifExists = process.argv.includes('--if-exists');
 const dry = process.argv.includes('--dry-run');
 
 function run(args: string[]) {
-    return spawnSync(cf, args, { cwd: root, encoding: 'utf8', env: { ...process.env, CI: '1' } });
+    return spawnSync(process.execPath, [cfBin, ...args], { cwd: root, encoding: 'utf8', env: cfEnv() });
 }
 
 let id = process.env.CUE_D1_ID;
@@ -38,9 +38,9 @@ if (!id) {
     process.exit(1);
 }
 
-const applied = spawnSync(cf, ['d1', 'migrations', 'apply', id, ...(dry ? ['--dry-run'] : [])], {
+const applied = spawnSync(process.execPath, [cfBin, 'd1', 'migrations', 'apply', id, ...(dry ? ['--dry-run'] : [])], {
     cwd: root,
     stdio: 'inherit',
-    env: { ...process.env, CI: '1' },
+    env: cfEnv(),
 });
 process.exit(applied.status ?? 1);

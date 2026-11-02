@@ -9,24 +9,30 @@ import { basename, extname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Note } from '../../../packages/contract/src/notes.ts';
+import { cfBin, cfEnv } from '../../../apps/api/scripts/cf.ts';
 import { E2E_ROOT } from './config.ts';
 import { type FakeIdp, startFakeIdp } from './fake-idp.ts';
 import {
     exchangeCode,
+    MAC_CLIENT,
+    type OAuthClient,
     refreshTokens,
     revokeToken,
     signInThroughBrowser,
     signInToAdmin,
     type SignInResult,
     type TokenResult,
+    WINDOWS_CLIENT,
 } from './oauth-client.ts';
-import { exec } from './process.ts';
+import { exec, killTree, type Ran } from './process.ts';
 import { fail } from './results.ts';
 import { sleep, within } from './time.ts';
 
 const API = join(E2E_ROOT, '..', '..', 'apps', 'api');
-const CF = join(API, 'node_modules', '.bin', 'cf');
-const VP = join(E2E_ROOT, '..', '..', 'node_modules', '.bin', 'vp');
+// `cf` and `vp` are Node scripts: run by node itself (with the NODE_PATH pnpm's shims would add: scripts/cf.ts), so the same on Windows, where a
+// package manager's shims are .cmd files.
+const CF = [process.execPath, cfBin] as const;
+const VP = [process.execPath, join(E2E_ROOT, '..', '..', 'node_modules', 'vite-plus', 'bin', 'vp')] as const;
 const CONTENT_TYPES: Record<string, string> = {
     '.pdf': 'application/pdf',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -35,6 +41,21 @@ const CONTENT_TYPES: Record<string, string> = {
     '.txt': 'text/plain',
 };
 const DEV_DB_ID = '6a1c0e5b-3d6f-4f6e-9a57-2c1f8b7d4e90';
+
+/** Which app signs in: the Mac's client (the default), the Windows one, or any client by its id and redirect URI. */
+export type ClientName = 'mac' | 'windows';
+
+export interface SignInOptions {
+    provider?: 'google' | 'github';
+    verified?: boolean;
+    client?: ClientName | OAuthClient;
+    /** A sign-in that ends at the invite-only page reports its HTML (`page`). */
+    readPages?: boolean;
+}
+
+function clientOf(client: ClientName | OAuthClient = 'mac'): OAuthClient {
+    return client === 'mac' ? MAC_CLIENT : client === 'windows' ? WINDOWS_CLIENT : client;
+}
 
 export interface BackendOptions {
     /** How long an access token lives, in seconds (production: 900). */
@@ -82,8 +103,7 @@ export class Backend {
         const port = await freePort();
         const url = `http://127.0.0.1:${port}`;
         const env: NodeJS.ProcessEnv = {
-            ...process.env,
-            CI: '1',
+            ...cfEnv(),
             PORT: String(port),
             CUE_STATE_DIR: state,
             PUBLIC_URL: url,
@@ -97,7 +117,7 @@ export class Backend {
         const log = join(dir, 'backend.log');
         let backend: Backend | undefined;
         try {
-            const migrated = await exec(CF, ['d1', 'migrations', 'apply', DEV_DB_ID, '--local', '--persist-to', state], {
+            const migrated = await exec(CF[0], [CF[1], 'd1', 'migrations', 'apply', DEV_DB_ID, '--local', '--persist-to', state], {
                 env,
                 cwd: API,
                 timeout: 120,
@@ -108,19 +128,20 @@ export class Backend {
             // compiles its routes ahead of time there, as in production, and under `cf dev` it does not (AGENTS.md › The backend).
             const preview = process.env['E2E_BACKEND'] === 'preview';
             if (preview) {
-                const built = await exec(CF, ['build', '--mode', 'development'], { env, cwd: API, timeout: 300 });
+                const built = await exec(CF[0], [CF[1], 'build', '--mode', 'development'], { env, cwd: API, timeout: 300 });
                 if (built.code !== 0) fail('building the backend failed', built.output);
             }
             const out = openSync(log, 'a');
             // Its own process group: `cf dev` leaves `cf-vite` and `workerd` behind when only it is killed.
             const child = preview
-                ? spawn(VP, ['preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
+                ? spawn(VP[0], [VP[1], 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
                       cwd: API,
                       env,
                       stdio: ['ignore', out, out],
                       detached: true,
+                      windowsHide: true,
                   })
-                : spawn(CF, ['dev'], { cwd: API, env, stdio: ['ignore', out, out], detached: true });
+                : spawn(CF[0], [CF[1], 'dev'], { cwd: API, env, stdio: ['ignore', out, out], detached: true, windowsHide: true });
             closeSync(out);
             backend = new Backend(url, idp, log, state, child);
             await backend.#waitUntilReady();
@@ -151,18 +172,8 @@ export class Backend {
         const child = this.#child;
         if (child.pid !== undefined && child.exitCode === null) {
             const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
-            try {
-                process.kill(-child.pid, 'SIGTERM');
-            } catch {
-                /* already gone */
-            }
-            if (!(await within(exited, 8))) {
-                try {
-                    process.kill(-child.pid, 'SIGKILL');
-                } catch {
-                    /* already gone */
-                }
-            }
+            await killTree(child, false);
+            if (!(await within(exited, 8))) await killTree(child, true);
         }
         await this.idp.close();
     }
@@ -190,29 +201,26 @@ export class Backend {
     // MARK: A client, for cases that check the backend itself
 
     /** The browser part of signing in as `email` with Google (or GitHub): the stand-in provider approves as them. */
-    async signInAs(email: string, options: { provider?: 'google' | 'github'; verified?: boolean } = {}): Promise<SignInResult> {
+    async signInAs(email: string, options: SignInOptions = {}): Promise<SignInResult> {
         this.idp.approveAs(email, { verified: options.verified });
-        return signInThroughBrowser(this.url, options.provider);
+        return signInThroughBrowser(this.url, options.provider, clientOf(options.client), { readPages: options.readPages });
     }
 
     /** Signs `email` in (Authorization Code + PKCE) and returns the tokens; fails the case if the backend refuses. */
-    async tokensFor(
-        email: string,
-        options: { provider?: 'google' | 'github' } = {},
-    ): Promise<{ access_token: string; refresh_token: string }> {
+    async tokensFor(email: string, options: SignInOptions = {}): Promise<{ access_token: string; refresh_token: string }> {
         const result = await this.signInAs(email, options);
         if (result.kind !== 'code') return fail(`signing in as ${email} did not end in a code`, JSON.stringify(result));
-        const exchanged = await exchangeCode(this.url, result.code, result.verifier);
+        const exchanged = await exchangeCode(this.url, result.code, result.verifier, clientOf(options.client));
         if (!exchanged.body.access_token || !exchanged.body.refresh_token) return fail('no tokens', JSON.stringify(exchanged));
         return { access_token: exchanged.body.access_token, refresh_token: exchanged.body.refresh_token };
     }
 
-    refresh(refreshToken: string): Promise<TokenResult> {
-        return refreshTokens(this.url, refreshToken);
+    refresh(refreshToken: string, client?: ClientName | OAuthClient): Promise<TokenResult> {
+        return refreshTokens(this.url, refreshToken, clientOf(client));
     }
 
-    revoke(token: string): Promise<number> {
-        return revokeToken(this.url, token);
+    revoke(token: string, client?: ClientName | OAuthClient): Promise<number> {
+        return revokeToken(this.url, token, clientOf(client));
     }
 
     /** `GET path` with a bearer token (or none). */
@@ -252,13 +260,26 @@ export class Backend {
         }
     }
 
+    /**
+     * `cf d1 raw` on the backend's database, which the running backend has open too: SQLite answers `SQLITE_BUSY` when both write at once (the app
+     * reading the account every second, say), so a busy database is tried again.
+     */
+    async #d1(sql: string): Promise<Ran> {
+        let ran: Ran;
+        for (let attempt = 0; ; attempt++) {
+            ran = await exec(CF[0], [CF[1], 'd1', 'raw', DEV_DB_ID, '--local', '--persist-to', this.state, '--sql', sql], {
+                env: cfEnv(),
+                cwd: API,
+                timeout: 60,
+            });
+            if (ran.code === 0 || attempt >= 8 || !/SQLITE_BUSY|database is locked/i.test(ran.output)) return ran;
+            await sleep(0.5);
+        }
+    }
+
     /** Rows of a query on the backend's database (`cf d1 raw`): for checking what was stored, which the API does not show. */
     async rows(sql: string): Promise<Record<string, unknown>[]> {
-        const ran = await exec(CF, ['d1', 'raw', DEV_DB_ID, '--local', '--persist-to', this.state, '--sql', sql], {
-            env: { ...process.env, CI: '1' },
-            cwd: API,
-            timeout: 60,
-        });
+        const ran = await this.#d1(sql);
         if (ran.code !== 0) fail(`querying the backend's database failed: ${sql}`, ran.output);
         const [first] = JSON.parse(ran.output.slice(ran.output.indexOf('['))) as { results: { columns: string[]; rows: unknown[][] } }[];
         const { columns = [], rows = [] } = first?.results ?? {};
@@ -315,19 +336,8 @@ export class Backend {
             (row) =>
                 `((SELECT id FROM user WHERE email = ${quote(email)}), ${quote(row.feature)}, ${quote(row.provider ?? 'anthropic')}, ${quote(row.model ?? 'test-model')}, ${row.units ?? 1000}, ${quote(row.unit ?? 'input_tokens')}, ${Math.round(row.usd * 1e6)}, ${Math.floor((row.at ?? new Date()).getTime() / 1000)})`,
         );
-        const ran = await exec(
-            CF,
-            [
-                'd1',
-                'raw',
-                DEV_DB_ID,
-                '--local',
-                '--persist-to',
-                this.state,
-                '--sql',
-                `INSERT INTO usage (user_id, feature, provider, model, units, unit, cost_micros, created_at) VALUES ${values.join(', ')}`,
-            ],
-            { env: { ...process.env, CI: '1' }, cwd: API, timeout: 60 },
+        const ran = await this.#d1(
+            `INSERT INTO usage (user_id, feature, provider, model, units, unit, cost_micros, created_at) VALUES ${values.join(', ')}`,
         );
         if (ran.code !== 0) fail('seeding usage failed', ran.output);
     }
