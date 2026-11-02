@@ -41,6 +41,24 @@ public sealed partial class MainWindow : Window
             if (numbers.Length == 2 && numbers.All(n => n > 0)) Resize(numbers[0], numbers[1]);
             return Task.CompletedTask;
         }, needsSignIn: false);
+        // With Cue's icon in the notification area, closing the dashboard only hides it; Quit is in the icon's menu.
+        AppWindow.Closing += (sender, args) =>
+        {
+            if (!LiveSurfaces.HasTray) return;
+            args.Cancel = true;
+            sender.Hide();
+        };
+        // Ctrl+Enter: Start Cue, or Stop Cue while it runs.
+        if (Content is UIElement content)
+        {
+            var startCue = new Microsoft.UI.Xaml.Input.KeyboardAccelerator { Key = Windows.System.VirtualKey.Enter, Modifiers = Windows.System.VirtualKeyModifiers.Control };
+            startCue.Invoked += (_, e) =>
+            {
+                state.Live.ToggleCue();
+                e.Handled = true;
+            };
+            content.KeyboardAccelerators.Add(startCue);
+        }
         Closed += (_, _) => state.Quit();
         Sync();
         UpdateLimit();
@@ -58,6 +76,7 @@ public sealed partial class MainWindow : Window
         }
         else
         {
+            AppWindow.Show();
             Activate();
         }
     }

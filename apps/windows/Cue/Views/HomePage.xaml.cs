@@ -15,6 +15,7 @@ public sealed partial class HomePage : Page
     {
         state = (AppState)e.Parameter;
         SignInHost.Child = new SignInView(state);
+        LiveHost.Child = new LiveView(state);
         state.Api.PropertyChanged += OnChanged;
         Render();
     }

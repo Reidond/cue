@@ -8,8 +8,9 @@
             <StackPanel Padding="36,24" Spacing="12" MaxWidth="760" HorizontalAlignment="Left">
                 <TextBlock Text="Home" Style="{StaticResource TitleTextBlockStyle}" />
                 <TextBlock x:Name="WhoText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                <Border x:Name="LiveHost" />
                 <TextBlock
-                    Text="Your projects, live calls and notes will be here as Cue for Windows gets them."
+                    Text="Your projects and notes will be here as Cue for Windows gets them."
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     TextWrapping="Wrap" />
             </StackPanel>

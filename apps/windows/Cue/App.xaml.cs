@@ -10,6 +10,8 @@ public partial class App : Application
 
     // Held here: what only a local variable holds is collected, and its timer stops.
     private Snapshots? snapshots;
+    private OverlayWindow? overlay;
+    private LiveSurfaces? surfaces;
 
     public static AppState State { get; private set; } = null!;
 
@@ -37,14 +39,19 @@ public partial class App : Application
         }
         if (Env.Background) Native.OptOutOfThrottling();
         window = new MainWindow(State);
+        overlay = new OverlayWindow(State);
         State.Start();
         window.Present();
+        // The icon in the notification area and the system-wide shortcuts: not in a test run (CUE_BACKGROUND), which must not take keys from whoever uses the PC.
+        if (!Env.Background || Env.Surfaces) surfaces = new LiveSurfaces(State);
         if (Env.Get("CUE_SHOW_SETTINGS") == "1") State.Dashboard.ShowSettings();
         if (Env.Get("CUE_SNAPSHOT") is { } path)
         {
             snapshots = new Snapshots(State, path);
             var main = window;
             snapshots.Add("Dashboard", () => main.Handle, "-dashboard.png");
+            var floating = overlay;
+            snapshots.Add("Overlay", () => floating.Handle, ".png");
         }
     }
 
