@@ -89,6 +89,7 @@ jobs:
             ${{ runner.temp }}/e2e/*/backend.log
             ${{ runner.temp }}/e2e/*/claude/*
             ${{ runner.temp }}/e2e/*/*.png
+            ${{ runner.temp }}/e2e/*/crash.ips
             ${{ runner.temp }}/e2e/*/home/Application Support/Cue/sessions/*.md
           if-no-files-found: ignore
 

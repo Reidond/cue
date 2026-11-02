@@ -1,7 +1,7 @@
 // A sandboxed Cue for one case: its own CUE_HOME and defaults domain, so checkouts can run cases at the same time,
 // and ways to drive the app and wait on it.
 import { spawn, type ChildProcess } from 'node:child_process';
-import { appendFileSync, closeSync, openSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, copyFileSync, openSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -17,7 +17,7 @@ import {
     type FakeProviders,
     type MarkdownRequest,
 } from './fake-providers.ts';
-import { countLines, findFiles, lines, linesOf, matches, nonEmpty, tail, withFlags } from './files.ts';
+import { countLines, findFiles, lines, linesOf, listDir, matches, nonEmpty, tail, withFlags } from './files.ts';
 import { exec, type Ran } from './process.ts';
 import { keychainKey, needOverlaySnapshots, needWindowSnapshots } from './requirements.ts';
 import { fail, print, Skip } from './results.ts';
@@ -93,6 +93,8 @@ export class Cue {
     /** Where Cue keeps its refresh token under CUE_HOME, instead of the keychain. */
     readonly keysFile: string;
     #app: ChildProcess | undefined;
+    /** When the running Cue was launched (ms), to tell its crash report from older ones. */
+    #launchedAt = 0;
     /** The environment of the Cue running, for the services' stand-ins to reply by. */
     #launched: NodeJS.ProcessEnv = {};
     /** What `standIns` told them, before and between launches. */
@@ -285,6 +287,7 @@ export class Cue {
             stdio: ['ignore', out, out],
         });
         closeSync(out);
+        this.#launchedAt = Date.now();
         app.on('error', (error) => appendFileSync(this.path('cue.out'), `couldn't start Cue: ${error.message}\n`));
         this.#app = app;
         // A relaunch in the same case starts a new log (they are named by the second).
@@ -315,6 +318,52 @@ export class Cue {
             await exited;
         }
         this.#app = undefined;
+    }
+
+    /**
+     * The crash report macOS wrote for the Cue that just exited, kept in the case's folder as crash.ips: what killed it and where (the
+     * faulting thread's frames, and a Swift fatal error's message). ReportCrash writes it a few seconds after the crash; none comes for a
+     * plain exit.
+     */
+    async #crashReport(): Promise<string[]> {
+        if (!this.#app?.signalCode) return [];
+        const reports = join(homedir(), 'Library', 'Logs', 'DiagnosticReports');
+        const newest = (): string | undefined =>
+            listDir(reports)
+                .filter((name) => name.startsWith('Cue') && name.endsWith('.ips'))
+                .map((name) => join(reports, name))
+                .filter((path) => statSync(path).mtimeMs >= this.#launchedAt)
+                .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+        for (let waited = 0; newest() === undefined && waited < 20; waited++) await sleep(0.5);
+        const report = newest();
+        if (report === undefined) return ['--- no crash report'];
+        copyFileSync(report, this.path('crash.ips'));
+        try {
+            // An .ips is a line of JSON about the report, then the report as JSON.
+            const text = readFileSync(report, 'utf8');
+            const body = JSON.parse(text.slice(text.indexOf('\n') + 1)) as {
+                exception?: { type?: string; signal?: string };
+                termination?: { indicator?: string };
+                asi?: Record<string, string[]>;
+                faultingThread?: number;
+                usedImages?: { name?: string }[];
+                threads?: { frames?: { imageIndex?: number; symbol?: string; imageOffset?: number }[] }[];
+            };
+            const frames = body.threads?.[body.faultingThread ?? 0]?.frames ?? [];
+            return [
+                `--- crash report (${basename(report)})`,
+                `${body.exception?.type ?? '?'} ${body.exception?.signal ?? ''} ${body.termination?.indicator ?? ''}`.trim(),
+                ...Object.values(body.asi ?? {}).flat(),
+                ...frames
+                    .slice(0, 25)
+                    .map(
+                        (frame) =>
+                            `  ${body.usedImages?.[frame.imageIndex ?? -1]?.name ?? '?'}  ${frame.symbol ?? `+${frame.imageOffset ?? '?'}`}`,
+                    ),
+            ];
+        } catch (error) {
+            return [`--- crash report (${basename(report)}): couldn't read it: ${String(error)}`];
+        }
     }
 
     /** The launched app's process ID. */
@@ -376,7 +425,13 @@ export class Cue {
                 });
             if (held) return;
             if (this.#app && !this.alive()) {
-                fail(`Cue exited while waiting for ${what}`, '--- cue.out', tail(this.path('cue.out'), 40));
+                const how = this.#app.signalCode === null ? `status ${this.#app.exitCode}` : this.#app.signalCode;
+                fail(
+                    `Cue exited (${how}) while waiting for ${what}`,
+                    '--- cue.out',
+                    tail(this.path('cue.out'), 40),
+                    ...(await this.#crashReport()),
+                );
             }
             if (Date.now() >= deadline) {
                 const log = this.#newestSessionLog();
