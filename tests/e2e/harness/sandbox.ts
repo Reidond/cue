@@ -24,6 +24,17 @@ import { fail, print, Skip } from './results.ts';
 import { ocr, readImage } from './screen.ts';
 import { sleep, within } from './time.ts';
 
+/** What a crash report (.ips) says that a failed case shows. */
+interface CrashReport {
+    pid?: number;
+    exception?: { type?: string; signal?: string };
+    termination?: { indicator?: string };
+    asi?: Record<string, string[]>;
+    faultingThread?: number;
+    usedImages?: { name?: string }[];
+    threads?: { frames?: { imageIndex?: number; symbol?: string; imageOffset?: number }[] }[];
+}
+
 /** A call in the calendar Cue reads (CUE_CALENDAR_EVENTS); times from `minutesFromNow` or `tomorrowAt`. */
 export interface CalendarEvent {
     title: string;
@@ -323,47 +334,47 @@ export class Cue {
     /**
      * The crash report macOS wrote for the Cue that just exited, kept in the case's folder as crash.ips: what killed it and where (the
      * faulting thread's frames, and a Swift fatal error's message). ReportCrash writes it a few seconds after the crash; none comes for a
-     * plain exit.
+     * plain exit. The report must name this process: another checkout's Cue, or an earlier case's, may have crashed meanwhile.
      */
     async #crashReport(): Promise<string[]> {
-        if (!this.#app?.signalCode) return [];
+        const pid = this.#app?.pid;
+        if (!this.#app?.signalCode || pid === undefined) return [];
         const reports = join(homedir(), 'Library', 'Logs', 'DiagnosticReports');
-        const newest = (): string | undefined =>
-            listDir(reports)
-                .filter((name) => name.startsWith('Cue') && name.endsWith('.ips'))
-                .map((name) => join(reports, name))
-                .filter((path) => statSync(path).mtimeMs >= this.#launchedAt)
-                .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
-        for (let waited = 0; newest() === undefined && waited < 20; waited++) await sleep(0.5);
-        const report = newest();
-        if (report === undefined) return ['--- no crash report'];
-        copyFileSync(report, this.path('crash.ips'));
-        try {
-            // An .ips is a line of JSON about the report, then the report as JSON.
-            const text = readFileSync(report, 'utf8');
-            const body = JSON.parse(text.slice(text.indexOf('\n') + 1)) as {
-                exception?: { type?: string; signal?: string };
-                termination?: { indicator?: string };
-                asi?: Record<string, string[]>;
-                faultingThread?: number;
-                usedImages?: { name?: string }[];
-                threads?: { frames?: { imageIndex?: number; symbol?: string; imageOffset?: number }[] }[];
-            };
-            const frames = body.threads?.[body.faultingThread ?? 0]?.frames ?? [];
-            return [
-                `--- crash report (${basename(report)})`,
-                `${body.exception?.type ?? '?'} ${body.exception?.signal ?? ''} ${body.termination?.indicator ?? ''}`.trim(),
-                ...Object.values(body.asi ?? {}).flat(),
-                ...frames
-                    .slice(0, 25)
-                    .map(
-                        (frame) =>
-                            `  ${body.usedImages?.[frame.imageIndex ?? -1]?.name ?? '?'}  ${frame.symbol ?? `+${frame.imageOffset ?? '?'}`}`,
-                    ),
-            ];
-        } catch (error) {
-            return [`--- crash report (${basename(report)}): couldn't read it: ${String(error)}`];
+        // An .ips is a line of JSON about the report, then the report as JSON (unreadable while ReportCrash is still writing it).
+        const ours = (): { path: string; body: CrashReport } | undefined => {
+            for (const name of listDir(reports).filter((name) => name.startsWith('Cue') && name.endsWith('.ips'))) {
+                const path = join(reports, name);
+                try {
+                    if (statSync(path).mtimeMs < this.#launchedAt) continue;
+                    const text = readFileSync(path, 'utf8');
+                    const body = JSON.parse(text.slice(text.indexOf('\n') + 1)) as CrashReport;
+                    if (body.pid === pid) return { path, body };
+                } catch {
+                    continue;
+                }
+            }
+            return undefined;
+        };
+        let report = ours();
+        for (let waited = 0; report === undefined && waited < 20; waited++) {
+            await sleep(0.5);
+            report = ours();
         }
+        if (report === undefined) return ['--- no crash report'];
+        copyFileSync(report.path, this.path('crash.ips'));
+        const { body } = report;
+        const frames = body.threads?.[body.faultingThread ?? 0]?.frames ?? [];
+        return [
+            `--- crash report (${basename(report.path)})`,
+            `${body.exception?.type ?? '?'} ${body.exception?.signal ?? ''} ${body.termination?.indicator ?? ''}`.trim(),
+            ...Object.values(body.asi ?? {}).flat(),
+            ...frames
+                .slice(0, 25)
+                .map(
+                    (frame) =>
+                        `  ${body.usedImages?.[frame.imageIndex ?? -1]?.name ?? '?'}  ${frame.symbol ?? `+${frame.imageOffset ?? '?'}`}`,
+                ),
+        ];
     }
 
     /** The launched app's process ID. */
