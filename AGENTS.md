@@ -215,15 +215,15 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
 - **Layout**: `Cue.slnx`, `Cue/` (the app: `Core/` has no UI, `Views/` the pages, `MainWindow`), `Installer/` (WiX), `scripts/{build,setup}.ps1`.
   The app is unpackaged (`WindowsPackageType=None`) and self-contained (`SelfContained`, `WindowsAppSDKSelfContained`): `Cue.exe` and the .NET and
   Windows App SDK runtimes sit in one folder, so the MSI needs no runtime installer. x64 and arm64; Windows 11 and Windows 10 22H2 (`TargetPlatformMinVersion` 10.0.19041).
-- **Build**: `powershell -ExecutionPolicy Bypass -File apps\windows\scripts\build.ps1 [-Arch x64|arm64] [-Version 2.0.1] [-Msi] [-Output DIR]` is the one
+- **Build**: `powershell -ExecutionPolicy Bypass -File apps\windows\scripts\build.ps1 [-Arch x64|arm64] [-Version 2.0.1] [-Msi [-Quick]] [-Output DIR]` is the one
   entry point (you, the suite, CI, release): it publishes to `apps\windows\build\ARCH\Cue.exe` and with `-Msi` makes `build\Cue-VERSION-ARCH.msi` (`dotnet
   build` of `Installer\Installer.wixproj`, WiX `WixToolset.Sdk` 6.0.2: no Visual Studio). Warnings fail it (`TreatWarningsAsErrors`; the installer's ICE rules
-  it ignores on purpose are named in the wixproj). The version is the Mac's, `CFBundleShortVersionString` of `apps/mac/Resources/Info.plist` plus the patch
+  it ignores on purpose are named in the wixproj; `-Quick` makes an installer only a case installs, files stored and no validation: 6 s, not 55). The version is the Mac's, `CFBundleShortVersionString` of `apps/mac/Resources/Info.plist` plus the patch
   (`-Version`, which release.yml computes from the tags), and goes into both the app (`Env.Version`, `Cue-Version: windows/VERSION`) and the MSI; the
   backend's address is stamped from `apps/api/production-url.txt` (assembly metadata `CueApiUrl`; `CUE_API_URL` overrides it; a plain `dotnet build`
   talks to `cf dev`). WiX 7 makes its user accept the OSMF EULA (`AcceptEula`: a fee above $10k revenue a year): that is the owner's call, so
-  the repository stays on 6.0.2. `scripts/setup.ps1 [-Install]` installs the toolchain on a fresh Windows (git, .NET 10 SDK, Node.js 26, pnpm; `-Install` runs
-  `pnpm install`); on Windows for Arm Node.js is the x64 build on purpose and the x64 Visual C++ runtime is added, as workerd and Vite+'s native
+  the repository stays on 6.0.2. `scripts/setup.ps1 [-Install] [-Backend]` installs the toolchain on a fresh Windows (git, .NET 10 SDK, Node.js 26, pnpm; `-Install` runs
+  `pnpm install`; `-Backend` leaves out the SDK and OCR for the backend's cases); on Windows for Arm Node.js is the x64 build on purpose and the x64 Visual C++ runtime is added, as workerd and Vite+'s native
   packages exist for x64 only and run emulated.
 - **The MSI** (`Installer/Package.wxs`): per machine into `Program Files\Cue`, a Start menu shortcut, an entry in Apps, a stable `UpgradeCode` with `MajorUpgrade` (a newer
   MSI replaces an older one, an older one is refused), nothing in the registry; the person's settings, library and notes stay on uninstall. It is unsigned: the release notes
@@ -608,8 +608,14 @@ updating the cases.
   snapshot cases skip there, with the probe's reason, if the probe finds those unreadable: CI covers the build, the
   command-line modes, the dashboard and the speech cases. **Run the
   whole suite on an authorized remote Mac before merging** and put its summary
-  in the PR. Keep CI green; never fake what's missing. The `windows` job (x64 on `windows-latest`, arm64 on `windows-11-arm`) sets up the toolchain
-  (`setup.ps1 -Install`), builds the app and the MSI (`build.ps1 -Msi`: warnings fail it), and runs `run.ts --no-build` there: the `w…` cases and the backend's own; `build-and-test` requires it, and it keeps the MSI as an artifact.
+  in the PR. Keep CI green; never fake what's missing. The `windows` job is seven parallel jobs, each ten minutes or less
+  (they must never be the slowest check): on x64 (`windows-latest`) `x64-app` builds the app and runs the `w0-` cases, `x64-installer` builds the app and the MSI and runs
+  `w1-`, and `x64-backend-1`…`-3` run the backend's own cases without building anything (`run.ts --no-app --shard=K/3`, balanced by `durations.json`; setup.ps1 `-Backend`
+  skips the .NET SDK and OCR); on arm64 (`windows-11-arm`) `arm64-app` and `arm64-installer` do the same as their x64 twins. **arm64 CI covers the Arm build, the app's cases and the
+  installer, not the backend's cases**: Node.js, workerd and Vite+ run emulated there (about three times slower), and the backend does not differ by processor; the whole suite on Arm is
+  the Windows 11 VM's run in each PR. `build-and-test` requires every one of them; each keeps its logs on failure, the installer jobs keep the MSI as an artifact. A new push cancels the
+  run it replaces (`concurrency`). No NuGet cache: restoring one from the cache took longer than restoring from nuget.org (50 s against 35 on arm64). Add a case's seconds to `durations.json`
+  from a CI run; a backend case goes to a shard by them without anything else.
 - `.github/workflows/deploy.yml` runs on pushes to `main` that touch `apps/api`, `apps/admin`, `packages/contract` or their build (and on demand), never on a fork: `vp check`, the remote
   migrations, `cf deploy`, the migrations again, a check that the Worker answers. It needs the secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` and the variable `ADMIN_EMAILS`. Do not
   run it, or `cf deploy` without `--dry-run`, from here.

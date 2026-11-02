@@ -14,7 +14,7 @@
     InstallerVersion="500">
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of Cue is already installed." />
-    <MediaTemplate EmbedCab="yes" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="$(CueCompression)" />
 
     <Icon Id="AppIcon.ico" SourceFile="$(IconFile)" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
