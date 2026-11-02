@@ -249,18 +249,57 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   A process started by `vmpal_exec` ends with the command: to look at a window yourself start Cue with `Invoke-CimMethod -ClassName Win32_Process -MethodName Create`, and read the window
   with `vmpal_screenshot` in both themes (`CUE_APPEARANCE=light|dark`). The VM snapshot `cue-toolchain` has the toolchain installed and the repository's packages in `C:\src\cue`.
   `w1-installer` installs per machine, so it needs an elevated process (`vmpal_exec_admin`; a CI runner is one) and skips without.
-- **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks) and `w1-…` (the installer) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
+- **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks), `w1-…` (the installer) and `w3-…` (the live call: see Live call on Windows) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
   them together with the cases that never launch the app (the source has no `.launch(`, `.cli(` or `.control(`: the backend's own, `9a-…` to `9e-…`, `95`–`99`). `9e-windows-sign-in` signs in as `cue-windows` end to end
   and runs anywhere with `--no-app`. A case reads what the window shows with `windowText(pid)` (`tools/uia.ps1`: the text of its UI Automation tree, exact (no recognition errors) and complete, what is scrolled out of view too),
   and `windowsOf(pid)` is `tools/windows.ps1` (the foreground, the windows' sizes and styles: the twin of `appWindows`); `ocr` is `tools/ocr.ps1` (Windows' own `Windows.Media.Ocr`; it needs the English recognizer,
   `Language.OCR~~~en-US~0.0.1.0`, which `setup.ps1` adds) for what a snapshot shows; `cue.defaults()` edits `settings.json`; `cue.stop()` sends `quit` through the control file and kills the tree after 10 s.
-- **Hooks that differ** (the rest of the table below applies as it reads; the audio ones arrive with their slice): `CUE_HOME` has the Mac's layout (`CUE_HOME/Application Support/Cue`, `CUE_HOME/Documents`, sessions in
+- **Hooks that differ** (the rest of the table below applies as it reads; `CUE_REHEARSE_PARTICIPANT` / `CUE_REHEARSE_ME` play a WAV, `CUE_NO_LIVE_AUDIO` and `CUE_ALLOW_CAPTURE` as on the Mac; `CUE_REHEARSE_RECORD` comes with the recordings slice): `CUE_HOME` has the Mac's layout (`CUE_HOME/Application Support/Cue`, `CUE_HOME/Documents`, sessions in
   `Application Support/Cue/sessions/*.md`) and keeps settings in `Application Support/Cue/settings.json`, the refresh token in `CUE_HOME/Keychain.json` (without it: `%APPDATA%\Cue`, `Documents\Cue`, Credential Manager);
   `CUE_LOCALE=en-US` makes numbers, dates and Windows' own strings that culture (the harness sets it: the Mac's `-AppleLocale`); `CUE_BACKGROUND=1` shows the window without activating it, as a tool window (no taskbar button) that a
   click doesn't activate, at the bottom of the z-order, with the process opted out of power throttling, and an alert goes only to the session log; `CUE_SNAPSHOT=png` writes `…-dashboard.png` every 2 s with `PrintWindow`
   (Settings is a page of the dashboard, so there is no `-settings.png`; `CUE_SNAPSHOT_METHOD` doesn't apply; `📸 Snapshots: window capture (PrintWindow), in the dark appearance`); `CUE_APPEARANCE`, `CUE_SHOW_SETTINGS`,
-  `CUE_ME_TICK`, `CUE_API_URL`, `CUE_WEB_AUTH=headless` as on the Mac; `CUE_CONTROL` commands now: `signin [google|github]`, `signout`, `settings general|account`, `page home|upcoming`, `size W H`, `quit`
-  (`signin`, `signout`, `settings`, `page`, `size` and `quit` work signed out; any other command then logs `⚠︎ Sign in to Cue first (NAME ignored)`).
+  `CUE_ME_TICK`, `CUE_API_URL`, `CUE_WEB_AUTH=headless` as on the Mac; `CUE_CONTROL` commands now: `signin [google|github]`, `signout`, `settings general|account`, `page home|upcoming`, `size W H`, `quit`,
+  and the live call's `start NAME`, `stop`, `project NAME`, `ask TEXT`, `show TEXT`, `newest`, `prepare` (the project is found among the account's, by name, case aside)
+  (`signin`, `signout`, `settings`, `page`, `size` and `quit` work signed out; any other command then logs `⚠︎ Sign in to Cue first (NAME ignored)`). `CUE_SURFACES=1`, only here: under `CUE_BACKGROUND`
+  the live call's surfaces — the overlay, the tray icon, the hot keys — are as in normal use (the overlay above other windows, the keys registered); without it a test run has no tray icon or hot keys (as the Mac) and the overlay stays at the bottom.
+  `CUE_SNAPSHOT` also takes the overlay (`PrintWindow`, to the file itself, `…cue.png`; the dashboard's is `…-dashboard.png`) and, like `CUE_ALLOW_CAPTURE=1`, lets screenshots see it.
+
+## Live call on Windows (`apps/windows/Cue`: `Core/{LiveModel,LiveCall,AudioSink,AudioCapture,Wasapi,Rehearsal,…}.cs`, `Views/{OverlayWindow,LiveView}.cs`)
+
+The port of `LiveCall`, `AudioCapture`, `OverlayView`, `HotKeys` and the call half of the Mac's `AppState`, on the foundation above. Session log lines, the reading rules and the exchange and answer state
+are the Mac's, word for word.
+
+- **The call model** (`Core/LiveModel.cs`, `state.Live`): between Start Cue and Stop Cue it opens the audio, makes a call (`POST /v1/calls`), and drives `Exchange`s and `Answer`s (`Core/Calls.cs`) from the events: show,
+  newest, holding the view while an older answer is read, `Unseen`, the 5 s reading pause, Prepare Answer, Auto, the plan limit (`AppState.ReachedLimit` / `ClearPlanLimit`). `LiveModel.Changed` says the lists changed
+  (the overlay and Home redraw), `Samples` is where **both sides' audio** passes (`Action<Side, float[], double>`: 16 kHz mono floats and the host time (`Audio.HostSeconds`, the QPC clock) of the first sample, from the capture threads,
+  the rehearsal's too): **the recordings slice subscribes there** to write the two sides to files, and adds its record button in `OverlayWindow.RecordSlot` (the empty spot in the bar), its menu items in `Core/Tray.cs`
+  (`ShowMenu`, marked), `Tray.Recording` (red icon), its hot key (Win+Alt+C, in `Core/LiveSurfaces.cs`; not R, which is the Game Bar's) and `UpdateCapture`'s "or a recording is under way" (marked).
+- **The socket** (`Core/LiveCall.cs`): `System.Net.WebSockets.ClientWebSocket`, one writer queue (the capture threads send audio, the UI thread commands: a socket sends one message at a time), reconnects with the Mac's backoff
+  (0.5, 1, 2, 5 s) and `after=SEQ`, `404` ends the call, `401` refreshes the token. The Ask field and Answer now are socket commands (`ask`, `answerNow`), as on the Mac, not `POST /v1/calls/:id/questions`.
+- **Audio** (`Core/Wasapi.cs`, `Core/AudioCapture.cs`, `Core/AudioSink.cs`): WASAPI by direct COM interop, no NAudio: process loopback (`ActivateAudioInterfaceAsync` with `VAD\Process_Loopback`, **excluding Cue's own process tree**;
+  Windows 11, Windows 10 build 20348+) is not in NAudio, and one hand-written path serves the microphone (default capture device), the call (process loopback, falling back to the default speakers' loopback with
+  `🔊 Call audio: the default speakers, Cue's own sound included (WHY)`), both shared-mode, event-driven, asked for 16 kHz mono 16-bit from the audio engine (`AUTOCONVERTPCM`; 48 kHz stereo and `Resampler` where it will not).
+  `AudioSink` is `AudioSink.swift`: frames are one channel byte (0 me, 1 others) and PCM16 LE, contiguous, 100 ms at least; silence is filled by the host clock (a loopback stream delivers nothing while the PC is silent) and so is
+  what a dropped socket lost (20 s at most); a really open source's lane starts with the call (`Expect`), so a silent call side keeps its clock. The VM has speakers and no microphone: the microphone's status line says so
+  ("No microphone found") and its code is **not exercised** by any case; `w3-call-audio` plays a WAV through the speakers and hears it through process loopback (skips without a sound device: a CI runner has none).
+- **The overlay** (`Views/OverlayWindow.cs`): a code-built WinUI `Window`: borderless (`OverlappedPresenter.SetBorderAndTitleBar(true, false)`, resizable, 400 × 360 at least), `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`
+  (no taskbar button, a click never activates it), always on top, `AppWindow.Show(false)`, `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` (hidden from captures and screen sharing; `WDA_MONITOR`, black, where Windows
+  has no better; `CUE_ALLOW_CAPTURE` / `CUE_SNAPSHOT` turn it off), rounded corners (DWM), and `ActiveAcrylicBackdrop`: desktop acrylic that stays acrylic though the window is never active (the stock one falls back to a flat
+  colour when inactive). The bar drags it (`WM_NCLBUTTONDOWN` HTCAPTION). **Typing into Ask** is the one time it takes the keyboard: the pointer press or focus on the box removes `WS_EX_NOACTIVATE`,
+  `SetForegroundWindow`s the overlay and remembers the window it came from; Enter, Escape or losing the focus puts the style back and gives the focus back. Its position is kept in `settings.json` (`overlayBounds`;
+  not under `CUE_HOME`). The lists are redrawn (at most every 100 ms) from `LiveModel`; a case reads them with `windowText(pid)`.
+- **Hot keys** (`Core/HotKeys.cs`, `Core/LiveSurfaces.cs`): `RegisterHotKey` on a message-only window (`Core/NativeShell.cs`). **Win+Alt+KEY, not the Mac's Ctrl+Alt**, which is AltGr on many layouts (Polish, German, Ukrainian…) and would swallow typed
+  characters: Enter answer now, H show/hide (starts Cue when it doesn't run), A Auto, Page Up / Page Down previous / next answer, + / - text size. Windows keeps Win+Alt with the arrows (they failed to register) and the Game Bar has
+  Win+Alt+R. One another program holds is logged (`⚠︎ Couldn't register the shortcut for NAME: another program uses Win+Alt+KEY`) and skipped. None under `CUE_BACKGROUND` unless `CUE_SURFACES=1`.
+- **The tray icon** (`Core/Tray.cs`): `Shell_NotifyIconW` and a native popup menu (Start/Stop Cue, Show or Hide, Answer Now, Open Dashboard, Settings, Restart Live Call, Quit); with it, closing the dashboard only hides it.
+- **Starting**: Home's Live call card (`Views/LiveView.cs`: the account's projects, Start Cue; Ctrl+Enter anywhere in the dashboard) and `start NAME`. `Core/ProjectLookup.cs` is the one small place that lists the account's projects
+  (`GET /v1/projects`) and finds one by name; the projects slice's store replaces it, and the button moves onto a project's page. After sign-in the project is `CUE_PROJECT` (created when missing), else the last used.
+- **Cases** `w3-…`: `rehearsal` (transcript, question, prepared match, streamed answer on the overlay, and in the snapshot), `ask` (Prepare Answer, Ask, Answer now), `reading` and `reading-aloud` (show, newest, the
+  New question button, the reading rules), `limit`, `deepgram-drops`, `overlay` (above another program's window, never the focus, a real click and real typing, hidden from `CopyFromScreen`, shown with `CUE_ALLOW_CAPTURE`),
+  `hot-keys` (real key presses), `call-audio` (real loopback). They use `bursts` and the stand-ins' lines (`FAKE_DEEPGRAM_LIVE`), `accountProject(cue, name, { materials })` (a project in the case user's account, made
+  through the API), `press(pid, name)` (UI Automation invoke: `tools/uia-click.ps1`), `click(pid, name)` (a real mouse click at the control), `typeText`, `pressKeys('win', 'alt', 'h')` (`tools/keys.ps1`, `SendInput`),
+  `captureScreen(rect, png)` (`tools/capture.ps1`: what a screenshot sees), `windowsOf` now also has `topmost`, `affinity`, `left` and `top`, and `tools/blocker.ps1` is the other program's window.
 
 ## Cloud sandboxes (Boat)
 

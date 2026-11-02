@@ -123,6 +123,16 @@ and your notes move from `~/Documents/Cue Recordings` into its `Notes/`.
 | ⌃⌥← / ⌃⌥→ | Previous / next answer |
 | ⌃⌥↑ / ⌃⌥↓ | Text size |
 
+On Windows, Ctrl+Alt is AltGr on many keyboard layouts, so Cue's shortcuts there are Win+Alt:
+
+| Shortcut | Action |
+|---|---|
+| Win+Alt+Enter | Answer now (what's being said, or the last line) |
+| Win+Alt+H | Show or hide Cue (starts it when it isn't running) |
+| Win+Alt+A | Toggle automatic answers |
+| Win+Alt+PgUp / Win+Alt+PgDn | Previous / next answer |
+| Win+Alt++ / Win+Alt+- | Text size |
+
 Click any transcript line to get an answer for it, or type a question into the
 field at the bottom. Drag the top bar to move Cue.
 
@@ -283,8 +293,9 @@ can also record a call in progress from its row in Upcoming.
 
 A native Windows port (WinUI 3, `apps/windows`) is on its way, one piece at a time. So far it is the foundation: the dashboard window
 (Home, Upcoming, Settings; Mica, light and dark), signing in to the same invite-only Cue account in your browser (Google or GitHub), Settings ›
-Account with the month's usage and Sign Out, the session log and the test hooks, the installer and its CI. Projects, the live call and its
-overlay, recordings and notes, and meetings from your calendar follow.
+Account with the month's usage and Sign Out, the session log and the test hooks, the installer and its CI; and the live call: Start Cue on Home (Ctrl+Enter),
+the microphone and the call's audio (everything the PC plays but Cue's own sound) streamed to the backend, the overlay with the questions and answers (above other windows, never taking the focus, hidden
+from screen sharing), the Win+Alt shortcuts and the icon in the notification area. Projects, recordings and notes, and meetings from your calendar follow.
 
 - **Install**: download `Cue-VERSION-x64.msi` (or `-arm64.msi` for Windows on Arm) from the Releases page and open it. It installs Cue for
   everyone on the PC, adds it to the Start menu, replaces an older Cue, and needs no .NET or Windows App SDK installed. The installer is not
@@ -383,5 +394,6 @@ calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs using the
 microphone from a text file, both again on every check; `CUE_MEETING_TICK` and
 `CUE_MIC_RELEASE` shorten the 5 s check and the 60 s wait after a call app lets
 go of the microphone. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay
-(snapshots always can).
+(snapshots always can). On Windows `CUE_SURFACES=1` gives a test run the overlay on top of other windows, the
+tray icon and the shortcuts that `CUE_BACKGROUND` otherwise leaves out (`AGENTS.md › Live call on Windows`).
 `cd apps/mac && swift scripts/make_icon.swift` regenerates the app icon.
