@@ -126,6 +126,10 @@ internal sealed class RecordControl : ContentControl
 
     private void Plain(Button button)
     {
+        // The same height whichever it is (the dot alone, the timer, Saving…), in the middle of the bar.
+        button.MinHeight = 32;
+        button.VerticalAlignment = VerticalAlignment.Center;
+        button.VerticalContentAlignment = VerticalAlignment.Center;
         if (!subtle) return;
         var clear = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         button.Resources["ButtonBackground"] = clear;
