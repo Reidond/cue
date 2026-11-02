@@ -37,7 +37,7 @@ export {
     sameFile,
     writeExecutable,
 } from './files.ts';
-export { bursts, LiveClient, pcmOf, startCall, type StartedCall } from './live.ts';
+export { accountProject, bursts, LiveClient, pcmOf, startCall, type StartedCall } from './live.ts';
 export { assertTurnsAt, heardReport, labelsOf, summaryOf, turnSpeakers } from './notes.ts';
 export {
     beginUpload,
@@ -56,7 +56,10 @@ export {
 } from './recordings.ts';
 export { exec, shellQuote, type Ran } from './process.ts';
 export {
+    hasAudioOutput,
+    needAudioOutput,
     needElevation,
+    needInteractiveDesktop,
     needOverlaySnapshots,
     needReachable,
     needRealDeepgram,
@@ -69,5 +72,18 @@ export { Account, AdminClient, Backend, type AccountMaterial, type AccountProjec
 export { AdminPage, browser, closeBrowser } from './browser.ts';
 export { type FakeIdp } from './fake-idp.ts';
 export { Cue, type CalendarEvent, type ClaudeRequest } from './sandbox.ts';
-export { appWindows, ocr, windowText, windowsOf, type AppWindows, type WindowsOfApp } from './screen.ts';
+export {
+    appWindows,
+    captureScreen,
+    click,
+    clickToast,
+    ocr,
+    press,
+    pressKeys,
+    typeText,
+    windowText,
+    windowsOf,
+    type AppWindows,
+    type WindowsOfApp,
+} from './screen.ts';
 export { minutesFromNow, sleep, tomorrowAt } from './time.ts';

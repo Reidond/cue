@@ -12,6 +12,15 @@ public static class Env
     /// <summary>CUE_BACKGROUND=1: stay out of the way of whoever is using the PC (a test run).</summary>
     public static bool Background => Get("CUE_BACKGROUND") == "1";
 
+    /// <summary>CUE_ALLOW_CAPTURE=1: screenshots and screen sharing may see the overlay (CUE_SNAPSHOT does the same, as on the Mac).</summary>
+    public static bool AllowCapture => Get("CUE_ALLOW_CAPTURE") == "1" || Get("CUE_SNAPSHOT") is not null;
+
+    /// <summary>
+    /// CUE_SURFACES=1: under CUE_BACKGROUND, the live call's surfaces (the overlay, the tray icon, the hot keys) are as in normal use: the overlay on top
+    /// of other windows without taking the focus, the icon in the notification area, the keys registered. Only for a case about them, on a PC nobody is using.
+    /// </summary>
+    public static bool Surfaces => Get("CUE_SURFACES") == "1";
+
     /// <summary>The version the build stamped (scripts/build.ps1 -Version), as "2.0.1".</summary>
     public static string Version =>
         Assembly.GetExecutingAssembly().GetName().Version is { } version ? $"{version.Major}.{version.Minor}.{version.Build}" : "dev";

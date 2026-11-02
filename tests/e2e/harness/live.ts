@@ -3,6 +3,7 @@
 import { writeFile } from 'node:fs/promises';
 import type { CallCommand, CallEvent } from '../../../packages/contract/src/calls.ts';
 import type { Backend } from './backend.ts';
+import type { Cue } from './sandbox.ts';
 import { fail } from './results.ts';
 import { sleep } from './time.ts';
 
@@ -199,4 +200,33 @@ export async function startCall(
     if (started.status !== 201) return fail('starting the call failed', JSON.stringify(started));
     const call = started.body as { callId: string; startedAt: number };
     return { token, projectId, callId: call.callId, startedAt: call.startedAt };
+}
+
+/**
+ * Makes a project, with the given files as its materials, in the account of the case's user (invited, and signed in through the stand-in provider),
+ * as the projects pages will for a person: what a case about the live call needs before Cue starts for it by name (`CUE_PROJECT`, `start NAME`).
+ */
+export async function accountProject(
+    cue: Cue,
+    name: string,
+    options: { language?: string; namesAndTerms?: string; materials?: string[] } = {},
+): Promise<{ id: string; token: string }> {
+    const backend = await cue.backend();
+    await backend.invite(cue.email);
+    const token = (await backend.tokensFor(cue.email)).access_token;
+    const created = await backend.call('POST', '/v1/projects', token, {
+        body: {
+            name,
+            language: options.language ?? 'en',
+            occasion: 'A talk about rooftop bees',
+            namesAndTerms: options.namesAndTerms ?? '',
+        },
+    });
+    if (created.status !== 201) return fail('creating the project failed', JSON.stringify(created));
+    const id = (created.body as { id: string }).id;
+    for (const path of options.materials ?? []) {
+        const uploaded = await backend.call('POST', `/v1/projects/${id}/materials`, token, { file: { path } });
+        if (uploaded.status !== 201) return fail(`uploading ${path} failed`, JSON.stringify(uploaded));
+    }
+    return { id, token };
 }

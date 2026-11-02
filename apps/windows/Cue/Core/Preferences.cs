@@ -28,6 +28,9 @@ public sealed class SettingsFile
 
     public bool? Bool(string key) => values[key] is JsonValue value && value.TryGetValue<bool>(out var flag) ? flag : null;
 
+    /// <summary>A value as the file holds it (an array, an object) for the settings that are not a single word, number or flag.</summary>
+    public JsonNode? Node(string key) => values[key];
+
     public double? Number(string key) => values[key] is JsonValue value && value.TryGetValue<double>(out var number) ? number : null;
 
     public void Set(string key, JsonNode? value)
@@ -38,7 +41,7 @@ public sealed class SettingsFile
 }
 
 /// <summary>Global preferences, persisted in settings.json; everything about a talk lives in its project (a later slice).</summary>
-public sealed class Preferences : Observable
+public sealed partial class Preferences : Observable
 {
     private readonly SettingsFile file = new();
     private string speakerName;

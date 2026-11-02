@@ -1,10 +1,14 @@
 // What a case may need that a machine can lack. Each one skips the case, with the reason, when it's
 // missing: nothing here fakes it.
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { DEEPGRAM, KEYCHAIN_ITEMS } from './config.ts';
+import { join } from 'node:path';
+import { DEEPGRAM, E2E_ROOT, KEYCHAIN_ITEMS } from './config.ts';
 import { literal } from './files.ts';
 import { exec } from './process.ts';
 import { skip } from './results.ts';
+import { windowsOf } from './screen.ts';
+import { sleep } from './time.ts';
 
 /** What the runner found this machine can do (see capabilities.ts), read once per case. */
 export interface Capability {
@@ -40,6 +44,44 @@ export async function needWindowsOcr(): Promise<void> {
     ]);
     if (ran.stdout.trim() !== 'yes')
         skip("Windows has no OCR language installed (setup.ps1 adds the English one), so the app's snapshots can't be read");
+}
+
+/**
+ * On Windows: a desktop that gives a window the keyboard focus, as a person's does: the cases that press keys, click and watch where the focus is need one.
+ * Some CI sessions have none (a window shown there never becomes the foreground one, and injected keys go nowhere), so the check is made, by showing a
+ * window of another program (tools/blocker.ps1) and looking whether it gets the focus; the case skips when it does not.
+ */
+export async function needInteractiveDesktop(): Promise<void> {
+    if (process.platform !== 'win32') skip('this case is about Windows');
+    const blocker = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(E2E_ROOT, 'tools', 'blocker.ps1')], {
+        stdio: 'ignore',
+    });
+    try {
+        for (let waited = 0; waited < 30; waited++) {
+            if (blocker.pid !== undefined && (await windowsOf(blocker.pid).catch(() => undefined))?.foreground) return;
+            await sleep(1);
+        }
+        skip(
+            "this session has no desktop that gives a window the keyboard focus (some CI runners' sessions don't), so the focus and the keys can't be tried",
+        );
+    } finally {
+        blocker.kill();
+    }
+}
+
+/** On Windows: whether there is a sound device to play through and listen to the PC play (a CI runner has none; a VM has a virtual one). */
+export async function hasAudioOutput(): Promise<boolean> {
+    const ran = await exec('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        "if (@(Get-CimInstance Win32_SoundDevice | Where-Object { $_.Status -eq 'OK' }).Count -gt 0) { 'yes' }",
+    ]);
+    return ran.stdout.trim() === 'yes';
+}
+
+/** On Windows: a sound device to play through and listen to the PC play (a CI runner has none; a VM has a virtual one), for the cases that let Cue hear real audio. */
+export async function needAudioOutput(): Promise<void> {
+    if (!(await hasAudioOutput())) skip('this PC has no sound device to play through and listen to (a CI runner has none)');
 }
 
 /** A snapshot of the overlay that Vision can read here (it is drawn differently: it is all glass). */

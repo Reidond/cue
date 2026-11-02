@@ -17,6 +17,7 @@ public sealed partial class ProjectPage : Page
     private ProjectTab? shownSection;
     private ProjectOverviewView? overview;
     private PreparedAnswersView? answers;
+    private NotesView? notes;
     private KnowledgeBase? knowledge;
     private bool reading;
 
@@ -32,6 +33,7 @@ public sealed partial class ProjectPage : Page
         state = (AppState)e.Parameter;
         state.Dashboard.PropertyChanged += OnChanged;
         state.Projects.PropertyChanged += OnChanged;
+        state.Live.PropertyChanged += OnChanged;
         shown = null;
         Render();
     }
@@ -40,9 +42,17 @@ public sealed partial class ProjectPage : Page
     {
         state.Dashboard.PropertyChanged -= OnChanged;
         state.Projects.PropertyChanged -= OnChanged;
+        state.Live.PropertyChanged -= OnChanged;
+        NotesHost.Child = null;
     }
 
     private void OnChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => Render();
+
+    /// <summary>Start Cue for this project: shows the overlay and listens, answering from its materials; Stop Cue while it does.</summary>
+    private void OnStartCue(object sender, RoutedEventArgs e)
+    {
+        if (state.Projects.Find(state.Dashboard.ProjectId) is { } project) state.Live.ToggleCue(project);
+    }
 
     private void OnTabChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
     {
@@ -55,14 +65,18 @@ public sealed partial class ProjectPage : Page
     {
         if (state.Projects.Find(state.Dashboard.ProjectId) is not { } project)
         {
+            StartCueButton.Visibility = Visibility.Collapsed;
             NameText.Text = "No Project Selected";
             SubtitleText.Text = "";
             Tabs.Visibility = Visibility.Collapsed;
             TabHost.Child = null;
+            NotesHost.Child = null;
             shown = null;
             return;
         }
         Tabs.Visibility = Visibility.Visible;
+        StartCueButton.Visibility = Visibility.Visible;
+        StartCueButton.Content = state.Live.CueRunning && state.Live.ActiveProject?.Id == project.Id ? "Stop Cue" : "Start Cue";
         NameText.Text = project.Name;
         SubtitleText.Text = string.Join(" · ", SpokenLanguage.Named(project.Language).Name, project.Materials.Count == 1 ? "1 file" : $"{project.Materials.Count} files");
 
@@ -71,6 +85,7 @@ public sealed partial class ProjectPage : Page
             shown = project.Id;
             overview = new ProjectOverviewView(state, project);
             answers = new PreparedAnswersView();
+            notes = new NotesView(state, project);
             knowledge = null;
             readKey = "";
         }
@@ -89,12 +104,18 @@ public sealed partial class ProjectPage : Page
             ProjectTab.Notes => NotesTab,
             _ => OverviewTab,
         };
+        var onNotes = section == ProjectTab.Notes;
+        Scroller.Visibility = onNotes ? Visibility.Collapsed : Visibility.Visible;
+        NotesHost.Visibility = onNotes ? Visibility.Visible : Visibility.Collapsed;
+        // The notes page is only there while it is shown: leaving it stops the player.
+        NotesHost.Child = onNotes ? notes : null;
         TabHost.Child = section switch
         {
             ProjectTab.Answers => answers,
-            ProjectTab.Notes => NotesPlaceholder(),
+            ProjectTab.Notes => null,
             _ => overview,
         };
+        if (onNotes) notes!.Update(project);
     }
 
     /// <summary>Asks the account what it read from the project's files, when its files or language changed.</summary>
@@ -114,13 +135,4 @@ public sealed partial class ProjectPage : Page
         overview?.Update(state.Projects.Find(project.Id) ?? project, knowledge, reading);
         answers?.Update(knowledge, reading);
     }
-
-    /// <summary>The notes are the notes slice's; the page has its place.</summary>
-    private static UIElement NotesPlaceholder() =>
-        new TextBlock
-        {
-            Text = "Notes of this project's calls will be here as Cue for Windows gets them.",
-            Foreground = Ui.Theme("TextFillColorSecondaryBrush"),
-            TextWrapping = TextWrapping.Wrap,
-        };
 }

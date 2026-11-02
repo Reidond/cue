@@ -32,17 +32,18 @@ internal static class Shell
     [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
     private static extern int StrCmpLogicalW(string a, string b);
 
-    /// <summary>Moves a folder, everything in it, to the Recycle Bin (the shell wants the path double-null-terminated).</summary>
-    public static void MoveToRecycleBin(string folder)
+    /// <summary>Moves folders or files, everything in them, to the Recycle Bin (the shell wants the paths null-separated and double-null-terminated).</summary>
+    public static void MoveToRecycleBin(params string[] paths)
     {
+        var folder = paths[0];
         var operation = new FileOperation
         {
             Function = FoDelete,
-            From = folder + "\0",
+            From = string.Join("\0", paths) + "\0",
             Flags = FofAllowUndo | FofNoConfirmation | FofNoErrorUi | FofSilent,
         };
         var code = SHFileOperationW(ref operation);
-        if (code != 0 || operation.AnyOperationsAborted || Directory.Exists(folder))
+        if (code != 0 || operation.AnyOperationsAborted || paths.Any(path => Directory.Exists(path) || File.Exists(path)))
             throw new IOException($"Couldn't move “{Path.GetFileName(folder)}” to the Recycle Bin" + (code != 0 ? $" (error 0x{code:X})." : "."));
     }
 
@@ -51,6 +52,18 @@ internal static class Shell
         try
         {
             Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true })?.Dispose();
+        }
+        catch (Win32Exception)
+        {
+        }
+    }
+
+    /// <summary>Opens Explorer on the folder the file is in, with the file selected.</summary>
+    public static void ShowFileInExplorer(string file)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{file}\"") { UseShellExecute = true })?.Dispose();
         }
         catch (Win32Exception)
         {
