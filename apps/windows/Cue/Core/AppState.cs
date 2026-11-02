@@ -34,6 +34,7 @@ public sealed class DashboardModel : Observable
     private SettingsTab tab = SettingsTab.General;
     private string? projectId;
     private ProjectTab section = ProjectTab.Overview;
+    private string? noteId;
 
     public DashboardPage Page
     {
@@ -61,6 +62,13 @@ public sealed class DashboardModel : Observable
         set => Set(ref section, value);
     }
 
+    /// <summary>The note open on the project's Notes page (a <see cref="RecordingFile.Id"/>): the one the `rename`, `apply`, `dismiss` and `timestamp` commands are about.</summary>
+    public string? NoteId
+    {
+        get => noteId;
+        set => Set(ref noteId, value);
+    }
+
     /// <summary>The project on screen: null unless the dashboard is on a project's page.</summary>
     public string? CurrentProjectId => Page == DashboardPage.Project ? ProjectId : null;
 
@@ -80,6 +88,15 @@ public sealed class DashboardModel : Observable
     {
         ProjectId = id;
         Section = to;
+        Page = DashboardPage.Project;
+    }
+
+    /// <summary>A note on its project's Notes page (after a recording is saved, say).</summary>
+    public void OpenNote(string id)
+    {
+        ProjectId = id[..id.IndexOf('/', StringComparison.Ordinal)];
+        NoteId = id;
+        Section = ProjectTab.Notes;
         Page = DashboardPage.Project;
     }
 
@@ -109,6 +126,12 @@ public sealed class AppState : Observable
     /// <summary>The person's projects, and the one Cue answers from (<see cref="ProjectStore.Active"/>): loaded after signing in, see <see cref="CueApi.OnSignedIn"/>.</summary>
     public ProjectStore Projects { get; }
 
+    /// <summary>The notes of the calls: the Markdown copies in the projects' folders and what the account makes of each recording.</summary>
+    public RecordingStore Recordings { get; }
+
+    /// <summary>Plays the audio of the note open in the dashboard; the transcript's timestamps jump in it.</summary>
+    public NotePlayer Player { get; }
+
     private string? planLimit;
 
     public AppState(DispatcherQueue queue)
@@ -117,6 +140,8 @@ public sealed class AppState : Observable
         Api = new CueApi(Log);
         Control = new ControlCommands(this);
         Projects = new ProjectStore(Api, Log, Preferences);
+        Recordings = new RecordingStore(this);
+        Player = new NotePlayer(this);
         // The projects are the account's: once someone is signed in they are loaded (and the ones found in the library imported), and one is chosen.
         Api.OnSignedIn = async () =>
         {
@@ -124,6 +149,7 @@ public sealed class AppState : Observable
             {
                 await Projects.SyncWithAccount();
                 await Projects.ChooseActive();
+                await Recordings.SyncWithAccount();
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
@@ -135,9 +161,13 @@ public sealed class AppState : Observable
         {
             if (e.PropertyName != nameof(CueApi.Phase) || Api.Phase != Phase.SignedOut) return;
             Projects.Clear();
+            Recordings.Clear();
+            Player.Load(null, null);
+            Player.ForgetStreamed();
             if (Dashboard.Page == DashboardPage.Project) Dashboard.Page = DashboardPage.Home;
         };
         ProjectCommands.Register(this);
+        RecordingCommands.Register(this);
         // After the projects: it follows the one Cue answers from.
         Live = new LiveModel(this);
     }

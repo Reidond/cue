@@ -14,7 +14,7 @@ internal sealed class LiveSurfaces : IDisposable
     /// <summary>Cue has an icon in the notification area: closing the dashboard only hides it, and Cue goes on from there.</summary>
     public static bool HasTray { get; private set; }
 
-    /// <summary>The icon is red while a call is recorded, even with the overlay hidden (the recordings slice sets it).</summary>
+    /// <summary>The icon is red while a call is recorded, even with the overlay hidden.</summary>
     public Tray Icon => tray;
 
     public LiveSurfaces(AppState state)
@@ -24,11 +24,14 @@ internal sealed class LiveSurfaces : IDisposable
         keys = new HotKeys(window, state.Log);
         var live = state.Live;
         var preferences = state.Preferences;
-        // Win+Alt+KEY (virtual-key codes): Enter, H, A, Page Up and Page Down, + and -. (Windows keeps Win+Alt with the arrows.) The recordings slice adds C
-        // (not R: the Game Bar's).
+        // The icon is red while a call is recorded, even with the overlay hidden.
+        live.Recorder.PropertyChanged += (_, _) => tray.Recording = live.Recorder.IsRecording;
+        // Win+Alt+KEY (virtual-key codes): Enter, H, A, C (record: not R, which is the Game Bar's), Page Up and Page Down, + and -. (Windows keeps Win+Alt
+        // with the arrows.)
         keys.Register("Answer Now", 0x0D, live.AnswerNow);
         keys.Register("Show or Hide Cue", 0x48, live.ToggleOverlay);
         keys.Register("Auto answers", 0x41, () => preferences.AutoAnswer = !preferences.AutoAnswer);
+        keys.Register("Start or Stop Recording", 0x43, () => live.ToggleRecording(RecordingTrigger.HotKey));
         keys.Register("the previous question", 0x21, () => live.Step(-1));
         keys.Register("the next question", 0x22, () => live.Step(1));
         keys.Register("larger text", 0xBB, () => preferences.TextSize += 1);
