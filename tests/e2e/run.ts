@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // Runs Cue's end-to-end cases against the built app: Cue.app on macOS, Cue.exe on Windows.
 //
-//   node tests/e2e/run.ts [--no-build] [--no-app] [--real-deepgram] [--keep] [--shard=K/N] [PREFIX…]
+//   node tests/e2e/run.ts [--no-build] [--no-app] [--real-deepgram] [--keep] [--shard=K/N] [--except=PREFIX…] [PREFIX…]
 //
 //   --no-build        use the existing build: apps/mac/build/Cue.app, or apps/windows/build/ARCH/Cue.exe
 //   --no-app          don't build or need the app: only the cases about the backend run (no Swift tools; any case that launches Cue fails)
 //   --real-deepgram   the backend talks to the real Deepgram (its key from the keychain) instead of the stand-in
 //   --keep            keep every case's sandbox (failed cases are always kept)
 //   --shard=K/N       run the K-th of N parts of the cases, split so that N machines finish together (CI)
+//   --except=PREFIX   leave out the cases whose file name starts with this (as often as you like)
 //   PREFIX…           run only cases whose file name starts with one of these
 //
 // On Windows the cases are the w… ones (about Cue.exe and its installer) and the ones about the backend only, which never launch the app;
@@ -36,9 +37,12 @@ const arch = windows
     : process.arch;
 
 function usage(): string {
-    return readFileSync(import.meta.filename, 'utf8')
-        .split('\n')
-        .slice(1, 18)
+    const lines = readFileSync(import.meta.filename, 'utf8').split('\n');
+    return lines
+        .slice(
+            1,
+            lines.findIndex((line, index) => index > 0 && !line.startsWith('//')),
+        )
         .map((line) => line.replace(/^\/\/ ?/, ''))
         .join('\n');
 }
@@ -61,7 +65,8 @@ let build = true,
     deepgram = 'fake',
     keep = false,
     shard = { part: 1, of: 1 };
-const prefixes: string[] = [];
+const prefixes: string[] = [],
+    except: string[] = [];
 for (const arg of process.argv.slice(2)) {
     if (arg === '--no-build') build = false;
     else if (arg === '--no-app') withApp = false;
@@ -74,6 +79,13 @@ for (const arg of process.argv.slice(2)) {
             process.exit(1);
         }
         shard = { part, of };
+    } else if (arg.startsWith('--except=')) {
+        // An empty prefix would leave out every case.
+        if (arg === '--except=') {
+            console.log('--except needs a prefix');
+            process.exit(1);
+        }
+        except.push(arg.slice('--except='.length));
     } else if (arg === '-h' || arg === '--help') {
         console.log(usage());
         process.exit(0);
@@ -133,6 +145,7 @@ const matching = readdirSync(join(E2E, 'cases'))
     .filter((name) => name.endsWith('.test.ts'))
     .filter(runsHere)
     .filter((name) => prefixes.length === 0 || prefixes.some((prefix) => name.startsWith(prefix)))
+    .filter((name) => !except.some((prefix) => name.startsWith(prefix)))
     .sort();
 
 /**
@@ -152,7 +165,7 @@ function shardOf(names: string[]): string[] {
     return (parts[shard.part - 1]?.names ?? []).sort();
 }
 if (matching.length === 0) {
-    console.log(`No cases match: ${prefixes.join(' ')}`);
+    console.log(`No cases match: ${[...prefixes, ...except.map((prefix) => `--except=${prefix}`)].join(' ')}`);
     process.exit(1);
 }
 const cases = shardOf(matching);
