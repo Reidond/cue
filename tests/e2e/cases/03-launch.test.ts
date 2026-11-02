@@ -7,12 +7,14 @@ e2eCase('Cue launches in the sandbox, reads its materials and shows the overlay 
     await cue.waitLog(/Materials .*talk\.md/, 30);
     // The old settings became "My project"; Start Cue shows the overlay for it.
     cue.control('start My project');
-    // The status says "Starting speech recognition…" until the live call is up on the backend (Claude warmed, speech streams open). A snapshot
-    // taken before the overlay is drawn reads as nothing, which isn't settled either.
+    // The status says "Starting speech recognition…" or "Warming up Claude…" until the live call is up on the backend (speech streams
+    // open, Claude warmed). Vision runs its words together and misreads its first letters ("Startingispeec.."), so any piece of them
+    // means it still does; none is anywhere on the settled overlay. A snapshot taken before the overlay is drawn reads as nothing, which
+    // isn't settled either.
     let overlay = '';
     await cue.waitFor('the overlay to settle on its status', 120, async () => {
         overlay = await cue.snapshotText(cue.path('cue.png'));
-        return /When someone asks a question/.test(overlay) && !/Starting spee/.test(overlay);
+        return /When someone asks a question/.test(overlay) && !/tarting|speec|arming/.test(overlay);
     });
     const text = cue.save('overlay.txt', overlay);
     assertContains(text, /When someone asks a question/, 'the overlay should show its ready state');
