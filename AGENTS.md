@@ -422,7 +422,7 @@ node tests/e2e/run.ts --real-deepgram 83 84   # the backend's Deepgram is the re
 node tests/e2e/run.ts --keep           # keep every sandbox (a failed case always keeps its own)
 node tests\e2e\run.ts                  # on Windows: build apps/windows (build.ps1), then the w… cases and the backend's own (no app launched)
 node tests\e2e\run.ts --no-build w0-  # on Windows: the app already built (apps\windows\build\ARCH\Cue.exe)
-node tests\e2e\run.ts --no-build w --except=w1- --shard=2/4  # on Windows: what one of CI's app jobs runs (every w case but the installer's, one part of four)
+node tests\e2e\run.ts --no-build w --except=w1- --shard=2/5  # on Windows: what one of CI's app jobs runs (every w case but the installer's, one part of five)
 pnpm install && vp check               # format, lint, type-check; run it before you commit
 ```
 
@@ -610,7 +610,7 @@ updating the cases.
   command-line modes, the dashboard and the speech cases. **Run the
   whole suite on an authorized remote Mac before merging** and put its summary
   in the PR. Keep CI green; never fake what's missing. The `windows` jobs are parallel and each about eight minutes or less
-  (they must never be the slowest check): a small `windows-plan` job makes their matrix from two numbers at its top, `WINDOWS_APP_SHARDS` (4) and `WINDOWS_BACKEND_SHARDS` (3). Per
+  (they must never be the slowest check): a small `windows-plan` job makes their matrix from two numbers at its top, `WINDOWS_APP_SHARDS` (5) and `WINDOWS_BACKEND_SHARDS` (3). Per
   architecture, `ARCH-app-1`…`-N` build the app and run **every `w` case but the installer's** (`run.ts w --except=w1- --shard=K/N`: a slice's new `w2-`, `w3-`, … cases join by their
   name, with no edit to the workflow), balanced by `durations.json`; `ARCH-installer` builds the app and the MSI and runs `w1-`. On x64 (`windows-latest`) `x64-backend-1`…`-M` also
   run the backend's own cases without building anything (`run.ts --no-app --shard=K/M`; setup.ps1 `-Backend` skips the .NET SDK and OCR). Each app job pays about three minutes for
