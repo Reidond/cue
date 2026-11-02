@@ -95,15 +95,5 @@
     "9d-limit-overlay": 19,
     "9d-limit-reached": 17,
     "9d-rate-limit": 27,
-    "9d-usage-shown": 15,
-    "w3-ask": 30,
-    "w3-call-audio": 3,
-    "w3-deepgram-drops": 20,
-    "w3-hot-keys": 24,
-    "w3-limit": 25,
-    "w3-overlay": 32,
-    "w3-reading": 52,
-    "w3-reading-aloud": 44,
-    "w3-reconnect": 42,
-    "w3-rehearsal": 25
+    "9d-usage-shown": 15
 }
