@@ -102,5 +102,10 @@
     "w0-not-invited": 13,
     "w0-sign-in": 16,
     "w0-sign-out": 14,
-    "w1-installer": 57
+    "w1-installer": 57,
+    "w2-account-projects": 21,
+    "w2-active-project": 26,
+    "w2-import-projects": 15,
+    "w2-materials": 14,
+    "w2-projects": 22
 }

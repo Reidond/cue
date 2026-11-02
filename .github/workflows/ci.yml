@@ -114,14 +114,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # `kind`: app builds Cue.exe and runs the w0 cases; installer also builds the MSI and runs w1; backend builds nothing and runs the
+          # `kind`: app builds Cue.exe and runs the cases that launch it (w0, w2); installer also builds the MSI and runs w1; backend builds nothing and runs the
           # cases that never launch the app (`run.ts --no-app`), split by `--shard` from durations.json.
-          - { id: x64-app, runner: windows-latest, arch: x64, kind: app, cases: 'w0-' }
+          - { id: x64-app, runner: windows-latest, arch: x64, kind: app, cases: 'w0- w2-' }
           - { id: x64-installer, runner: windows-latest, arch: x64, kind: installer, cases: 'w1-' }
           - { id: x64-backend-1, runner: windows-latest, arch: x64, kind: backend, cases: '--no-app --shard=1/3' }
           - { id: x64-backend-2, runner: windows-latest, arch: x64, kind: backend, cases: '--no-app --shard=2/3' }
           - { id: x64-backend-3, runner: windows-latest, arch: x64, kind: backend, cases: '--no-app --shard=3/3' }
-          - { id: arm64-app, runner: windows-11-arm, arch: arm64, kind: app, cases: 'w0-' }
+          - { id: arm64-app, runner: windows-11-arm, arch: arm64, kind: app, cases: 'w0- w2-' }
           - { id: arm64-installer, runner: windows-11-arm, arch: arm64, kind: installer, cases: 'w1-' }
     name: windows (${{ matrix.id }})
     steps:

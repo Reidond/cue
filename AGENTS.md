@@ -609,7 +609,7 @@ updating the cases.
   command-line modes, the dashboard and the speech cases. **Run the
   whole suite on an authorized remote Mac before merging** and put its summary
   in the PR. Keep CI green; never fake what's missing. The `windows` job is seven parallel jobs, each ten minutes or less
-  (they must never be the slowest check): on x64 (`windows-latest`) `x64-app` builds the app and runs the `w0-` cases, `x64-installer` builds the app and the MSI and runs
+  (they must never be the slowest check): on x64 (`windows-latest`) `x64-app` builds the app and runs the `w0-` and `w2-` cases (every case that launches it, the installer's apart), `x64-installer` builds the app and the MSI and runs
   `w1-`, and `x64-backend-1`…`-3` run the backend's own cases without building anything (`run.ts --no-app --shard=K/3`, balanced by `durations.json`; setup.ps1 `-Backend`
   skips the .NET SDK and OCR); on arm64 (`windows-11-arm`) `arm64-app` and `arm64-installer` do the same as their x64 twins. **arm64 CI covers the Arm build, the app's cases and the
   installer, not the backend's cases**: Node.js, workerd and Vite+ run emulated there (about three times slower), and the backend does not differ by processor; the whole suite on Arm is
