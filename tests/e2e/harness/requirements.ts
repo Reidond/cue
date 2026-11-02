@@ -31,6 +31,17 @@ export function needWindowSnapshots(): void {
     if (windows && !windows.ok) skip(windows.detail);
 }
 
+/** On Windows: Windows' own OCR (Windows.Media.Ocr) has a recognizer, which the cases that read the app's snapshots need; `setup.ps1` adds the English one. */
+export async function needWindowsOcr(): Promise<void> {
+    const ran = await exec('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        "$null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]; if ([Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages.Count -gt 0) { 'yes' }",
+    ]);
+    if (ran.stdout.trim() !== 'yes')
+        skip("Windows has no OCR language installed (setup.ps1 adds the English one), so the app's snapshots can't be read");
+}
+
 /** A snapshot of the overlay that Vision can read here (it is drawn differently: it is all glass). */
 export function needOverlaySnapshots(): void {
     const overlay = probed('overlay');
@@ -52,6 +63,17 @@ export async function keychainKey(service: keyof typeof KEYCHAIN_ITEMS): Promise
 export async function needRealDeepgram(): Promise<void> {
     if (DEEPGRAM !== 'real') skip('needs --real-deepgram');
     await keychainKey('deepgram');
+}
+
+/**
+ * An elevated process (Run as administrator; a CI runner is one): Windows Installer installs per machine only for one. Skips the case without it,
+ * as it can't ask: a prompt nobody answers would hold the run.
+ */
+export async function needElevation(): Promise<void> {
+    if (process.platform !== 'win32') skip('installing Cue is for Windows');
+    // `net session` needs administrator rights.
+    if ((await exec('net', ['session'])).code !== 0)
+        skip('needs an elevated PowerShell (Run as administrator): the installer is per machine');
 }
 
 let voices: Promise<string[]> | undefined;

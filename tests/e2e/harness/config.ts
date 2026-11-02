@@ -11,8 +11,14 @@ function fromRunner(name: string): string {
 export const E2E_ROOT = join(import.meta.dirname, '..');
 export const FIXTURES = join(E2E_ROOT, 'fixtures');
 
+/** Cases about the Windows app run on Windows, the rest on macOS (or, the ones about the backend only, on both and on Linux). */
+export const IS_WINDOWS = process.platform === 'win32';
+
+/** The built app: Cue.app on macOS, Cue.exe's own path on Windows (apps/windows/build/ARCH/Cue.exe). */
 export const CUE_APP = fromRunner('CUE_APP');
-export const CUE_BIN = join(CUE_APP, 'Contents', 'MacOS', 'Cue');
+export const CUE_BIN = IS_WINDOWS ? CUE_APP : join(CUE_APP, 'Contents', 'MacOS', 'Cue');
+/** The processor the app was built for (`x64`, `arm64`): the PC's own on Windows, where Node.js may be an x64 one on an Arm PC. */
+export const E2E_ARCH = process.env['E2E_ARCH'] ?? '';
 /** One work folder per checkout: sandboxes, case logs, the compiled tools and caches. */
 export const E2E_WORK = fromRunner('E2E_WORK');
 export const E2E_BIN = join(E2E_WORK, 'bin');

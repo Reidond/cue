@@ -11,7 +11,7 @@ export {
 } from './assert.ts';
 export { afinfo, audioLength, audioSync, dialogue, excerpt, silence, speech, type Dialogue, type Said } from './audio.ts';
 export { e2eCase } from './case.ts';
-export { DEEPGRAM, FIXTURES, fixture } from './config.ts';
+export { DEEPGRAM, FIXTURES, fixture, IS_WINDOWS } from './config.ts';
 export { makeDocx, makePdf, makePptx, writeFile } from './documents.ts';
 export {
     FAKE_KEYS,
@@ -55,11 +55,19 @@ export {
     type UploadOptions,
 } from './recordings.ts';
 export { exec, shellQuote, type Ran } from './process.ts';
-export { needOverlaySnapshots, needReachable, needRealDeepgram, needVoice, needWindowSnapshots } from './requirements.ts';
+export {
+    needElevation,
+    needOverlaySnapshots,
+    needReachable,
+    needRealDeepgram,
+    needVoice,
+    needWindowSnapshots,
+    needWindowsOcr,
+} from './requirements.ts';
 export { fail, print, skip } from './results.ts';
 export { Account, AdminClient, Backend, type AccountMaterial, type AccountProject, type BackendOptions } from './backend.ts';
 export { AdminPage, browser, closeBrowser } from './browser.ts';
 export { type FakeIdp } from './fake-idp.ts';
 export { Cue, type CalendarEvent, type ClaudeRequest } from './sandbox.ts';
-export { appWindows, ocr, type AppWindows } from './screen.ts';
+export { appWindows, ocr, windowText, windowsOf, type AppWindows, type WindowsOfApp } from './screen.ts';
 export { minutesFromNow, sleep, tomorrowAt } from './time.ts';

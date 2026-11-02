@@ -1,14 +1,17 @@
 #!/usr/bin/env node
-// Runs Cue's end-to-end cases against the built app.
+// Runs Cue's end-to-end cases against the built app: Cue.app on macOS, Cue.exe on Windows.
 //
 //   node tests/e2e/run.ts [--no-build] [--no-app] [--real-deepgram] [--keep] [--shard=K/N] [PREFIX…]
 //
-//   --no-build        use the existing apps/mac/build/Cue.app
-//   --no-app          don't build or need Cue.app: only the cases about the backend run (no Swift tools; any case that launches Cue fails)
+//   --no-build        use the existing build: apps/mac/build/Cue.app, or apps/windows/build/ARCH/Cue.exe
+//   --no-app          don't build or need the app: only the cases about the backend run (no Swift tools; any case that launches Cue fails)
 //   --real-deepgram   the backend talks to the real Deepgram (its key from the keychain) instead of the stand-in
 //   --keep            keep every case's sandbox (failed cases are always kept)
 //   --shard=K/N       run the K-th of N parts of the cases, split so that N machines finish together (CI)
 //   PREFIX…           run only cases whose file name starts with one of these
+//
+// On Windows the cases are the w… ones (about Cue.exe and its installer) and the ones about the backend only, which never launch the app;
+// on macOS everything but the w… ones. Backend-only cases run anywhere with --no-app.
 //
 // Exit status: 0 when nothing failed (skips are fine), 1 otherwise.
 import { spawnSync } from 'node:child_process';
@@ -20,11 +23,22 @@ import { run } from 'node:test';
 
 const E2E = import.meta.dirname;
 const ROOT = resolve(E2E, '..', '..');
+const windows = process.platform === 'win32';
+// The PC's processor, which an x64 Node.js running under emulation on Windows for Arm (setup.ps1 installs that one) does not report as its own:
+// Windows' own PowerShell says.
+const arch = windows
+    ? // The processor's own architecture (12 is Arm64), which emulated programs, PowerShell's .NET included, don't see.
+      spawnSync('powershell.exe', ['-NoProfile', '-Command', '(Get-CimInstance Win32_Processor | Select-Object -First 1).Architecture'], {
+          encoding: 'utf8',
+      }).stdout.trim() === '12'
+        ? 'arm64'
+        : 'x64'
+    : process.arch;
 
 function usage(): string {
     return readFileSync(import.meta.filename, 'utf8')
         .split('\n')
-        .slice(1, 15)
+        .slice(1, 18)
         .map((line) => line.replace(/^\/\/ ?/, ''))
         .join('\n');
 }
@@ -68,14 +82,20 @@ for (const arg of process.argv.slice(2)) {
 
 if (build && withApp) {
     console.log('Building Cue…');
-    const built = spawnSync(join(ROOT, 'apps', 'mac', 'scripts', 'build.sh'), { stdio: ['inherit', 'ignore', 'inherit'] });
+    const built = windows
+        ? spawnSync(
+              'powershell.exe',
+              ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(ROOT, 'apps', 'windows', 'scripts', 'build.ps1'), '-Arch', arch],
+              { stdio: ['inherit', 'inherit', 'inherit'] },
+          )
+        : spawnSync(join(ROOT, 'apps', 'mac', 'scripts', 'build.sh'), { stdio: ['inherit', 'ignore', 'inherit'] });
     if (built.status !== 0) {
         console.log('Build failed');
         process.exit(1);
     }
 }
-const app = join(ROOT, 'apps', 'mac', 'build', 'Cue.app');
-if (withApp && !executable(join(app, 'Contents', 'MacOS', 'Cue'))) {
+const app = windows ? join(ROOT, 'apps', 'windows', 'build', arch, 'Cue.exe') : join(ROOT, 'apps', 'mac', 'build', 'Cue.app');
+if (withApp && !executable(windows ? app : join(app, 'Contents', 'MacOS', 'Cue'))) {
     console.log(`No ${app} — run without --no-build`);
     process.exit(1);
 }
@@ -88,7 +108,7 @@ mkdirSync(join(work, 'cache'), { recursive: true });
 
 // The helpers that need Apple's frameworks, rebuilt when their source changes.
 for (const source of readdirSync(join(E2E, 'tools'))
-    .filter((name) => withApp && name.endsWith('.swift'))
+    .filter((name) => withApp && !windows && name.endsWith('.swift'))
     .sort()) {
     const path = join(E2E, 'tools', source),
         tool = join(bin, basename(source, '.swift'));
@@ -101,8 +121,17 @@ for (const source of readdirSync(join(E2E, 'tools'))
     }
 }
 
+/** Whether a case is for this machine: the w… ones are Windows', and Windows runs besides them only the cases that never launch the app. */
+function runsHere(name: string): boolean {
+    const ownToWindows = name.startsWith('w');
+    if (!windows) return !ownToWindows;
+    if (ownToWindows) return withApp;
+    return !/\.(launch|cli|control)\(/.test(readFileSync(join(E2E, 'cases', name), 'utf8'));
+}
+
 const matching = readdirSync(join(E2E, 'cases'))
     .filter((name) => name.endsWith('.test.ts'))
+    .filter(runsHere)
     .filter((name) => prefixes.length === 0 || prefixes.some((prefix) => name.startsWith(prefix)))
     .sort();
 
@@ -136,6 +165,7 @@ if (cases.length === 0) {
 Object.assign(process.env, {
     CUE_APP: app,
     E2E_WORK: work,
+    E2E_ARCH: arch,
     E2E_DEEPGRAM: deepgram,
     E2E_KEEP: keep ? '1' : '0',
 });
@@ -145,7 +175,7 @@ Object.assign(process.env, {
 const needs = new Set<'snapshots'>();
 for (const name of cases) {
     const source = readFileSync(join(E2E, 'cases', name), 'utf8');
-    if (/snapshotText|dashboardPage|dashboardShows/.test(source)) needs.add('snapshots');
+    if (!windows && /snapshotText|dashboardPage|dashboardShows/.test(source)) needs.add('snapshots');
 }
 const capabilitiesFile = join(work, 'cache', 'capabilities.json');
 const { probeMachine } = await import('./harness/capabilities.ts');
@@ -237,7 +267,14 @@ for await (const event of run({ files, concurrency: 1, signal: stop.signal })) {
         outcome.output += event.data.message;
         continue;
     }
-    if (event.type === 'test:fail') outcome.failed = true;
+    if (event.type === 'test:fail') {
+        outcome.failed = true;
+        // A case that fails after it said nothing (its sandbox's cleanup, an exception outside the body) still says why.
+        if (outcome.output === '') {
+            const error = event.data.details.error as { message?: string; cause?: { stack?: string; message?: string } } | undefined;
+            outcome.output = `${error?.cause?.stack ?? error?.cause?.message ?? error?.message ?? ''}\n`;
+        }
+    }
     if (event.type === 'test:pass' && typeof event.data.skip === 'string') outcome.skip = event.data.skip;
     // node:test reports the case's test, then the file it ran in as a test of its own: the case is done.
     if (event.type === 'test:complete' && resolve(event.data.name) === file && !done.has(file)) {

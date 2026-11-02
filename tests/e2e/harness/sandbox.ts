@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Backend, type BackendOptions } from './backend.ts';
 import { closeBrowser } from './browser.ts';
-import { CUE_BIN, DEEPGRAM, E2E_WORK, KEEP } from './config.ts';
+import { CUE_BIN, DEEPGRAM, E2E_WORK, IS_WINDOWS, KEEP } from './config.ts';
 import {
     FAKE_KEYS,
     startFakeProviders,
@@ -18,7 +18,7 @@ import {
     type MarkdownRequest,
 } from './fake-providers.ts';
 import { countLines, findFiles, lines, linesOf, listDir, matches, nonEmpty, tail, withFlags } from './files.ts';
-import { exec, type Ran } from './process.ts';
+import { exec, killTree, type Ran } from './process.ts';
 import { keychainKey, needOverlaySnapshots, needWindowSnapshots } from './requirements.ts';
 import { fail, print, Skip } from './results.ts';
 import { ocr, readImage } from './screen.ts';
@@ -142,7 +142,7 @@ export class Cue {
         const cue = new Cue(dir, `com.andriishafar.cue.e2e.${name}-${process.pid}`);
         await mkdir(cue.support, { recursive: true });
         await mkdir(cue.documents, { recursive: true });
-        await exec('defaults', ['delete', cue.domain]);
+        if (!IS_WINDOWS) await exec('defaults', ['delete', cue.domain]);
         await mkdir(cue.claudeLog, { recursive: true });
         // The paid services' stand-ins: the backend's upstreams, replying as the Cue running (or `standIns`) says.
         cue.#providers = await startFakeProviders(cue.claudeLog, () => ({ ...cue.#standIns, ...cue.#launched }));
@@ -161,10 +161,16 @@ export class Cue {
             await this.#providers?.close();
             // The refresh token never stays behind, not even in a kept sandbox.
             await rm(this.keysFile, { force: true });
-            await exec('defaults', ['delete', this.domain]);
-            await rm(join(homedir(), 'Library', 'Preferences', `${this.domain}.plist`), { force: true });
-            if (succeeded && !KEEP) await rm(this.dir, { recursive: true, force: true });
-            else print(`Sandbox kept: ${this.dir}`);
+            if (!IS_WINDOWS) {
+                await exec('defaults', ['delete', this.domain]);
+                await rm(join(homedir(), 'Library', 'Preferences', `${this.domain}.plist`), { force: true });
+            }
+            if (succeeded && !KEEP) {
+                // On Windows a program that has just been killed still holds its files for a moment.
+                await rm(this.dir, { recursive: true, force: true, maxRetries: 40, retryDelay: 250 }).catch((error: unknown) =>
+                    print(`Couldn't remove the sandbox ${this.dir}: ${error instanceof Error ? error.message : String(error)}`),
+                );
+            } else print(`Sandbox kept: ${this.dir}`);
         })();
         return this.#closing;
     }
@@ -200,9 +206,17 @@ export class Cue {
 
     /**
      * Writes a setting into the case's defaults domain, typed by its value:
-     * `defaults('language', 'uk')`, `defaults('materials', [a, b])`, `defaults('autoAnswer', true)`.
+     * `defaults('language', 'uk')`, `defaults('materials', [a, b])`, `defaults('autoAnswer', true)`. On Windows the settings are a JSON file
+     * (Application Support/Cue/settings.json), which this edits the same way.
      */
     async defaults(key: string, value: DefaultsValue): Promise<void> {
+        if (IS_WINDOWS) {
+            const file = join(this.support, 'settings.json');
+            const settings = existsJson(file) as Record<string, unknown>;
+            settings[key] = typeof value === 'object' ? [...value] : value;
+            this.#replace(file, `${JSON.stringify(settings, null, 2)}\n`);
+            return;
+        }
         const typed =
             typeof value === 'string'
                 ? ['-string', value]
@@ -271,8 +285,9 @@ export class Cue {
      * Cue is for invited people who have signed in, so by default this also starts the case's backend, invites `email` and signs in
      * (headless, `CUE_WEB_AUTH`), waiting for `🔑 Signed in to Cue as …`; a relaunch finds its refresh token and signs in on its own.
      * `signIn: false` launches signed out (still pointed at the backend, in headless mode), for a case that drives the sign-in itself.
+     * `bin` runs another build of the app than the one the runner built (the installed Cue.exe, on Windows).
      */
-    async launch(env: LaunchEnv = {}, options: { signIn?: boolean; backend?: BackendOptions } = {}): Promise<void> {
+    async launch(env: LaunchEnv = {}, options: { signIn?: boolean; backend?: BackendOptions; bin?: string } = {}): Promise<void> {
         const backend = await this.backend(options.backend);
         if (options.signIn !== false) {
             await backend.invite(this.email);
@@ -292,9 +307,10 @@ export class Cue {
             CUE_WEB_AUTH: 'headless',
             ...env,
         };
-        // In US English whatever the Mac's own region, so amounts read as $2.50 and dates as Nov 1 (the argument domain wins over the user's).
-        const app = spawn(CUE_BIN, ['-AppleLocale', 'en_US', '-AppleLanguages', '(en)'], {
-            env: this.#launched,
+        // In US English whatever the Mac's own region, so amounts read as $2.50 and dates as Nov 1 (the argument domain wins over the user's); on
+        // Windows CUE_LOCALE says so.
+        const app = spawn(options.bin ?? CUE_BIN, IS_WINDOWS ? [] : ['-AppleLocale', 'en_US', '-AppleLanguages', '(en)'], {
+            env: IS_WINDOWS ? { CUE_LOCALE: 'en-US', ...this.#launched } : this.#launched,
             stdio: ['ignore', out, out],
         });
         closeSync(out);
@@ -323,10 +339,19 @@ export class Cue {
             if (app.exitCode !== null || app.signalCode !== null || app.pid === undefined) resolve();
             else app.once('exit', () => resolve());
         });
-        app.kill('SIGTERM');
-        if (!(await within(exited, 10))) {
-            app.kill('SIGKILL');
-            await exited;
+        if (IS_WINDOWS) {
+            // A signal would be a plain kill there: ask Cue to quit, as the Mac's SIGTERM does.
+            this.control('quit');
+            if (!(await within(exited, 10))) {
+                await killTree(app, true);
+                await exited;
+            }
+        } else {
+            app.kill('SIGTERM');
+            if (!(await within(exited, 10))) {
+                app.kill('SIGKILL');
+                await exited;
+            }
         }
         this.#app = undefined;
     }
@@ -338,7 +363,7 @@ export class Cue {
      */
     async #crashReport(): Promise<string[]> {
         const pid = this.#app?.pid;
-        if (!this.#app?.signalCode || pid === undefined) return [];
+        if (IS_WINDOWS || !this.#app?.signalCode || pid === undefined) return [];
         const reports = join(homedir(), 'Library', 'Logs', 'DiagnosticReports');
         // An .ips is a line of JSON about the report, then the report as JSON (unreadable while ReportCrash is still writing it).
         const ours = (): { path: string; body: CrashReport } | undefined => {
@@ -446,10 +471,21 @@ export class Cue {
             }
             if (Date.now() >= deadline) {
                 const log = this.#newestSessionLog();
-                fail(`timed out after ${seconds}s waiting for ${what}`, ...(log ? ['--- session log', tail(log, 40)] : []));
+                // On Windows: whether Cue's UI still answers (a program that doesn't is hung, not slow).
+                const answering = IS_WINDOWS && this.#app?.pid !== undefined ? await this.#responding(this.#app.pid) : '';
+                fail(`timed out after ${seconds}s waiting for ${what}${answering}`, ...(log ? ['--- session log', tail(log, 40)] : []));
             }
             await sleep(0.5);
         }
+    }
+
+    async #responding(pid: number): Promise<string> {
+        const ran = await exec('powershell.exe', [
+            '-NoProfile',
+            '-Command',
+            `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).Responding`,
+        ]);
+        return ran.stdout.trim() === 'True' ? ' (Cue still answers)' : ' (Cue does not answer: its window is hung)';
     }
 
     /** Waits for a line in the session log that matches (as written: case matters). */
