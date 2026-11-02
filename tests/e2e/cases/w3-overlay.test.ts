@@ -77,7 +77,8 @@ e2eCase(
             const hidden = cue.path('hidden.png');
             await captureScreen(overlay, hidden);
             const seen = cue.save('hidden.txt', await ocr(hidden));
-            assertContains(seen, /Blocker window/, 'the capture shows what is behind the overlay');
+            // (OCR reads a big "Bl" as "M" now and then.)
+            assertContains(seen, /ocker window/, 'the capture shows what is behind the overlay');
             assertNotContains(seen, /Ask anything/, 'and not the overlay');
 
             // Typing into Ask: the one time it takes the keyboard.
