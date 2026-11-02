@@ -1,0 +1,13 @@
+<Project>
+
+  <!-- scripts/build.ps1 passes -p:Version=MAJOR.MINOR.PATCH (the Mac's version, as release.yml computes it) to the app and the installer. -->
+  <PropertyGroup>
+    <Version Condition="'$(Version)' == ''">2.0.0</Version>
+    <Authors>Andrii Shafar</Authors>
+    <Company>Andrii Shafar</Company>
+    <Copyright>Andrii Shafar</Copyright>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)build\obj\$(MSBuildProjectName)\bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)build\obj\$(MSBuildProjectName)\obj\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+
+</Project>
