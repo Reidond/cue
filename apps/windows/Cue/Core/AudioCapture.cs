@@ -43,8 +43,20 @@ public sealed class WasapiCapture : IDisposable
     /// <summary>The stream broke after it started (the device was unplugged, say). Says why.</summary>
     public Action<string> OnStopped { get; set; } = _ => { };
 
-    /// <summary>Opens the stream and starts delivering. Throws <see cref="CaptureException"/> with a sentence for the person.</summary>
+    /// <summary>
+    /// Opens the stream and starts delivering. Throws <see cref="CaptureException"/> with a sentence for the person. The stream's COM objects are made, used
+    /// and let go of on one thread of their own (a multithreaded apartment): the audio client is not one that can be called from another apartment, the UI's.
+    /// </summary>
     public void Start()
+    {
+        var opened = new TaskCompletionSource();
+        thread = new Thread(() => Run(opened)) { IsBackground = true, Name = $"Cue {source} capture", Priority = ThreadPriority.AboveNormal };
+        thread.SetApartmentState(ApartmentState.MTA);
+        thread.Start();
+        opened.Task.GetAwaiter().GetResult();
+    }
+
+    private void Open()
     {
         var attempts = new[] { (Rate: 16_000, Channels: 1), (Rate: 48_000, Channels: 2) };
         var failure = 0;
@@ -81,8 +93,6 @@ public sealed class WasapiCapture : IDisposable
         Check(client.GetService(ref iid, out var service));
         capture = (IAudioCaptureClient)service;
         Check(client.Start());
-        thread = new Thread(Run) { IsBackground = true, Name = $"Cue {source} capture", Priority = ThreadPriority.AboveNormal };
-        thread.Start();
     }
 
     private void Check(int result)
@@ -148,8 +158,19 @@ public sealed class WasapiCapture : IDisposable
 
     private static string Describe(int result) => Marshal.GetExceptionForHR(result)?.Message.TrimEnd('.') ?? $"0x{(uint)result:X8}";
 
-    private void Run()
+    private void Run(TaskCompletionSource opened)
     {
+        try
+        {
+            Open();
+        }
+        catch (Exception e)
+        {
+            Release();
+            opened.SetException(e);
+            return;
+        }
+        opened.SetResult();
         try
         {
             while (!stopping)
@@ -162,6 +183,10 @@ public sealed class WasapiCapture : IDisposable
         catch (Exception e)
         {
             if (!stopping) OnStopped(e.Message);
+        }
+        finally
+        {
+            Release();
         }
     }
 
@@ -199,10 +224,15 @@ public sealed class WasapiCapture : IDisposable
         }
     }
 
+    /// <summary>Stops the stream: the capture's own thread stops it and lets go of what it holds.</summary>
     public void Dispose()
     {
         stopping = true;
-        if (thread is { } running && running != Thread.CurrentThread) running.Join(1000);
+        if (thread is { } running && running != Thread.CurrentThread) running.Join(2000);
+    }
+
+    private void Release()
+    {
         try
         {
             client?.Stop();
