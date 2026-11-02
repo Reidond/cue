@@ -89,17 +89,25 @@ e2eCase(
         assertTextNotContains(renamed, /^Bee talk$/m);
         assertTextContains(renamed, /^What were the winter losses\?$/m, 'and the page is still open on its prepared answers');
 
-        // Delete: gone from the account, and the folder is in the Recycle Bin (not deleted for good).
+        // Delete: gone from the account, and the folder is in the Recycle Bin (not deleted for good). The account answers first and the
+        // folder goes to the bin after it, so the folder and the bin are waited for, not read the moment the account has let go.
         cue.control(`delete-project ${doomed}`);
         await cue.waitFor('the account to lose it', 30, async () => !(await account.projects()).some((project) => project.name === doomed));
-        assertEq(isDirectory(cue.projectPath(doomed)), false, 'the folder left the library');
-        const bin = await exec('powershell.exe', [
-            '-NoProfile',
-            '-Command',
-            '(New-Object -ComObject Shell.Application).NameSpace(10).Items() | ForEach-Object { $_.Name }',
-        ]);
-        assertTextContains(bin.stdout, new RegExp(`^${doomed}$`, 'm'), 'it is in the Recycle Bin');
-        await cue.waitFor('the pane to lose it', 30, async () => !(await shows(new RegExp(`^${doomed}$`, 'm'))));
+        await cue.waitFor('the folder to leave the library', 30, () => !isDirectory(cue.projectPath(doomed)));
+        const inBin = new RegExp(`^${doomed}$`, 'm');
+        let bin = '';
+        await cue.waitFor('it to be in the Recycle Bin', 30, async () => {
+            bin = (
+                await exec('powershell.exe', [
+                    '-NoProfile',
+                    '-Command',
+                    '(New-Object -ComObject Shell.Application).NameSpace(10).Items() | ForEach-Object { $_.Name }',
+                ])
+            ).stdout;
+            return inBin.test(bin);
+        });
+        assertTextContains(bin, inBin, 'it is in the Recycle Bin');
+        await cue.waitFor('the pane to lose it', 30, async () => !(await shows(inBin)));
         assertEq((await account.projects()).length, 4);
 
         // The pane is the signed-in person's: signing out empties it, signing in fills it again.
