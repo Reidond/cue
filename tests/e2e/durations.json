@@ -117,5 +117,13 @@
     "w3-reading": 37,
     "w3-reading-aloud": 44,
     "w3-reconnect": 35,
-    "w3-rehearsal": 27
+    "w3-rehearsal": 27,
+    "w4-audio-off": 35,
+    "w4-import-restore": 27,
+    "w4-record": 47,
+    "w4-record-controls": 28,
+    "w4-speakers": 26,
+    "w4-step-fails": 65,
+    "w4-trash": 24,
+    "w4-upload-resumes": 35
 }
