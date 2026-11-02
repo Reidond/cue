@@ -107,6 +107,9 @@ public sealed class LiveSocket : IDisposable
         }
     }
 
+    /// <summary>Cuts the connection without a goodbye, as a lost network would.</summary>
+    public void Abort() => socket.Abort();
+
     public void Dispose()
     {
         if (disposed) return;
@@ -150,6 +153,7 @@ public sealed class LiveCall
     private bool live = true;
     private int lastSeq;
     private bool started;
+    private bool broke;
 
     /// <summary>The newest settings sent, which go again on every connection, and the commands sent while there was none.</summary>
     private readonly Dictionary<string, object?> settings = [];
@@ -312,6 +316,12 @@ public sealed class LiveCall
             // `ready` says how far the call's events have got; it is not one of them, and the statuses sent after it on a first connection
             // carry older numbers than its own.
             OnEvent(received);
+            // Testing aid: CUE_LIVE_BREAK=SECONDS loses this first connection that long after it came up, once: the call reconnects and asks for what it missed.
+            if (!broke && double.TryParse(Env.Get("CUE_LIVE_BREAK"), System.Globalization.CultureInfo.InvariantCulture, out var seconds) && seconds > 0)
+            {
+                broke = true;
+                _ = Task.Delay(TimeSpan.FromSeconds(seconds)).ContinueWith(_ => current.Abort(), TaskScheduler.Default);
+            }
             return;
         }
         if (received.Seq <= lastSeq) return; // replayed: seen already

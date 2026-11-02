@@ -263,6 +263,7 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   and the live call's `start NAME`, `stop`, `project NAME`, `ask TEXT`, `show TEXT`, `newest`, `prepare` (the project is found among the account's, by name, case aside)
   (`signin`, `signout`, `settings`, `page`, `size` and `quit` work signed out; any other command then logs `⚠︎ Sign in to Cue first (NAME ignored)`). `CUE_SURFACES=1`, only here: under `CUE_BACKGROUND`
   the live call's surfaces — the overlay, the tray icon, the hot keys — are as in normal use (the overlay above other windows, the keys registered); without it a test run has no tray icon or hot keys (as the Mac) and the overlay stays at the bottom.
+  `CUE_LIVE_BREAK=SECONDS` (only here) loses the live socket once, that long after it first came up: the call reconnects (`⚠︎ The live call's connection: …`) and goes on over the same call.
   `CUE_SNAPSHOT` also takes the overlay (`PrintWindow`, to the file itself, `…cue.png`; the dashboard's is `…-dashboard.png`) and, like `CUE_ALLOW_CAPTURE=1`, lets screenshots see it.
 
 ## Live call on Windows (`apps/windows/Cue`: `Core/{LiveModel,LiveCall,AudioSink,AudioCapture,Wasapi,Rehearsal,…}.cs`, `Views/{OverlayWindow,LiveView}.cs`)
@@ -295,7 +296,7 @@ are the Mac's, word for word.
 - **The tray icon** (`Core/Tray.cs`): `Shell_NotifyIconW` and a native popup menu (Start/Stop Cue, Show or Hide, Answer Now, Open Dashboard, Settings, Restart Live Call, Quit); with it, closing the dashboard only hides it.
 - **Starting**: Home's Live call card (`Views/LiveView.cs`: the account's projects, Start Cue; Ctrl+Enter anywhere in the dashboard) and `start NAME`. `Core/ProjectLookup.cs` is the one small place that lists the account's projects
   (`GET /v1/projects`) and finds one by name; the projects slice's store replaces it, and the button moves onto a project's page. After sign-in the project is `CUE_PROJECT` (created when missing), else the last used.
-- **Cases** `w3-…`: `rehearsal` (transcript, question, prepared match, streamed answer on the overlay, and in the snapshot), `ask` (Prepare Answer, Ask, Answer now), `reading` and `reading-aloud` (show, newest, the
+- **Cases** `w3-…`: `rehearsal` (transcript, question, prepared match, streamed answer on the overlay, and in the snapshot), `reconnect` (the socket lost with `CUE_LIVE_BREAK`: the same call goes on, nothing shown twice), `ask` (Prepare Answer, Ask, Answer now), `reading` and `reading-aloud` (show, newest, the
   New question button, the reading rules), `limit`, `deepgram-drops`, `overlay` (above another program's window, never the focus, a real click and real typing, hidden from `CopyFromScreen`, shown with `CUE_ALLOW_CAPTURE`),
   `hot-keys` (real key presses), `call-audio` (real loopback). They use `bursts` and the stand-ins' lines (`FAKE_DEEPGRAM_LIVE`), `accountProject(cue, name, { materials })` (a project in the case user's account, made
   through the API), `press(pid, name)` (UI Automation invoke: `tools/uia-click.ps1`), `click(pid, name)` (a real mouse click at the control), `typeText`, `pressKeys('win', 'alt', 'h')` (`tools/keys.ps1`, `SendInput`),
