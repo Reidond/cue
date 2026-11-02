@@ -1,13 +1,16 @@
+using System.Globalization;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 
 namespace Cue;
 
-/// <summary>The dashboard's first page: the sign-in screen until someone is signed in, then a way in for someone who has no project yet.</summary>
+/// <summary>The dashboard's first page: the sign-in screen until someone is signed in, then a way in for someone who has no project yet, and the newest notes across the projects.</summary>
 public sealed partial class HomePage : Page
 {
     private AppState state = null!;
+    private string recentShown = "";
 
     public HomePage() => InitializeComponent();
 
@@ -17,6 +20,8 @@ public sealed partial class HomePage : Page
         SignInHost.Child = new SignInView(state);
         state.Api.PropertyChanged += OnChanged;
         state.Projects.PropertyChanged += OnChanged;
+        state.Recordings.Changed += OnRecordings;
+        recentShown = "";
         Render();
     }
 
@@ -24,9 +29,12 @@ public sealed partial class HomePage : Page
     {
         state.Api.PropertyChanged -= OnChanged;
         state.Projects.PropertyChanged -= OnChanged;
+        state.Recordings.Changed -= OnRecordings;
     }
 
     private void OnChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => Render();
+
+    private void OnRecordings() => Render();
 
     private void OnNewProject(object sender, RoutedEventArgs e) => _ = ProjectDialogs.NewProject(state, XamlRoot);
 
@@ -38,6 +46,66 @@ public sealed partial class HomePage : Page
         WhoText.Text = state.Api.Me is { } me ? $"Signed in as {me.Account.Email}." : "";
         var none = state.Projects.Projects.Count == 0;
         FirstProject.Visibility = none ? Visibility.Visible : Visibility.Collapsed;
-        Placeholder.Visibility = none ? Visibility.Collapsed : Visibility.Visible;
+        Recent.Visibility = none ? Visibility.Collapsed : Visibility.Visible;
+        if (!none) ShowRecent();
+    }
+
+    /// <summary>The newest notes across the projects, each a way into its page.</summary>
+    private void ShowRecent()
+    {
+        var files = state.Recordings.Files.Take(8).ToList();
+        var signature = string.Join('\n', files.Select(file => $"{file.Id}\t{file.Title}\t{file.Duration}\t{state.Recordings.IsProcessing(file.Id)}"));
+        if (signature == recentShown) return;
+        recentShown = signature;
+        Recent.Children.Clear();
+        Recent.Children.Add(new TextBlock { Text = "Recent Notes", Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] });
+        if (files.Count == 0)
+        {
+            Recent.Children.Add(Ui.Caption("Notes from recorded calls appear here. Press Win+Alt+C, or the record button in Cue, to record a call."));
+            return;
+        }
+        Recent.Children.Add(Ui.Card([.. files.Select(Row)]));
+    }
+
+    private Button Row(RecordingFile file)
+    {
+        var project = state.Projects.Find(file.ProjectId)?.Name ?? file.ProjectId;
+        var when = file.Date.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
+        var text = new StackPanel { Spacing = 2 };
+        text.Children.Add(new TextBlock { Text = file.Title, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1 });
+        text.Children.Add(new TextBlock
+        {
+            Text = string.Join(" · ", new[] { project, when, file.Duration }.Where(part => part.Length > 0)),
+            Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+            Foreground = Ui.Theme("TextFillColorSecondaryBrush"),
+        });
+        var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(0, 4, 0, 4) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.Children.Add(new FontIcon { Glyph = "", FontSize = 20, Foreground = Ui.Theme("TextFillColorSecondaryBrush"), VerticalAlignment = VerticalAlignment.Center });
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(text);
+        var chevron = new FontIcon { Glyph = "", FontSize = 12, Foreground = Ui.Theme("TextFillColorTertiaryBrush"), VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(chevron, 2);
+        grid.Children.Add(chevron);
+        var clear = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        var button = new Button
+        {
+            Content = grid,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Background = clear,
+            BorderThickness = new Thickness(0),
+        };
+        button.Resources["ButtonBackground"] = clear;
+        button.Resources["ButtonBackgroundPointerOver"] = Ui.Theme("SubtleFillColorSecondaryBrush");
+        button.Resources["ButtonBackgroundPressed"] = Ui.Theme("SubtleFillColorTertiaryBrush");
+        button.Resources["ButtonBorderBrush"] = clear;
+        button.Resources["ButtonBorderBrushPointerOver"] = clear;
+        button.Resources["ButtonBorderBrushPressed"] = clear;
+        AutomationProperties.SetName(button, file.Title);
+        button.Click += (_, _) => state.Dashboard.OpenNote(file.Id);
+        return button;
     }
 }
