@@ -237,19 +237,32 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   port), and `src/pages.ts` builds "Return to Cue" from it (the Mac's when there is none). The refresh token is in Windows Credential Manager (`Core/SecretStore.cs`); under
   `CUE_HOME` in `CUE_HOME/Keychain.json` as on the Mac. `CUE_WEB_AUTH=headless` follows the authorize URL with `HttpClient` and cookies, presses the stand-in provider's
   button, and ends where a browser would, at Cue's own listener.
-- **Where the next slices plug in**: `AppState` (`Core/AppState.cs`: the log, preferences, `Api`, `Dashboard`, `Control`, `PlanLimit`; one instance, `App.State`); `CueApi.Request(method, path, query, json,
+- **Projects and materials** (`Core/{Projects,ProjectStore,ProjectsApi,ProjectCommands,Shell}.cs`, `Views/{ProjectPage,ProjectOverviewView,PreparedAnswersView,ProjectDialogs}`): the port of the Mac's
+  `ProjectStore`, `Project` and `ProjectView`, with the same behaviour (see "Projects and materials" above: the account holds them, `Documents\Cue\NAME\project.json` with `serverID` and a `Notes\` folder is the
+  library). `AppState.Projects` is **the one place the rest of the app finds the projects**: `Projects` (sorted as Explorer sorts names), `Find(id)`, `FindByName(name)` (name or folder, as `CUE_PROJECT` and the hooks
+  take it), `MostRecent`, `Active` (the project Cue answers from and records into: the folder name kept in `settings.json` as `activeProject`, chosen after sign-in by `ChooseActive`: `CUE_PROJECT`, else the last one,
+  else the most recently used; `📁 Project: NAME`), `Activate(project)` (stamps `LastUsed`, saves it to the account, logs `📁 Project: NAME` when it changed), `Project.ServerId` (what a call is made for) and
+  `Project.Materials`. After sign-in (`CueApi.OnSignedIn`, before `Signed in` is logged) `SyncWithAccount` lists the account's projects, makes a folder for those this PC hasn't seen and uploads every folder
+  without a `serverID` once with its `Materials\` files (`📦 Imported N projects from this PC (M files)`: **"this PC", not "this Mac"**, the one log line the Windows app words differently). Create, rename, delete and
+  adding or removing a file wait for the server; field edits are saved to `project.json` at once and to the account after 0.8 s (`☁️ Saved “NAME” to your account`). A deleted project's folder goes to the Recycle Bin
+  (`Shell.MoveToRecycleBin`). The dashboard: `DashboardPage.Project` with `Dashboard.ProjectId` and `Dashboard.Section` (`ProjectTab`: Overview, Answers, Notes; the notes slice fills `ProjectPage`'s Notes tab, now a
+  placeholder, and Home's recent notes); `Dashboard.OpenProject(id, tab)`; the pane (`MainWindow.RefreshProjects`) has a "Projects" header, an item per project with a context menu (Rename…, Show in Explorer, Move to
+  Recycle Bin…) and New Project (Ctrl+N) below; the start-Cue button belongs in `ProjectPage`'s header (the live-call slice). The prepared answers and the token estimate on a page come from `ProjectStore.Documents`
+  (`KnowledgeBase`, as the Mac's); the account's server builds the prompt.
+- **Where the next slices plug in**: `AppState` (`Core/AppState.cs`: the log, preferences, `Api`, `Projects`, `Dashboard`, `Control`, `PlanLimit`; one instance, `App.State`); `CueApi.Request(method, path, query, json,
   file, body, contentType, timeout)` and `Bearer()` for every call (a bearer token refreshed on its own, `{error: {code, message, retryable}}` as `CueApiException`: kinds
   `LimitReached`, `RateLimited`, `PlanPaused`, `Ended`, `Network`, `Server`; `OnSignedIn` runs before Cue counts as signed in); `state.Control.Register("new", run, needsSignIn)` for a `CUE_CONTROL`
   command; `DashboardModel.PageResolvers` for `page NAME` and `DashboardPage` + `MainWindow` for navigation items (a page is a `Page` that gets the `AppState` as its navigation parameter,
   and shows a `SignInView` while signed out); `Settings` tabs in `SettingsPage`; `SessionLog.Write` (use `SessionLog.Warning` for `⚠︎`, whose second character is U+FE0E); `Storage.AppSupport` and
   `Storage.Documents` for paths (**keep every `DispatcherQueueTimer` in a field**: one that only a local variable holds is garbage-collected and silently stops, which looked like commands and snapshots going missing now and then); `SettingsFile`/`Preferences` for settings (`settings.json`).
 - **Where it is built and tested**: never on this Mac. The Windows 11 VM of vmpal (VM "Windows VM 1", Arm; `vmpal_*` tools, agent control on): share the worktree read-only
-  (`vmpal_update_vm` `sharedFolders` with name `cue-src`: it is `Z:\cue-src`), copy it to the VM's own disk (`robocopy Z:\cue-src C:\src\cue /MIR /XD node_modules .git build obj bin .vs`; never
-  build on the share), run `setup.ps1 -Install` once (from an elevated shell: `vmpal_exec_admin`), then `node tests\e2e\run.ts w0- 9e-` there with `vmpal_exec` (short `waitSeconds`, then `vmpal_exec_result`).
+  (`vmpal_update_vm` `sharedFolders` with name `cue-src`: it is `Z:\cue-src`), copy it to the VM's own disk (`robocopy Z:\cue-src C:\src\cue /MIR /XD node_modules .git build obj bin .vs .claude .build .cloudflare`:
+  `apps/mac/.build` is a gigabyte the share reads for minutes and then fails on, and `/MIR` would delete the VM's generated `apps/api/.cloudflare` types; never build on the share), run `setup.ps1 -Install` once (from an elevated shell: `vmpal_exec_admin`), then `node tests\e2e\run.ts w0- 9e-` there with `vmpal_exec` (short `waitSeconds`, then `vmpal_exec_result`).
   A process started by `vmpal_exec` ends with the command: to look at a window yourself start Cue with `Invoke-CimMethod -ClassName Win32_Process -MethodName Create`, and read the window
   with `vmpal_screenshot` in both themes (`CUE_APPEARANCE=light|dark`). The VM snapshot `cue-toolchain` has the toolchain installed and the repository's packages in `C:\src\cue`.
   `w1-installer` installs per machine, so it needs an elevated process (`vmpal_exec_admin`; a CI runner is one) and skips without.
-- **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks) and `w1-…` (the installer) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
+- **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks), `w1-…` (the installer) and `w2-…` (projects and materials: `w2-projects`, `w2-materials`, `w2-import-projects`,
+  `w2-account-projects`, `w2-active-project`; they read the window with `windowText`, the account with `backend.accountOf(cue.email)`) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
   them together with the cases that never launch the app (the source has no `.launch(`, `.cli(` or `.control(`: the backend's own, `9a-…` to `9e-…`, `95`–`99`). `9e-windows-sign-in` signs in as `cue-windows` end to end
   and runs anywhere with `--no-app`. A case reads what the window shows with `windowText(pid)` (`tools/uia.ps1`: the text of its UI Automation tree, exact (no recognition errors) and complete, what is scrolled out of view too),
   and `windowsOf(pid)` is `tools/windows.ps1` (the foreground, the windows' sizes and styles: the twin of `appWindows`); `ocr` is `tools/ocr.ps1` (Windows' own `Windows.Media.Ocr`; it needs the English recognizer,
@@ -259,8 +272,11 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   `CUE_LOCALE=en-US` makes numbers, dates and Windows' own strings that culture (the harness sets it: the Mac's `-AppleLocale`); `CUE_BACKGROUND=1` shows the window without activating it, as a tool window (no taskbar button) that a
   click doesn't activate, at the bottom of the z-order, with the process opted out of power throttling, and an alert goes only to the session log; `CUE_SNAPSHOT=png` writes `…-dashboard.png` every 2 s with `PrintWindow`
   (Settings is a page of the dashboard, so there is no `-settings.png`; `CUE_SNAPSHOT_METHOD` doesn't apply; `📸 Snapshots: window capture (PrintWindow), in the dark appearance`); `CUE_APPEARANCE`, `CUE_SHOW_SETTINGS`,
-  `CUE_ME_TICK`, `CUE_API_URL`, `CUE_WEB_AUTH=headless` as on the Mac; `CUE_CONTROL` commands now: `signin [google|github]`, `signout`, `settings general|account`, `page home|upcoming`, `size W H`, `quit`
-  (`signin`, `signout`, `settings`, `page`, `size` and `quit` work signed out; any other command then logs `⚠︎ Sign in to Cue first (NAME ignored)`).
+  `CUE_ME_TICK`, `CUE_API_URL`, `CUE_WEB_AUTH=headless`, `CUE_PROJECT=name` as on the Mac; `CUE_CONTROL` commands now: `signin [google|github]`, `signout`, `settings general|account`,
+  `page home|upcoming|NAME|NAME/overview|NAME/answers|NAME/notes`, `size W H`, `quit`, and the projects': `new NAME`, `add PATH` (a file dropped on the open project's materials, else the active project's),
+  `set PROJECT | occasion|language|names | VALUE`, `remove PROJECT | FILE`, plus two the Mac has no command for, because it does them in a dialog no case drives: `rename-project NAME | NEW` and `delete-project NAME`
+  (what the pane's context menu runs). Commands run one after another, so `new` and `add` finish before the next line. `signin`, `signout`, `settings`, `page`, `size` and `quit` work signed out; any other command then
+  logs `⚠︎ Sign in to Cue first (NAME ignored)`.
 
 ## Cloud sandboxes (Boat)
 

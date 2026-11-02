@@ -68,6 +68,9 @@ public static class Storage
         ? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
         : Path.Combine(Home, "Documents");
 
+    /// <summary>The library: a folder for each project (its `project.json` and its notes), `Documents\Cue`.</summary>
+    public static string Library { get; } = Path.Combine(Documents, "Cue");
+
     /// <summary>Writes a file in one step, so a reader never sees it half written.</summary>
     public static void WriteAtomically(string path, string text)
     {
