@@ -521,8 +521,11 @@ updating the cases.
 
 - `.github/workflows/ci.yml` runs on pull requests only: it builds the app
   (new warnings in `apps/mac/Sources/Cue` fail it), runs `vp check`
-  and the end-to-end suite on GitHub's hosted macOS runner with the
-  latest Node. Speech needs nothing from that runner (the live transcript and the notes' second pass are the backend's, with the stand-ins), so only overlay or window
+  and the end-to-end suite with the latest Node, split across four of
+  GitHub's hosted macOS runners (`run.ts --shard=K/N`, balanced by each
+  case's seconds in `tests/e2e/durations.json`: update them from a CI run
+  when cases are added or get much slower). `build-and-test`, the check
+  `main` requires, passes when `vp check` and every shard did. Speech needs nothing from that runner (the live transcript and the notes' second pass are the backend's, with the stand-ins), so only overlay or window
   snapshot cases skip there, with the probe's reason, if the probe finds those unreadable: CI covers the build, the
   command-line modes, the dashboard and the speech cases. **Run the
   whole suite on an authorized remote Mac before merging** and put its summary

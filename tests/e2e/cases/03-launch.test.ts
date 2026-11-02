@@ -7,15 +7,16 @@ e2eCase('Cue launches in the sandbox, reads its materials and shows the overlay 
     await cue.waitLog(/Materials .*talk\.md/, 30);
     // The old settings became "My project"; Start Cue shows the overlay for it.
     cue.control('start My project');
-    // The status says "Starting speech recognition…" until the live call is up on the backend (Claude warmed, speech streams open).
+    // The status says "Starting speech recognition…" until the live call is up on the backend (Claude warmed, speech streams open). A snapshot
+    // taken before the overlay is drawn reads as nothing, which isn't settled either.
     let overlay = '';
     await cue.waitFor('the overlay to settle on its status', 120, async () => {
         overlay = await cue.snapshotText(cue.path('cue.png'));
-        return !/Starting spee/.test(overlay);
+        return /When someone asks a question/.test(overlay) && !/Starting spee/.test(overlay);
     });
     const text = cue.save('overlay.txt', overlay);
     assertContains(text, /When someone asks a question/, 'the overlay should show its ready state');
-    // The status follows its warning sign, which Vision may read as a letter ("A No audio").
-    assertContains(text, /(^|\s)No audio$/, 'with live audio off the status says so');
+    // The status follows its warning sign, which Vision may read as a letter ("A No audio"), and may run into what is beside it ("No audiopeec...").
+    assertContains(text, /(^|\s)No audio/, 'with live audio off the status says so');
     if (!cue.alive()) fail('Cue quit on its own');
 });
