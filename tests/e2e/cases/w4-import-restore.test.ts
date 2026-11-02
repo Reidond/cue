@@ -1,4 +1,5 @@
-import { copyFile, mkdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
     assertContains,
@@ -32,7 +33,8 @@ e2eCase(
         const rooftop = await cue.project('Rooftop', { language: 'en' });
         await mkdir(join(rooftop, 'Notes'), { recursive: true });
         const old = join(rooftop, 'Notes', '2026-10-24 11.05 – Weekly sync about the report.md');
-        await copyFile(fixture('notes', 'sample.md'), old);
+        // With the line endings Notepad would have left in it.
+        await writeFile(old, readFileSync(fixture('notes', 'sample.md'), 'utf8').replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'));
 
         await cue.launch();
         await cue.waitLog(/📦 Imported 1 project from this PC \(0 files\)/, 60);

@@ -80,7 +80,8 @@ public sealed class RecordingStore
     {
         try
         {
-            return System.IO.File.ReadAllText(path);
+            // A note edited in Notepad has CRLF line endings; Cue's own are LF, and everything here reads LF.
+            return System.IO.File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
