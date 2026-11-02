@@ -65,7 +65,8 @@ e2eCase(
         const notes = cue.readyNotes();
         assertFile(notes);
         assertEq(cue.findNotes().length, 1, 'expected exactly one notes file');
-        if (!basename(notes).endsWith(' – E2E rehearsal notes.md')) fail(`the file should be renamed after the summary's title: ${basename(notes)}`);
+        if (!basename(notes).endsWith(' – E2E rehearsal notes.md'))
+            fail(`the file should be renamed after the summary's title: ${basename(notes)}`);
         assertContains(notes, /^title: "E2E rehearsal notes"$/);
         assertContains(notes, /^participants: Andrii Test, Participant 1, Participant 2$/);
         assertContains(notes, /^project: "Bees"$/);
@@ -95,7 +96,10 @@ e2eCase(
         assertEq(stored.length, 1, 'the account should have the one note');
         assertEq(stored[0]?.title, 'E2E rehearsal notes');
         assertEq(stored[0]?.status, 'ready');
-        assertEq(stored[0]?.transcript.some((turn) => turn.channel === 'me') && stored[0]?.transcript.some((turn) => turn.channel === 'others'), true);
+        assertEq(
+            stored[0]?.transcript.some((turn) => turn.channel === 'me') && stored[0]?.transcript.some((turn) => turn.channel === 'others'),
+            true,
+        );
         assertEq(stored[0]?.audio.includes('mixed'), true, 'the mixed audio went up for playing');
 
         // Stop opened the note on the dashboard, and its page reads like the file: no steps left, since nothing failed.

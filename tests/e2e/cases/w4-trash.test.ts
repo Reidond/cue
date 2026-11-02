@@ -53,7 +53,11 @@ e2eCase(
         await cue.waitFor('the question', 20, async () => /^Move “.*” to the Recycle Bin\?$/m.test(await windowText(cue.pid)));
         await press(cue.pid, 'Move to Recycle Bin');
         await cue.waitFor('the note to leave the folder', 30, () => cue.findNotes().length === 0);
-        await cue.waitFor('the account to lose the note', 30, async () => (await (await backend.accountOf(cue.email)).notes()).length === 0);
+        await cue.waitFor(
+            'the account to lose the note',
+            30,
+            async () => (await (await backend.accountOf(cue.email)).notes()).length === 0,
+        );
         assertEq(backend.objects().length, 0, 'its audio is deleted from storage at once');
         assertEq((await inRecycleBin(note.title)) > before, true, 'the note is in the Recycle Bin, where it can be restored from');
 

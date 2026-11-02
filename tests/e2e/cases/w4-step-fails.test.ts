@@ -30,8 +30,14 @@ e2eCase(
                 FAKE_DEEPGRAM_FILE_FAILS: '99',
                 CUE_REHEARSE_PARTICIPANT: others,
                 CUE_REHEARSE_ME: me,
-                FAKE_DEEPGRAM_LIVE: JSON.stringify([{ text: 'Good morning, when is the report?', speaker: 0 }, 'I will send it by Friday.']),
-                FAKE_DEEPGRAM_FILE: JSON.stringify({ me: ['I will send the report by Friday.'], others: ['Good morning. When is the report due?'] }),
+                FAKE_DEEPGRAM_LIVE: JSON.stringify([
+                    { text: 'Good morning, when is the report?', speaker: 0 },
+                    'I will send it by Friday.',
+                ]),
+                FAKE_DEEPGRAM_FILE: JSON.stringify({
+                    me: ['I will send the report by Friday.'],
+                    others: ['Good morning. When is the report due?'],
+                }),
             },
             // The Workflow retries a failing step before it gives up; a second between tries keeps the case short.
             { backend: { env: { NOTES_RETRY_SECONDS: '1' } } },

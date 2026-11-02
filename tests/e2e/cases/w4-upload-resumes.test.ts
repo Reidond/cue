@@ -52,13 +52,16 @@ e2eCase(
             `the upload should stop once, be tried again, and finish before the second pass: ${steps}`,
         );
         assertContains(log, /⚠︎ The upload stopped: .+ — trying again$/);
-        assertEq(matches(log, /Cue stopped|Recording stopped|Listening stopped/).join(','), 'Cue stopped,Recording stopped,Listening stopped');
+        assertEq(
+            matches(log, /Cue stopped|Recording stopped|Listening stopped/).join(','),
+            'Cue stopped,Recording stopped,Listening stopped',
+        );
 
         // The notes belong to a call made just for them: a row that began and ended in the same moment.
         const account = await (await cue.backend()).accountOf(cue.email);
         const note = (await account.notes())[0] ?? fail('the account should have the note');
         const calls = await (await cue.backend()).rows(`SELECT started_at = ended_at AS notes_only FROM call WHERE id = '${note.callId}'`);
-        assertEq(calls[0]?.['notes_only'], 1, 'a recording with no live call left makes one just for its notes');
+        assertEq(Number(calls[0]?.['notes_only']), 1, 'a recording with no live call left makes one just for its notes');
 
         // Everything arrived: the second pass read a whole recording of each side, as long as the call.
         const asked = cue.serviceRequests('deepgram-file');
