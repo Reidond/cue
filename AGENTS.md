@@ -598,7 +598,7 @@ updating the cases.
   skips the .NET SDK and OCR); on arm64 (`windows-11-arm`) `arm64-app` and `arm64-installer` do the same as their x64 twins. **arm64 CI covers the Arm build, the app's cases and the
   installer, not the backend's cases**: Node.js, workerd and Vite+ run emulated there (about three times slower), and the backend does not differ by processor; the whole suite on Arm is
   the Windows 11 VM's run in each PR. `build-and-test` requires every one of them; each keeps its logs on failure, the installer jobs keep the MSI as an artifact. A new push cancels the
-  run it replaces (`concurrency`). The NuGet packages (the Windows App SDK's are most of the restore) are cached by the project files' hash. Add a case's seconds to `durations.json`
+  run it replaces (`concurrency`). No NuGet cache: restoring one from the cache took longer than restoring from nuget.org (50 s against 35 on arm64). Add a case's seconds to `durations.json`
   from a CI run; a backend case goes to a shard by them without anything else.
 - `.github/workflows/deploy.yml` runs on pushes to `main` that touch `apps/api`, `apps/admin`, `packages/contract` or their build (and on demand), never on a fork: `vp check`, the remote
   migrations, `cf deploy`, the migrations again, a check that the Worker answers. It needs the secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` and the variable `ADMIN_EMAILS`. Do not

@@ -138,14 +138,6 @@ jobs:
           node-version: 26
           architecture: x64
 
-      - name: NuGet cache
-        if: matrix.kind != 'backend'
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('apps/windows/**/*.csproj', 'apps/windows/**/*.wixproj') }}
-          restore-keys: nuget-${{ runner.os }}-${{ matrix.arch }}-
-
       - name: Toolchain
         run: powershell -ExecutionPolicy Bypass -File apps/windows/scripts/setup.ps1 -Install ${{ matrix.kind == 'backend' && '-Backend' || '' }}
 

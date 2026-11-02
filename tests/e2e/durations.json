@@ -96,11 +96,11 @@
     "9d-limit-reached": 17,
     "9d-rate-limit": 27,
     "9d-usage-shown": 15,
-    "9e-windows-sign-in": 9,
-    "w0-account": 20,
-    "w0-hooks": 18,
-    "w0-not-invited": 12,
-    "w0-sign-in": 14,
-    "w0-sign-out": 12,
-    "w1-installer": 136
+    "9e-windows-sign-in": 10,
+    "w0-account": 22,
+    "w0-hooks": 19,
+    "w0-not-invited": 13,
+    "w0-sign-in": 16,
+    "w0-sign-out": 14,
+    "w1-installer": 57
 }
