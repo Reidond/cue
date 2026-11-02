@@ -66,6 +66,9 @@ public sealed class AppState : Observable
     public ControlCommands Control { get; }
     public DispatcherQueue Queue { get; }
 
+    /// <summary>The live call: listening, the overlay's lists, the reading rules.</summary>
+    public LiveModel Live { get; }
+
     private string? planLimit;
 
     public AppState(DispatcherQueue queue)
@@ -73,6 +76,7 @@ public sealed class AppState : Observable
         Queue = queue;
         Api = new CueApi(Log);
         Control = new ControlCommands(this);
+        Live = new LiveModel(this);
     }
 
     /// <summary>Set while the month's allowance is spent: the sentence the backend worded (`limit_reached`). Nothing is answered meanwhile.</summary>
@@ -96,12 +100,15 @@ public sealed class AppState : Observable
         {
             if (e.PropertyName == nameof(CueApi.Me)) UsageChanged(Api.Me);
         };
+        // Before the account is restored: the live call watches for it to be signed in.
+        Live.Start();
         Api.Start(Queue);
         Control.StartFromEnvironment();
     }
 
     public void Quit()
     {
+        Live.Shutdown();
         Microsoft.UI.Xaml.Application.Current.Exit();
     }
 
@@ -116,11 +123,19 @@ public sealed class AppState : Observable
 
     /// <summary>The month's allowance is spent: an alert once per time it runs out (`⚠︎ Cue plan limit reached: …` in the session log), and the
     /// dashboard says so.</summary>
-    private void ReachedLimit(string message)
+    internal void ReachedLimit(string message)
     {
         if (PlanLimit is not null) return;
         PlanLimit = message;
         Alert("Cue plan limit reached", message);
+    }
+
+    /// <summary>An answer arrived, so the allowance has room again (a raised limit, a new month).</summary>
+    internal void ClearPlanLimit()
+    {
+        if (PlanLimit is null) return;
+        PlanLimit = null;
+        Log.Write("🔓 Cue plan has room again");
     }
 
     /// <summary>What `/v1/me` says about the allowance: it ran out between calls, or it has room again (a new month, a raised limit).</summary>

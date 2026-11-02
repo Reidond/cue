@@ -38,7 +38,7 @@ public sealed class SettingsFile
 }
 
 /// <summary>Global preferences, persisted in settings.json; everything about a talk lives in its project (a later slice).</summary>
-public sealed class Preferences : Observable
+public sealed partial class Preferences : Observable
 {
     private readonly SettingsFile file = new();
     private string speakerName;

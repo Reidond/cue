@@ -44,6 +44,8 @@
 
   <ItemGroup>
     <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The words of a language an answer's "numbers" and "source" lines start with: the Mac's data, shared. -->
+    <Content Include="..\..\mac\Resources\lexicons\*.json" Link="Resources\lexicons\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
