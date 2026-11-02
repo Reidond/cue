@@ -107,5 +107,15 @@
     "w2-active-project": 26,
     "w2-import-projects": 15,
     "w2-materials": 14,
-    "w2-projects": 22
+    "w2-projects": 22,
+    "w3-ask": 29,
+    "w3-call-audio": 5,
+    "w3-deepgram-drops": 22,
+    "w3-hot-keys": 26,
+    "w3-limit": 27,
+    "w3-overlay": 30,
+    "w3-reading": 37,
+    "w3-reading-aloud": 44,
+    "w3-reconnect": 35,
+    "w3-rehearsal": 27
 }
