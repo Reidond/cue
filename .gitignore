@@ -6,3 +6,8 @@ node_modules/
 .cloudflare/
 .dev.vars*
 !.dev.vars.example
+
+# Cue for Windows: build output and the IDE's files
+apps/windows/**/bin/
+apps/windows/**/obj/
+apps/windows/.vs/

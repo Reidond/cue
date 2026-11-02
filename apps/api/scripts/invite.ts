@@ -13,9 +13,9 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { disableAccount, denylistKey, enableAccount, inviteState, LIST_INVITES, normalizeEmail, type Statement } from '../src/accounts.ts';
 import { DEV_DB_ID, DEV_KV_ID } from '../dev-ids.ts';
+import { cfBin, cfEnv } from './cf.ts';
 
 const root = join(import.meta.dirname, '..');
-const cf = join(root, 'node_modules', '.bin', 'cf');
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
 const email = args
@@ -30,7 +30,7 @@ function usage(message: string): never {
 }
 
 function run(...cfArgs: string[]): string {
-    const ran = spawnSync(cf, cfArgs, { cwd: root, encoding: 'utf8', env: { ...process.env, CI: '1' } });
+    const ran = spawnSync(process.execPath, [cfBin, ...cfArgs], { cwd: root, encoding: 'utf8', env: cfEnv() });
     if (ran.status !== 0) {
         console.error(`cf ${cfArgs.slice(0, 3).join(' ')} failed:\n${ran.stderr || ran.stdout}`);
         process.exit(1);

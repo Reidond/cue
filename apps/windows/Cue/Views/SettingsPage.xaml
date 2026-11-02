@@ -1,0 +1,16 @@
+<Page
+    x:Class="Cue.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer>
+        <StackPanel Padding="36,24" Spacing="16" MaxWidth="760" HorizontalAlignment="Left">
+            <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" />
+            <SelectorBar x:Name="Tabs" SelectionChanged="OnTabChanged">
+                <SelectorBarItem x:Name="GeneralTab" Text="General" />
+                <SelectorBarItem x:Name="CalendarTab" Text="Calendar" />
+                <SelectorBarItem x:Name="AccountTab" Text="Account" />
+            </SelectorBar>
+            <Border x:Name="TabHost" />
+        </StackPanel>
+    </ScrollViewer>
+</Page>

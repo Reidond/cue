@@ -84,10 +84,14 @@ export const Me = Type.Object({
 });
 export type Me = Static<typeof Me>;
 
-/** The OAuth client and API audience of the Mac app (the Windows client gets its own rows). */
+/** The OAuth clients (Cue for Mac, Cue for Windows) and the API audience. */
 export const OAUTH = {
     macClientId: 'cue-mac',
     macRedirectUri: 'com.andriishafar.cue:/oauth/callback',
+    // The Windows app signs in through the system browser and a loopback redirect (RFC 8252 §7.3): registered without a port, used with the one
+    // the system gave the app (`http://127.0.0.1:PORT/oauth/callback`).
+    windowsClientId: 'cue-windows',
+    windowsRedirectUri: 'http://127.0.0.1/oauth/callback',
     // An identifier (RFC 8707 `resource`, the access token's `aud`), never fetched: `.test` never resolves.
     audience: 'https://api.cue.test',
     scope: 'openid profile email offline_access',

@@ -3,8 +3,14 @@
 // browser sheet. Cue's own client is CueAPI.swift; `CUE_WEB_AUTH=headless` does the same there.
 import { createHash, randomBytes } from 'node:crypto';
 
-export const CLIENT_ID = 'cue-mac';
-export const REDIRECT_URI = 'com.andriishafar.cue:/oauth/callback';
+/** An app's OAuth client, and the redirect URI it signs in with (the Windows app's has the port the system gave it; the backend ignores the port). */
+export interface OAuthClient {
+    clientId: string;
+    redirectUri: string;
+}
+
+export const MAC_CLIENT: OAuthClient = { clientId: 'cue-mac', redirectUri: 'com.andriishafar.cue:/oauth/callback' };
+export const WINDOWS_CLIENT: OAuthClient = { clientId: 'cue-windows', redirectUri: 'http://127.0.0.1:49152/oauth/callback' };
 export const AUDIENCE = 'https://api.cue.test';
 
 export interface Tokens {
@@ -17,12 +23,18 @@ export interface Tokens {
 /** How a sign-in ended: with a code for the token endpoint, or at the page that says the person isn't invited. */
 export type SignInResult =
     | { kind: 'code'; code: string; verifier: string }
-    | { kind: 'not_invited'; email: string | null }
+    | { kind: 'not_invited'; email: string | null; page?: string }
     | { kind: 'failed'; detail: string };
 
 const b64url = (bytes: Buffer) => bytes.toString('base64url');
 
-export async function signInThroughBrowser(base: string, provider: 'google' | 'github' = 'google'): Promise<SignInResult> {
+/** `readPages`: a sign-in that ends at the invite-only page reports its HTML too (`page`), fetched with the browser's cookies. */
+export async function signInThroughBrowser(
+    base: string,
+    provider: 'google' | 'github' = 'google',
+    client: OAuthClient = MAC_CLIENT,
+    options: { readPages?: boolean } = {},
+): Promise<SignInResult> {
     const jar = new Map<string, string>();
     const remember = (response: Response) => {
         for (const line of response.headers.getSetCookie()) {
@@ -38,8 +50,8 @@ export async function signInThroughBrowser(base: string, provider: 'google' | 'g
     const url = new URL('/api/auth/oauth2/authorize', base);
     url.search = new URLSearchParams({
         response_type: 'code',
-        client_id: CLIENT_ID,
-        redirect_uri: REDIRECT_URI,
+        client_id: client.clientId,
+        redirect_uri: client.redirectUri,
         scope: 'openid profile email offline_access',
         state: b64url(randomBytes(12)),
         code_challenge: b64url(createHash('sha256').update(verifier).digest()),
@@ -49,7 +61,7 @@ export async function signInThroughBrowser(base: string, provider: 'google' | 'g
 
     let next = url.toString();
     for (let hop = 0; hop < 15; hop++) {
-        if (next.startsWith('com.andriishafar.cue:')) {
+        if (next.startsWith(client.redirectUri)) {
             const back = new URL(next);
             const code = back.searchParams.get('code');
             if (code) return { kind: 'code', code, verifier };
@@ -74,13 +86,21 @@ export async function signInThroughBrowser(base: string, provider: 'google' | 'g
             location = link.replaceAll('&amp;', '&').replaceAll('&#38;', '&');
         }
         if (!location) return { kind: 'failed', detail: `${response.status} ${(await response.text()).slice(0, 200)}` };
-        if (location.startsWith('com.andriishafar.cue:')) {
+        if (location.startsWith(client.redirectUri)) {
             next = location;
             continue;
         }
         next = new URL(location, next).toString();
         const landed = new URL(next);
-        if (landed.pathname === '/invite-only') return { kind: 'not_invited', email: landed.searchParams.get('email') };
+        if (landed.pathname === '/invite-only') {
+            const email = landed.searchParams.get('email');
+            if (!options.readPages) return { kind: 'not_invited', email };
+            const page = await fetch(next, {
+                redirect: 'manual',
+                headers: { cookie: [...jar].map(([name, value]) => `${name}=${value}`).join('; ') },
+            });
+            return { kind: 'not_invited', email, page: await page.text() };
+        }
         if (landed.pathname === '/sign-in-failed') return { kind: 'failed', detail: next };
     }
     return { kind: 'failed', detail: 'too many redirects' };
@@ -91,11 +111,11 @@ export interface TokenResult {
     body: Partial<Tokens> & { error?: string; error_description?: string };
 }
 
-async function postToken(base: string, params: Record<string, string>): Promise<TokenResult> {
+async function postToken(base: string, params: Record<string, string>, client: OAuthClient): Promise<TokenResult> {
     const response = await fetch(new URL('/api/auth/oauth2/token', base), {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ client_id: CLIENT_ID, resource: AUDIENCE, ...params }),
+        body: new URLSearchParams({ client_id: client.clientId, resource: AUDIENCE, ...params }),
     });
     const text = await response.text();
     try {
@@ -105,17 +125,17 @@ async function postToken(base: string, params: Record<string, string>): Promise<
     }
 }
 
-export const exchangeCode = (base: string, code: string, verifier: string) =>
-    postToken(base, { grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI, code_verifier: verifier });
+export const exchangeCode = (base: string, code: string, verifier: string, client: OAuthClient = MAC_CLIENT) =>
+    postToken(base, { grant_type: 'authorization_code', code, redirect_uri: client.redirectUri, code_verifier: verifier }, client);
 
-export const refreshTokens = (base: string, refreshToken: string) =>
-    postToken(base, { grant_type: 'refresh_token', refresh_token: refreshToken });
+export const refreshTokens = (base: string, refreshToken: string, client: OAuthClient = MAC_CLIENT) =>
+    postToken(base, { grant_type: 'refresh_token', refresh_token: refreshToken }, client);
 
-export async function revokeToken(base: string, token: string): Promise<number> {
+export async function revokeToken(base: string, token: string, client: OAuthClient = MAC_CLIENT): Promise<number> {
     const response = await fetch(new URL('/api/auth/oauth2/revoke', base), {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ client_id: CLIENT_ID, token, token_type_hint: 'refresh_token' }),
+        body: new URLSearchParams({ client_id: client.clientId, token, token_type_hint: 'refresh_token' }),
     });
     return response.status;
 }

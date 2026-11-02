@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Cue/Cue.csproj" />
+  <Project Path="Installer/Installer.wixproj" />
+</Solution>

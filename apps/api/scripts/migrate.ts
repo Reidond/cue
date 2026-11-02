@@ -2,11 +2,12 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { DEV_DB_ID } from '../dev-ids.ts';
+import { cfBin, cfEnv } from './cf.ts';
 
 const root = join(import.meta.dirname, '..');
 const ran = spawnSync(
-    join(root, 'node_modules', '.bin', 'cf'),
-    ['d1', 'migrations', 'apply', DEV_DB_ID, '--local', '--persist-to', process.env.CUE_STATE_DIR ?? '.cloudflare/state'],
-    { cwd: root, stdio: 'inherit', env: { ...process.env, CI: '1' } },
+    process.execPath,
+    [cfBin, 'd1', 'migrations', 'apply', DEV_DB_ID, '--local', '--persist-to', process.env.CUE_STATE_DIR ?? '.cloudflare/state'],
+    { cwd: root, stdio: 'inherit', env: cfEnv() },
 );
 process.exit(ran.status ?? 1);

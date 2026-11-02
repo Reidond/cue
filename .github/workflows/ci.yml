@@ -1,5 +1,9 @@
-# Checks the TypeScript, builds the app and runs the end-to-end suite on every pull request (and only there). The suite is split across
-# four macOS runners (`run.ts --shard`); `build-and-test`, the check main requires, passes when the check and every shard did.
+# Checks the TypeScript, builds the apps and runs the end-to-end suite on every pull request (and only there). The Mac suite is split across
+# four macOS runners (`run.ts --shard`). Cue for Windows is built and tested in parallel jobs, each well under ten minutes: the app's cases (every
+# `w` case but the installer's, so a slice's new cases join without an edit here) split into WINDOWS_APP_SHARDS jobs per architecture, the
+# installer's case, and on x64 the backend's cases in shards (they need no build). On arm64, where Node.js, workerd and Vite+ run emulated and
+# about three times slower, the app is built for Arm and its own cases run (the app's, the installer's), not the backend's, which the x64 jobs
+# cover. `build-and-test`, the check main requires, passes when the check, every shard and every Windows job did.
 name: CI
 
 on:
@@ -113,12 +117,110 @@ jobs:
           path: Cue.zip
           if-no-files-found: ignore
 
+  # The Windows jobs' matrix, made from two numbers. Raise WINDOWS_APP_SHARDS when the app jobs near ten minutes (each also pays about three
+  # minutes for the toolchain and the build); it applies to both architectures. The app jobs run every `w` case but the installer's
+  # (`--except=w1-`), balanced by the seconds in tests/e2e/durations.json.
+  windows-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      WINDOWS_APP_SHARDS: 5
+      WINDOWS_BACKEND_SHARDS: 3
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        # `kind`: app builds Cue.exe and runs the w cases but the installer's; installer also builds the MSI and runs w1-; backend builds
+        # nothing and runs the cases that never launch the app (`run.ts --no-app`), on x64 only.
+        run: |
+          matrix=$(jq -nc --argjson app "$WINDOWS_APP_SHARDS" --argjson backend "$WINDOWS_BACKEND_SHARDS" '
+            def runner: if . == "arm64" then "windows-11-arm" else "windows-latest" end;
+            [
+              ("x64", "arm64") as $arch
+              | (range(1; $app + 1) as $k
+                  | { id: "\($arch)-app-\($k)", runner: ($arch | runner), arch: $arch, kind: "app", cases: "w --except=w1- --shard=\($k)/\($app)" }),
+                { id: "\($arch)-installer", runner: ($arch | runner), arch: $arch, kind: "installer", cases: "w1-" }
+            ] + [
+              range(1; $backend + 1) as $k
+              | { id: "x64-backend-\($k)", runner: "windows-latest", arch: "x64", kind: "backend", cases: "--no-app --shard=\($k)/\($backend)" }
+            ]')
+          echo "$matrix" | jq .
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: windows-plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.windows-plan.outputs.matrix) }}
+    name: windows (${{ matrix.id }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        if: matrix.kind != 'backend'
+        with:
+          dotnet-version: 10.0.x
+
+      # Node.js is the x64 build on both: the backend's workerd and Vite+'s native packages exist for x64 only, and Windows for Arm runs them.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          architecture: x64
+
+      - name: Toolchain
+        run: powershell -ExecutionPolicy Bypass -File apps/windows/scripts/setup.ps1 -Install ${{ matrix.kind == 'backend' && '-Backend' || '' }}
+
+      - name: Build the app
+        if: matrix.kind == 'app'
+        run: powershell -ExecutionPolicy Bypass -File apps/windows/scripts/build.ps1 -Arch ${{ matrix.arch }}
+
+      - name: Build the app and the installer
+        if: matrix.kind == 'installer'
+        run: powershell -ExecutionPolicy Bypass -File apps/windows/scripts/build.ps1 -Arch ${{ matrix.arch }} -Msi
+
+      - name: Worker types
+        working-directory: apps/api
+        run: node node_modules/cf/bin/cf workers types
+
+      - name: End-to-end tests
+        env:
+          E2E_WORK: ${{ runner.temp }}\e2e
+        run: node tests/e2e/run.ts --no-build ${{ matrix.cases }}
+
+      - name: Keep the e2e logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-windows-${{ matrix.id }}
+          # Logs, session logs and snapshots only, not the sandboxes.
+          path: |
+            ${{ runner.temp }}\e2e\*.log
+            ${{ runner.temp }}\e2e\*\cue.out
+            ${{ runner.temp }}\e2e\*\*.txt
+            ${{ runner.temp }}\e2e\*\backend.log
+            ${{ runner.temp }}\e2e\*\*.png
+            ${{ runner.temp }}\e2e\*\*.html
+            ${{ runner.temp }}\e2e\*\home\Application Support\Cue\sessions\*.md
+            ${{ runner.temp }}\e2e\*\home\Application Support\Cue\crash.log
+          if-no-files-found: ignore
+
+      - name: Keep the installer
+        if: matrix.kind == 'installer'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cue-windows-${{ matrix.arch }}
+          path: apps/windows/build/Cue-*.msi
+          if-no-files-found: error
+
   build-and-test:
-    needs: [check, e2e]
+    needs: [check, e2e, windows]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: The check and every shard passed
+      - name: The check, every shard and the Windows jobs passed
         run: |
-          echo "check: ${{ needs.check.result }}, e2e: ${{ needs.e2e.result }}"
-          [[ "${{ needs.check.result }}" == success && "${{ needs.e2e.result }}" == success ]]
+          echo "check: ${{ needs.check.result }}, e2e: ${{ needs.e2e.result }}, windows: ${{ needs.windows.result }}"
+          [[ "${{ needs.check.result }}" == success && "${{ needs.e2e.result }}" == success && "${{ needs.windows.result }}" == success ]]

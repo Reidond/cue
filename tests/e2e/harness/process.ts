@@ -1,5 +1,5 @@
-// Running other programs: the app's command-line modes, the Swift tools, macOS commands.
-import { spawn } from 'node:child_process';
+// Running other programs: the app's command-line modes, the Swift tools, macOS commands, and stopping process trees.
+import { type ChildProcess, spawn } from 'node:child_process';
 import { constants } from 'node:os';
 
 export interface Ran {
@@ -53,4 +53,22 @@ export function exec(command: string, args: readonly string[] = [], options: Run
 /** Quotes a word for a shell script the harness writes. */
 export function shellQuote(word: string): string {
     return `'${word.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * Stops a child started `detached` and everything it started (`cf dev` leaves `cf-vite` and `workerd` behind when only it is killed): its
+ * process group on macOS and Linux, `taskkill /T /F` on Windows. `force` is SIGKILL there.
+ */
+export async function killTree(child: ChildProcess, force: boolean): Promise<void> {
+    if (child.pid === undefined) return;
+    if (process.platform === 'win32') {
+        // Console programs have no window to ask politely: it is always forced.
+        await exec('taskkill', ['/PID', String(child.pid), '/T', '/F']);
+        return;
+    }
+    try {
+        process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM');
+    } catch {
+        /* already gone */
+    }
 }

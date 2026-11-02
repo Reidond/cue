@@ -4,7 +4,9 @@ Cue is a macOS overlay prompter and call notetaker: SwiftPM executable in
 `apps/mac/Sources/Cue`, resources in `apps/mac/Resources/`, built into
 `apps/mac/build/Cue.app` by `apps/mac/scripts/build.sh`. See `README.md` for
 what it does. `docs/backend.md` is the design of the Cloudflare backend and
-admin app that are being added beside it.
+admin app that are being added beside it. Cue for Windows (`apps/windows`, C# on
+WinUI 3) is the Mac app's port: built into `apps/windows/build/ARCH/Cue.exe` and an
+MSI by `apps/windows/scripts/build.ps1`; see its section below.
 
 ## Layout
 
@@ -14,6 +16,7 @@ The repository is a Vite+ (`vp`) pnpm monorepo:
 package.json, pnpm-workspace.yaml   # apps/*, packages/*, tests/e2e; pnpm-lock.yaml is the only lockfile
 vite.config.ts                      # the one lint (oxlint) and fmt (oxfmt) configuration, overrides per package
 apps/mac/                           # the Swift app: Package.swift, Sources/Cue, Resources, scripts/build.sh
+apps/windows/                       # the Windows app: Cue.slnx, Cue/ (WinUI 3), Installer/ (WiX MSI), scripts/{build,setup}.ps1
 apps/api/                           # the Cue API: an Elysia Worker on Cloudflare (cloudflare.config.ts, src/, migrations/, scripts/)
 apps/admin/                         # the owner's admin SPA (React): built as the api Worker's client assets, served at /admin
 packages/contract/                  # TypeBox schemas of the API's requests and responses
@@ -202,6 +205,184 @@ After a call the recording goes up and the backend makes the notes. `docs/backen
   `syncWithAccount` imports notes without a `note:` (`📦 Imported N notes from this Mac`) and writes the account's notes the library lacks (`☁️ Restored N notes from your account`).
   Rename, Apply, ✕ and Move to Trash are `PATCH` / `DELETE` and then the same file edits as before; the player streams `…/audio/mixed` when the `.m4a` isn't on disk.
 
+## Cue for Windows (`apps/windows`)
+
+The port of the Mac app to WinUI 3 (C#, .NET 10 LTS, Windows App SDK 2), in slices: the foundation (the shell, storage, session log, test hooks, sign-in
+and account, installer, CI and the e2e harness on Windows), then projects and materials, the live call and its overlay, recordings and notes, meetings and
+the calendar, each plugging into the pieces below. Fluent idioms are the HIG rule here: `NavigationView`, `TitleBar`, Mica, light and dark by the system,
+standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (the system browser signs in).
+
+- **Layout**: `Cue.slnx`, `Cue/` (the app: `Core/` has no UI, `Views/` the pages, `MainWindow`), `Installer/` (WiX), `scripts/{build,setup}.ps1`.
+  The app is unpackaged (`WindowsPackageType=None`) and self-contained (`SelfContained`, `WindowsAppSDKSelfContained`): `Cue.exe` and the .NET and
+  Windows App SDK runtimes sit in one folder, so the MSI needs no runtime installer. x64 and arm64; Windows 11 and Windows 10 22H2 (`TargetPlatformMinVersion` 10.0.19041).
+- **Build**: `powershell -ExecutionPolicy Bypass -File apps\windows\scripts\build.ps1 [-Arch x64|arm64] [-Version 2.0.1] [-Msi [-Quick]] [-Output DIR]` is the one
+  entry point (you, the suite, CI, release): it publishes to `apps\windows\build\ARCH\Cue.exe` and with `-Msi` makes `build\Cue-VERSION-ARCH.msi` (`dotnet
+  build` of `Installer\Installer.wixproj`, WiX `WixToolset.Sdk` 6.0.2: no Visual Studio). Warnings fail it (`TreatWarningsAsErrors`; the installer's ICE rules
+  it ignores on purpose are named in the wixproj; `-Quick` makes an installer only a case installs, files stored and no validation: 6 s, not 55). The version is the Mac's, `CFBundleShortVersionString` of `apps/mac/Resources/Info.plist` plus the patch
+  (`-Version`, which release.yml computes from the tags), and goes into both the app (`Env.Version`, `Cue-Version: windows/VERSION`) and the MSI; the
+  backend's address is stamped from `apps/api/production-url.txt` (assembly metadata `CueApiUrl`; `CUE_API_URL` overrides it; a plain `dotnet build`
+  talks to `cf dev`). WiX 7 makes its user accept the OSMF EULA (`AcceptEula`: a fee above $10k revenue a year): that is the owner's call, so
+  the repository stays on 6.0.2. `scripts/setup.ps1 [-Install] [-Backend]` installs the toolchain on a fresh Windows (git, .NET 10 SDK, Node.js 26, pnpm; `-Install` runs
+  `pnpm install`; `-Backend` leaves out the SDK and OCR for the backend's cases); on Windows for Arm Node.js is the x64 build on purpose and the x64 Visual C++ runtime is added, as workerd and Vite+'s native
+  packages exist for x64 only and run emulated.
+- **The MSI** (`Installer/Package.wxs`): per machine into `Program Files\Cue`, a Start menu shortcut, an entry in Apps, a stable `UpgradeCode` with `MajorUpgrade` (a newer
+  MSI replaces an older one, an older one is refused), nothing in the registry; the person's settings, library and notes stay on uninstall. It is unsigned: the release notes
+  say what SmartScreen shows. The URL protocol the Mac needs is not needed (below).
+- **Sign-in** (`Core/CueApi.cs`, `Core/LoopbackReceiver.cs`): the Mac's OAuth 2.1 + PKCE flow as its own trusted client `cue-windows` (`migrations/0008_windows_client.sql`,
+  `OAUTH.windowsClientId`), through the system browser and a **loopback redirect** (RFC 8252 §7.3): Cue listens on `127.0.0.1` at a port the system gives it and sends
+  `http://127.0.0.1:PORT/oauth/callback`; the client is registered as `http://127.0.0.1/oauth/callback` and Better Auth's oauth-provider accepts any port for it (and nothing
+  else). Chosen over a registered URI scheme with `AppInstance` redirection because it needs nothing registered (not by the MSI, not by a dev build), no second process
+  to hand the callback over, no browser "Open Cue?" prompt, and the case runs the real listener. The pages a failed sign-in ends at (`/invite-only`, `/sign-in-failed`) send the
+  person back to the app that started it: `/login/:provider` leaves a `cue_return` cookie with the authorization request's redirect URI (the Mac's scheme, or a loopback address with a
+  port), and `src/pages.ts` builds "Return to Cue" from it (the Mac's when there is none). The refresh token is in Windows Credential Manager (`Core/SecretStore.cs`); under
+  `CUE_HOME` in `CUE_HOME/Keychain.json` as on the Mac. `CUE_WEB_AUTH=headless` follows the authorize URL with `HttpClient` and cookies, presses the stand-in provider's
+  button, and ends where a browser would, at Cue's own listener.
+- **Projects and materials** (`Core/{Projects,ProjectStore,ProjectsApi,ProjectCommands,Shell}.cs`, `Views/{ProjectPage,ProjectOverviewView,PreparedAnswersView,ProjectDialogs}`): the port of the Mac's
+  `ProjectStore`, `Project` and `ProjectView`, with the same behaviour (see "Projects and materials" above: the account holds them, `Documents\Cue\NAME\project.json` with `serverID` and a `Notes\` folder is the
+  library). `AppState.Projects` is **the one place the rest of the app finds the projects**: `Projects` (sorted as Explorer sorts names), `Find(id)`, `FindByName(name)` (name or folder, as `CUE_PROJECT` and the hooks
+  take it), `MostRecent`, `Active` (the project Cue answers from and records into: the folder name kept in `settings.json` as `activeProject`, chosen after sign-in by `ChooseActive`: `CUE_PROJECT`, else the last one,
+  else the most recently used; `📁 Project: NAME`), `Activate(project)` (stamps `LastUsed`, saves it to the account, logs `📁 Project: NAME` when it changed), `Project.ServerId` (what a call is made for) and
+  `Project.Materials`. After sign-in (`CueApi.OnSignedIn`, before `Signed in` is logged) `SyncWithAccount` lists the account's projects, makes a folder for those this PC hasn't seen and uploads every folder
+  without a `serverID` once with its `Materials\` files (`📦 Imported N projects from this PC (M files)`: **"this PC", not "this Mac"**, the one log line the Windows app words differently). Create, rename, delete and
+  adding or removing a file wait for the server; field edits are saved to `project.json` at once and to the account after 0.8 s (`☁️ Saved “NAME” to your account`). A deleted project's folder goes to the Recycle Bin
+  (`Shell.MoveToRecycleBin`). The dashboard: `DashboardPage.Project` with `Dashboard.ProjectId` and `Dashboard.Section` (`ProjectTab`: Overview, Answers, Notes; the notes slice filled `ProjectPage`'s Notes tab (`NotesView`) and
+  Home's recent notes); `Dashboard.OpenProject(id, tab)`; the pane (`MainWindow.RefreshProjects`) has a "Projects" header, an item per project with a context menu (Rename…, Show in Explorer, Move to
+  Recycle Bin…) and New Project (Ctrl+N) below; the start-Cue button belongs in `ProjectPage`'s header (the live-call slice). The prepared answers and the token estimate on a page come from `ProjectStore.Documents`
+  (`KnowledgeBase`, as the Mac's); the account's server builds the prompt.
+- **Where the next slices plug in**: `AppState` (`Core/AppState.cs`: the log, preferences, `Api`, `Projects`, `Dashboard`, `Control`, `PlanLimit`; one instance, `App.State`); `CueApi.Request(method, path, query, json,
+  file, body, contentType, timeout)` and `Bearer()` for every call (a bearer token refreshed on its own, `{error: {code, message, retryable}}` as `CueApiException`: kinds
+  `LimitReached`, `RateLimited`, `PlanPaused`, `Ended`, `Network`, `Server`; `OnSignedIn` runs before Cue counts as signed in); `state.Control.Register("new", run, needsSignIn)` for a `CUE_CONTROL`
+  command; `DashboardModel.PageResolvers` for `page NAME` and `DashboardPage` + `MainWindow` for navigation items (a page is a `Page` that gets the `AppState` as its navigation parameter,
+  and shows a `SignInView` while signed out); `Settings` tabs in `SettingsPage`; `SessionLog.Write` (use `SessionLog.Warning` for `⚠︎`, whose second character is U+FE0E); `Storage.AppSupport` and
+  `Storage.Documents` for paths (**keep every `DispatcherQueueTimer` in a field**: one that only a local variable holds is garbage-collected and silently stops, which looked like commands and snapshots going missing now and then); `SettingsFile`/`Preferences` for settings (`settings.json`).
+- **Where it is built and tested**: never on this Mac. The Windows 11 VM of vmpal (VM "Windows VM 1", Arm; `vmpal_*` tools, agent control on): share the worktree read-only
+  (`vmpal_update_vm` `sharedFolders` with name `cue-src`: it is `Z:\cue-src`), copy it to the VM's own disk (`robocopy Z:\cue-src C:\src\cue /MIR /XD node_modules .git build obj bin .vs .claude .build .cloudflare`:
+  `apps/mac/.build` is a gigabyte the share reads for minutes and then fails on, and `/MIR` would delete the VM's generated `apps/api/.cloudflare` types; never build on the share), run `setup.ps1 -Install` once (from an elevated shell: `vmpal_exec_admin`), then `node tests\e2e\run.ts w --except=w1- 9e-` there with `vmpal_exec` (short `waitSeconds`, then `vmpal_exec_result`).
+  A process started by `vmpal_exec` ends with the command: to look at a window yourself start Cue with `Invoke-CimMethod -ClassName Win32_Process -MethodName Create`, and read the window
+  with `vmpal_screenshot` in both themes (`CUE_APPEARANCE=light|dark`). The VM snapshot `cue-toolchain` has the toolchain installed and the repository's packages in `C:\src\cue`.
+  `w1-installer` installs per machine, so it needs an elevated process (`vmpal_exec_admin`; a CI runner is one) and skips without.
+- **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks), `w1-…` (the installer), `w2-…` (projects and materials: `w2-projects`, `w2-materials`, `w2-import-projects`,
+  `w2-account-projects`, `w2-active-project`; they read the window with `windowText`, the account with `backend.accountOf(cue.email)`), `w3-…` (the live call: see Live call on Windows), `w4-…` (recordings and notes: see Recordings and notes on Windows) and `w6-…` (meetings, the calendar and notifications: see Meetings, the calendar and notifications on Windows) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
+  them together with the cases that never launch the app (the source has no `.launch(`, `.cli(` or `.control(`: the backend's own, `9a-…` to `9e-…`, `95`–`99`). `9e-windows-sign-in` signs in as `cue-windows` end to end
+  and runs anywhere with `--no-app`. Every later `wN-…` case is the app's too (CI runs all `w` cases but `w1-`; see CI and releases). A case reads what the window shows with `windowText(pid)` (`tools/uia.ps1`: the text of its UI Automation tree, exact (no recognition errors); a XAML `ScrollViewer`'s content scrolled out of view is not in it),
+  and `windowsOf(pid)` is `tools/windows.ps1` (the foreground, the windows' sizes and styles: the twin of `appWindows`); `ocr` is `tools/ocr.ps1` (Windows' own `Windows.Media.Ocr`; it needs the English recognizer,
+  `Language.OCR~~~en-US~0.0.1.0`, which `setup.ps1` adds) for what a snapshot shows; `cue.defaults()` edits `settings.json`; `cue.stop()` sends `quit` through the control file and kills the tree after 10 s.
+- **Hooks that differ** (the rest of the table below applies as it reads; `CUE_REHEARSE_PARTICIPANT` / `CUE_REHEARSE_ME` play a WAV, `CUE_NO_LIVE_AUDIO` and `CUE_ALLOW_CAPTURE` as on the Mac; `CUE_REHEARSE_RECORD=1` records the rehearsal into notes, `CUE_UPLOAD_PART_BYTES` / `CUE_UPLOAD_BREAK` as on the Mac): `CUE_HOME` has the Mac's layout (`CUE_HOME/Application Support/Cue`, `CUE_HOME/Documents`, sessions in
+  `Application Support/Cue/sessions/*.md`) and keeps settings in `Application Support/Cue/settings.json`, the refresh token in `CUE_HOME/Keychain.json` (without it: `%APPDATA%\Cue`, `Documents\Cue`, Credential Manager);
+  `CUE_LOCALE=en-US` makes numbers, dates and Windows' own strings that culture (the harness sets it: the Mac's `-AppleLocale`); `CUE_BACKGROUND=1` shows the window without activating it, as a tool window (no taskbar button) that a
+  click doesn't activate, at the bottom of the z-order, with the process opted out of power throttling, and an alert goes only to the session log; `CUE_SNAPSHOT=png` writes `…-dashboard.png` every 2 s with `PrintWindow`
+  (Settings is a page of the dashboard, so there is no `-settings.png`; `CUE_SNAPSHOT_METHOD` doesn't apply; `📸 Snapshots: window capture (PrintWindow), in the dark appearance`); `CUE_APPEARANCE`, `CUE_SHOW_SETTINGS`,
+  `CUE_ME_TICK`, `CUE_API_URL`, `CUE_WEB_AUTH=headless`, `CUE_PROJECT=name` as on the Mac; `CUE_CONTROL` commands now: `signin [google|github]`, `signout`, `settings general|account|calendar`,
+  `page home|upcoming|NAME|NAME/overview|NAME/answers|NAME/notes`, `size W H`, `quit`, and the projects': `new NAME`, `add PATH` (a file dropped on the open project's materials, else the active project's),
+  `set PROJECT | occasion|language|names | VALUE`, `remove PROJECT | FILE`, plus two the Mac has no command for, because it does them in a dialog no case drives: `rename-project NAME | NEW` and `delete-project NAME`
+  (what the pane's context menu runs). Commands run one after another, so `new` and `add` finish before the next line. `signin`, `signout`, `settings`, `page`, `size` and `quit` work signed out; any other command then
+  logs `⚠︎ Sign in to Cue first (NAME ignored)`.
+  The live call's `CUE_CONTROL` commands: `start NAME` (Start Cue for that project: shows the overlay and listens), `stop`, `project NAME` (the overlay's project menu), `ask TEXT`, `show TEXT`, `newest`, `prepare`; the project is found as `page NAME` finds it (by name, else by folder name), and none is no-op, as on the Mac.
+  The meetings' `CUE_CONTROL` commands: `assign EVENT | PROJECT` (the project picker of an event on Upcoming, by the event's title) and `notification record|dismiss` (Record / Not Now on the latest prompt); `CUE_CALENDAR_EVENTS`, `CUE_MIC_APPS`, `CUE_MEETING_TICK` and `CUE_MIC_RELEASE` are as on the Mac except that `CUE_MIC_APPS` names program files or package family names, not bundle IDs, and that without `CUE_CALENDAR_EVENTS` the calendar is Windows' appointment store (see Meetings, the calendar and notifications on Windows).
+  `CUE_SURFACES=1`, only here: under `CUE_BACKGROUND` the live call's surfaces — the overlay, the tray icon, the hot keys — are as in normal use (the overlay above other windows, the keys registered); without it a test run has no tray icon or hot keys (as the Mac) and the overlay stays at the bottom.
+  `CUE_LIVE_BREAK=SECONDS` (only here) loses the live socket once, that long after it first came up: the call reconnects (`⚠︎ The live call's connection: …`) and goes on over the same call.
+  `CUE_SNAPSHOT` also takes the overlay (`PrintWindow`, to the file itself, `…cue.png`; the dashboard's is `…-dashboard.png`) and, like `CUE_ALLOW_CAPTURE=1`, lets screenshots see it.
+
+## Live call on Windows (`apps/windows/Cue`: `Core/{LiveModel,LiveCall,AudioSink,AudioCapture,Wasapi,Rehearsal,…}.cs`, `Views/OverlayWindow.cs`)
+
+The port of `LiveCall`, `AudioCapture`, `OverlayView`, `HotKeys` and the call half of the Mac's `AppState`, on the foundation above. Session log lines, the reading rules and the exchange and answer state
+are the Mac's, word for word.
+
+- **The call model** (`Core/LiveModel.cs`, `state.Live`): between Start Cue and Stop Cue it opens the audio, makes a call (`POST /v1/calls`), and drives `Exchange`s and `Answer`s (`Core/Calls.cs`) from the events: show,
+  newest, holding the view while an older answer is read, `Unseen`, the 5 s reading pause, Prepare Answer, Auto, the plan limit (`AppState.ReachedLimit` / `ClearPlanLimit`). `LiveModel.Changed` says the lists changed
+  (the overlay and Home redraw), `Samples` is where **both sides' audio** passes (`Action<Side, float[], double>`: 16 kHz mono floats and the host time (`Audio.HostSeconds`, the QPC clock) of the first sample, from the capture threads,
+  the rehearsal's too): `AudioRecorder` subscribes there to write the two sides to files (Recordings and notes on Windows below), the record button is in `OverlayWindow.RecordSlot`, the menu items in `Core/Tray.cs`, `Tray.Recording` (red icon)
+  and the hot key (Win+Alt+C, in `Core/LiveSurfaces.cs`; not R, which is the Game Bar's) follow the recorder, and `UpdateCapture` keeps the audio and the call open "while a recording is under way".
+- **The socket** (`Core/LiveCall.cs`): `System.Net.WebSockets.ClientWebSocket`, one writer queue (the capture threads send audio, the UI thread commands: a socket sends one message at a time), reconnects with the Mac's backoff
+  (0.5, 1, 2, 5 s) and `after=SEQ`, `404` ends the call, `401` refreshes the token. The Ask field and Answer now are socket commands (`ask`, `answerNow`), as on the Mac, not `POST /v1/calls/:id/questions`.
+- **Audio** (`Core/Wasapi.cs`, `Core/AudioCapture.cs`, `Core/AudioSink.cs`): WASAPI by direct COM interop, no NAudio: process loopback (`ActivateAudioInterfaceAsync` with `VAD\Process_Loopback`, **excluding Cue's own process tree**;
+  Windows 11, Windows 10 build 20348+) is not in NAudio, and one hand-written path serves the microphone (default capture device), the call (process loopback, falling back to the default speakers' loopback with
+  `🔊 Call audio: the default speakers, Cue's own sound included (WHY)`), both shared-mode, event-driven, asked for 16 kHz mono 16-bit from the audio engine (`AUTOCONVERTPCM`; 48 kHz stereo and `Resampler` where it will not).
+  `AudioSink` is `AudioSink.swift`: frames are one channel byte (0 me, 1 others) and PCM16 LE, contiguous, 100 ms at least; silence is filled by the host clock (a loopback stream delivers nothing while the PC is silent) and so is
+  what a dropped socket lost (20 s at most); a really open source's lane starts with the call (`Expect`), so a silent call side keeps its clock. The VM has speakers and no microphone: the microphone's status line says so
+  ("No microphone found") and its code is **not exercised** by any case; `w3-call-audio` plays a WAV through the speakers and hears it through process loopback (skips without a sound device: a CI runner has none).
+- **The overlay** (`Views/OverlayWindow.cs`): a code-built WinUI `Window`, **designed as a Windows 11 app, not as a copy of the Mac's glass panels** (the behaviour is the Mac's: what it shows, the reading rules,
+  `CUE_CONTROL`, the log lines). *Window*: borderless (`OverlappedPresenter.SetBorderAndTitleBar(true, false)`, resizable, 400 × 360 at least), Windows 11's rounded corners (`DWMWA_WINDOW_CORNER_PREFERENCE`), `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`
+  (no taskbar button, a click never activates it), always on top, `AppWindow.Show(false)`, `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` (hidden from captures and screen sharing; `WDA_MONITOR`, black, where Windows has no better;
+  `CUE_ALLOW_CAPTURE` / `CUE_SNAPSHOT` turn it off). *Material*: `ActiveAcrylicBackdrop`, the Fluent desktop acrylic of Windows 11's flyouts that stays acrylic though the window is never active (the stock one falls back to a flat colour when
+  its window is inactive); with transparency effects off, or in high contrast, the controller paints the system's solid fallback. *Controls*: a `CommandBar` (the title area, which drags the window) with the project's `DropDownButton`, the status
+  (`ProgressRing`, check or warning glyph, text) and `AppBarToggleButton`s (Auto, Transcript) and a Settings `AppBarButton`; an `InfoBar` for what needs attention (the plan's limit, no project, no materials, no audio) with *Open Dashboard*, and inside
+  an answer ("Doesn't sound like a question for you" with *Answer Anyway*; an answer's error); cards (`CardBackgroundFillColorDefaultBrush`, `CardStrokeColorDefaultBrush`) for the answer in view and the New and Answered lists, whose rows are
+  subtle buttons (hover, press and focus as the system's lists); an `Expander` for the prepared answer; a `TextBox` and an accent *Answer now* button for Ask; the *1 New Question* button floats over the list on a `ThemeShadow`. *Text and icons*: the
+  Fluent type ramp (`TitleTextBlockStyle` for what to say, `BodyStrong` for the questions, `Body`, `Caption` for the groups, in Segoe UI Variable), at sizes that follow the person's text-size setting (Win+Alt+ + / -); Segoe Fluent Icons glyphs.
+  *Colour and shape*: only theme resources (text, card, subtle fill, accent, system fill brushes: the system accent colour, light, dark and high contrast), `ControlCornerRadius` (4) and `OverlayCornerRadius` (8), spacing in multiples of 4.
+  A change of the theme or of the system's colours (`ActualThemeChanged`, `UISettings.ColorValuesChanged`: light, dark, high contrast, the accent) re-takes the brushes of the few plates built once and redraws the lists (rebuilding the whole tree fails: the record slot would have two parents). Every control has its UI Automation name (the cases read them). **Typing into Ask** is the one time it takes the keyboard:
+  the pointer press or focus on the box removes `WS_EX_NOACTIVATE`, `SetForegroundWindow`s the overlay and remembers the window it came from; Enter, Escape or losing the focus puts the style back and gives the focus back. Its position is kept in
+  `settings.json` (`overlayBounds`; not under `CUE_HOME`). The lists are redrawn (at most every 100 ms) from `LiveModel`; a case reads them with `windowText(pid)`.
+- **Hot keys** (`Core/HotKeys.cs`, `Core/LiveSurfaces.cs`): `RegisterHotKey` on a message-only window (`Core/NativeShell.cs`). **Win+Alt+KEY, not the Mac's Ctrl+Alt**, which is AltGr on many layouts (Polish, German, Ukrainian…) and would swallow typed
+  characters: Enter answer now, H show/hide (starts Cue when it doesn't run), A Auto, Page Up / Page Down previous / next answer, + / - text size. Windows keeps Win+Alt with the arrows (they failed to register) and the Game Bar has
+  Win+Alt+R. One another program holds is logged (`⚠︎ Couldn't register the shortcut for NAME: another program uses Win+Alt+KEY`) and skipped. None under `CUE_BACKGROUND` unless `CUE_SURFACES=1`.
+- **The tray icon** (`Core/Tray.cs`): `Shell_NotifyIconW` and a native popup menu (Start/Stop Cue, Show or Hide, Answer Now, Open Dashboard, Settings, Restart Live Call, Quit); with it, closing the dashboard only hides it.
+- **Starting, and the projects**: the live call follows the projects' store (`state.Projects`, the projects slice above): `LiveModel.ActiveProject` is `ProjectStore.Active`, chosen at sign-in (`CUE_PROJECT`, else the last used) or by the person
+  (the overlay's project drop-down lists `state.Projects.Projects`; `ProjectStore.Activate` marks it used and logs `📁 Project: NAME`). **Start Cue is on a project's page** (`Views/ProjectPage`: *Start Cue* / *Stop Cue* beside its name), and Ctrl+Enter anywhere in the
+  dashboard is the Mac's File › Start Cue (`LiveModel.ToggleCue(open)`: Stop Cue while it runs for the project open, or none; else Start Cue for the open project, else the active one; none at all, the dashboard). A call is made for the project's `ServerId`:
+  one that has not reached the account yet shows "Waiting for the project to reach your account" and the call starts once it has, and another project (or its materials arriving) changes the status line and the call (`LiveModel.ProjectChanged`).
+  `start NAME` / `project NAME` find the project as `page NAME` does (`ProjectStore.FindByName`: by name, else by folder name), and none is a no-op, as on the Mac.
+- **Cases** `w3-…`: `rehearsal` (transcript, question, prepared match, streamed answer on the overlay, and in the snapshot), `reconnect` (the socket lost with `CUE_LIVE_BREAK`: the same call goes on, nothing shown twice), `ask` (Prepare Answer, Ask, Answer now), `reading` and `reading-aloud` (show, newest, the
+  New question button, the reading rules), `limit`, `deepgram-drops`, `overlay` (above another program's window, never the focus, a real click and real typing, hidden from `CopyFromScreen`, shown with `CUE_ALLOW_CAPTURE`),
+  `hot-keys` (real key presses), `call-audio` (real loopback). They use `bursts` and the stand-ins' lines (`FAKE_DEEPGRAM_LIVE`), `accountProject(cue, name, { materials })` (a project in the case user's account, made
+  through the API), `press(pid, name)` (UI Automation invoke: `tools/uia-click.ps1`), `click(pid, name)` (a real mouse click at the control), `typeText`, `pressKeys('win', 'alt', 'h')` (`tools/keys.ps1`, `SendInput`),
+  `captureScreen(rect, png)` (`tools/capture.ps1`: what a screenshot sees), `needInteractiveDesktop()` (skips `overlay` and `hot-keys` where a window shown never gets the keyboard focus and injected keys go nowhere: it showed on the `windows-11-arm` runner, where they failed; the x64 runner and the VM have one), `needAudioOutput()`, `windowsOf` now also has `topmost`, `affinity`, `left` and `top`, and `tools/blocker.ps1` is the other program's window.
+
+## Recordings and notes on Windows (`apps/windows/Cue`: `Core/{LiveModel.Recording,Recordings,RecordingStore,AudioRecorder,NotesApi,NoteMarkdown,NotePlayer,RecordingCommands}.cs`, `Views/{NotesView,MarkdownView,RecordControl}.cs`)
+
+The port of `Recordings.swift`, `NotesAPI.swift`, `NoteMarkdown.swift` and the recording half of the Mac's `AppState`, on the live call above. The behaviour, the session-log lines (see the list in Test hooks in the app: `⏺ Recording started (TRIGGER)` …
+`📝 Notes ready`) and the `CUE_CONTROL` commands are the Mac's; the notes themselves are the backend's (Notes above).
+
+- **Recording** (`LiveModel.Recording.cs`): `StartRecording(trigger)` / `StartRecording(project, meeting, trigger)` (the calendar slice passes the event as `MeetingDetails`), `StopRecording(trigger, automatically, saved)` (`saved` gets the
+  note's id, null when nothing was heard), `ToggleRecording(trigger)`; `Recorder` (`CallRecorder`: `StartedAt`, `Stopping`, `IsRecording`; observable) collects the live call's `Utterance`s. Recording opens the audio and the live call as Cue does, Cue running or not
+  (a call made with `questions` false). Stop waits 2.5 s for the last phrase, then `RecordingStore.Save`. `RecordingTrigger` is what the log names: `Win+Alt+C`, `overlay`, `dashboard`, `notification area`, `Upcoming`, `Record in the notification`,
+  `call noticed`, `call ended`, `rehearsal`. A recording nobody spoke in is `⚠︎ Nothing was recorded: …` and no note. `CUE_REHEARSE_RECORD=1` records the rehearsal from `Rehearse` and stops it a second after the audio ends.
+- **Audio** (`AudioRecorder`): a worker thread fed from `LiveModel.Samples`; each side is placed by its capture time (a gap is silence), so the files are as long as the recording: `Application Support\Cue\recordings\STAMP\{mic,call}.wav` (16-bit 16 kHz mono) and
+  `mixed.wav`, which `Finish` encodes to `mixed.m4a` (AAC) with `Windows.Media.Transcoding.MediaTranscoder`, Windows' own encoder, no package. With Keep audio (Settings › General › Notes) the m4a is moved next to the note; the working folder goes once the notes are ready
+  (`🧹 Working audio removed`), and ones older than a week at launch.
+- **The store** (`RecordingStore`, `state.Recordings`): the notes are Markdown files in each project's `Notes` folder (`2026-10-24 14.05 – TITLE.md`, local time, what Windows forbids in a name replaced by `-`), `RecordingFile.Id` is `PROJECT/STAMP` (stable when the title
+  changes). `Save` writes the live transcript note and its audio at once, then `Process` makes a call just for the notes when no live call heard it (`notesOnly`), uploads (`RecordingUploader`: parts of `CUE_UPLOAD_PART_BYTES`, 5 MiB at least except the last, three retries
+  with a wait, resume from the parts the server has, `CUE_UPLOAD_BREAK=n` loses the connection once), `POST /v1/calls/:id/notes`, and follows `GET /v1/notes/:id/events` (`CueApi.FollowNoteEvents`: SSE, picked up again where it dropped) writing every `line` to the session
+  log; when the note is ready the server's note is written over the file (`NoteMarkdown.Render`, front matter `note: ID`). `Rename`, `ApplySuggestion`, `DismissSuggestion` are `PATCH`es and then the same file edit; `MoveToTrash` is `DELETE` and the Recycle Bin
+  (`Shell.MoveToRecycleBin`, the audio too). `SyncWithAccount` (after the projects, in `CueApi.OnSignedIn`) imports files without a `note:` (`📦 Imported N notes from this PC`: **"this PC"**, as the projects) and restores the account's others
+  (`☁️ Restored N notes from your account`). `Ready` is raised with a note's id when its notes are ready (the calendar slice's "Record?" flow waits on it).
+- **The pages**: `ProjectPage`'s Notes tab is `NotesView` (the list with search and Record on the left; on the right the note's tools — Copy Markdown, Show in Explorer, Move to Recycle Bin — a `PlayerBar` when it has audio, the steps a new note goes through (kept only if one
+  failed), the suggested names with Apply and ✕, and the note rendered by `MarkdownView`, where a speaker's name opens the rename dialog and a timestamp plays from there). The open note is `Dashboard.NoteId` (`OpenNote(id)`: after Stop, from Home's Recent Notes);
+  `NotePlayer` is Windows' media player, headless; a note whose audio isn't in the library is fetched from the account with the token into `Application Support\Cue\cache\audio` and played from there (the Mac streams it; this is one download of about 15 MB an hour,
+  removed at sign-out). `RecordControl` is the record button: a red dot and "Record"; while recording the time in a drop-down with Stop Recording; "Saving…" after Stop. It is in the overlay's bar (`RecordSlot`) and on the Notes page.
+- **`CUE_CONTROL`** (`RecordingCommands`): `record` (the overlay's button: toggles), `timestamp HH:MM:SS` (plays the open note from there), and for the open note `rename NAME | NEW`, `apply LABEL`, `dismiss LABEL`; `page NAME/notes` opens the tab.
+  UI Automation shows a XAML `ScrollViewer`'s content only as far as it is on screen: a case that reads far down a long note makes the window taller first (`size W H`).
+- **Cases** `w4-…`: `record` (a two-sided rehearsal into ready notes: every log line in order, the file, its audio, both sides at the second pass, the account's note, the page, a timestamp playing where there is a sound device), `upload-resumes` (`CUE_UPLOAD_BREAK`),
+  `step-fails` (the second pass failing: the live transcript kept, the steps on the page), `speakers` (restore a note made by the API; ✕, Apply and the rename dialog through UI Automation), `trash` (Recycle Bin, account and storage), `audio-off` (Keep audio and the summary off: no audio, no summary, nothing left on the PC or in the account; the switches in Settings), `import-restore`
+  (a local note up, an account note down, a second launch changes nothing), `record-controls` (Win+Alt+C, the overlay's button and timer menu; real keys, so `needInteractiveDesktop()`). They build the account's notes without the app with `recordCall` / `makeNotes` (the `9c-…` helpers)
+  and `cue.standIns({ FAKE_DEEPGRAM_FILE, FAKE_CLAUDE_SUMMARY })`; `hasAudioOutput()` is `needAudioOutput()` as a question.
+
+## Meetings, the calendar and notifications on Windows (`apps/windows/Cue`: `Core/{Meetings,MeetingCalendar,MeetingMonitor,MeetingNotifier,MeetingCommands,Preferences.Meetings}.cs`, `Views/{UpcomingPage,CalendarView}`)
+
+The port of `MeetingMonitor`, `MeetingNotifier`, `MeetingCalendar`, `UpcomingView` and `CalendarSettings`, on the recordings above. The behaviour, the session-log lines (`🔔 Record “Title”?`,
+`🔔 Not now: “Title”`, `📅 Recording “Title” into PROJECT`, `📅 APP let go of the microphone — stopping the recording`, `🔔 Notes from “Title” are ready`, `🔔 Nothing was recorded in “Title”`) and the
+`CUE_CONTROL` commands (`assign EVENT | PROJECT`, `notification record|dismiss`, `settings calendar`, `page upcoming`) are the Mac's. `state.Calendar` (`MeetingCalendar`) and `state.Meetings` (`MeetingMonitor`) are the
+two places the rest of the app finds them; the monitor starts with the app, and `Shutdown` (quit) withdraws the notifications' registration.
+
+- **Which apps use the microphone** (`CallApp.UsingMicrophone`): Windows' own record of it, `HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone`. An app that opened a microphone has a key (a Store app by its package
+  family name; a program one installs under `NonPackaged`, its path with `#` for `\`); it is on the microphone while `LastUsedTimeStop` is 0. The registry is read every `CUE_MEETING_TICK` seconds (5). The call apps are Zoom, Teams, Webex and Slack (on their own too: a "Zoom call"),
+  and the browsers, which count only during a calendar call (`CallApp.All`: program file names and package prefixes). `CUE_MIC_APPS=file` stands in for the registry in a case (one program file name, path or package family name per line, read on every check); a case that
+  wants the registry itself sets it to the empty string and writes keys (`w6-mic-registry`). A call app letting go of the microphone for `CUE_MIC_RELEASE` seconds (60) is the call's end: the recording Cue started stops (`RecordingTrigger.CallEnded`, `automatically: true`) and the next call in that app is offered again.
+- **The calendar's source** (`MeetingCalendar`): **Windows' appointment store**, `Windows.ApplicationModel.Appointments.AppointmentManager` with `AllCalendarsReadOnly`. A desktop program with no package identity may read it, with no sign-in of Cue's own and no Microsoft Graph:
+  it holds the calendars of the accounts added in Settings › Accounts (Outlook, Exchange, Google, iCloud: whichever the PC has) and of the apps that write to it. Today and tomorrow are read (the monitor's tick asks, the store answers at most every 15 s, and Upcoming and Settings › Calendar ask for a fresh look when they open), recurring appointments expanded by the store into one
+  per day, and an appointment is a call when its online-meeting link, URL, location or details hold a Meet, Zoom, Teams or Webex link (`CallServices.LinkIn`). **The store asks for the properties it hands back** (`FindAppointmentsOptions.FetchProperties`: without `Details` a link in the notes is lost). Whether it holds a given person's meetings depends on
+  what they added to Windows: that is the one thing this cannot promise (the new Outlook and Teams keep theirs to themselves), and the Mac's EventKit does not have the problem. Access refused or no calendar service (`CalendarAccess`) is said on Upcoming and in Settings › Calendar.
+  `CUE_CALENDAR_EVENTS=file.json` replaces it in a case, in the Mac's format (`title`, `start`, `end`, `id`, `series`, `calendar` by name, `url`, `location`, `notes`, `attendees`, `recurring`), read again on every refresh; `tools/appointments.ps1 add FILE|remove` puts appointments into the real store (an app calendar "Cue e2e"; it prints
+  `unavailable: …` where the PC has no calendar service, and the case skips) for `w6-appointment-store`.
+- **Projects and settings**: the project an event's notes go to is picked per series on Upcoming (a `ComboBox` per row, "Project of TITLE") and kept in `settings.json` (`meetingProjects`, by series), else **Meetings**, created at the first recording (`MeetingMonitor.ProjectFor`); a renamed project keeps its picks.
+  Settings › Calendar (`CalendarView`, a tab of `SettingsPage`): *When a meeting starts* (Ask / Record automatically / Do nothing: `meetingAction`) and the calendars with a switch each (`unwatchedCalendars`: off, and Cue never looks in it). Home's *Upcoming Calls* lists the next three, Upcoming the rest of today and tomorrow with *Record* on the one in progress.
+- **Notifications** (`MeetingNotifier`): the Windows App SDK's `AppNotificationManager`, registered at run time (`Register()` in the constructor, `NotificationInvoked` subscribed first), which works for a program that is not packaged: nothing in the MSI. A prompt is a toast "Record “TITLE”?" with *Record* and *Not Now*; a note's ready is "Notes Ready"
+  (clicking it opens the note); each carries a hashed tag, so a prompt is withdrawn (`RemoveByTagAsync`) when its call is over. **Every notification is written to the session log first, and under `CUE_CONTROL` they go only there** (the harness always sets it): `notification record|dismiss` answers the latest prompt. `CUE_SYSTEM_NOTIFICATIONS=1` (a hook only here) makes the real toasts appear under `CUE_CONTROL` too, for `w6-toast-record`: UI Automation cannot see the shell's toast window, so `tools/toast.ps1` (`clickToast(button)`) captures the corner of the screen where the banner is, reads its words with Windows' OCR and clicks the lowest one that is the button's name with a real mouse click; the case skips when no banner with that button ever appears (a runner whose session shows no toasts, Focus assist). A toast's banner lasts about five seconds and then waits in the notification center, which is how Windows does it.
+- **Cases** `w6-…`: `upcoming` (the calls, their projects, Settings › Calendar and a calendar's switch), `meeting-prompt` (calendar plus a browser: one prompt, Not Now is remembered, calls without a link or over don't count), `meeting-record` (Record: the meeting is recorded into its project with the event's title and attendees, stops when the app lets go, notes written and "ready"),
+  `meeting-auto` (Record automatically: no prompt, Meetings created, the live language), `meeting-nothing` (Do nothing), `meeting-project` (the pick is remembered for the series after a relaunch), `native-call` (a Zoom call that is in no calendar; nothing said, no note; asked again), `mic-registry` (the real consent store, with keys a case writes and deletes),
+  `appointment-store` (the real appointment store, through `appointments.ps1`). `toast-record` (Record on the real toast, clicked: the recording starts in the meeting's project and its notes are written). They read the window with `windowText`; **a `ComboBox` shows in it as its name and then its selected item** (`tools/uia.ps1` reads the selection pattern: a WinUI combo box has no value).
+
 ## Cloud sandboxes (Boat)
 
 Use a Boat sandbox for builds, tests, untrusted code, Docker, and long jobs.
@@ -229,7 +410,8 @@ Boat supplies Linux VMs. Run portable checks such as `vp check` there. Building 
 frameworks: use the existing macOS CI runner or an explicitly authorized remote
 Mac, never this computer. The macOS test and snapshot recipes below apply on that
 runner; a Linux check is not evidence that the app builds or passes its native
-cases. Report unavailable native checks as not-run or skipped with their reason.
+cases. Report unavailable native checks as not-run or skipped with their reason. Cue for Windows is built and tested on Windows, never on this computer: in
+the Windows 11 VM (vmpal, see its section), or on CI's Windows runners.
 An SSH connection does not keep a sandbox alive: check `boat info "$id"` and
 extend its lifetime before long work.
 
@@ -343,6 +525,9 @@ node tests/e2e/run.ts --no-build 4 5   # the existing build; cases whose name st
 node tests/e2e/run.ts --no-app 95-     # no app at all: only cases about the backend (they run on Linux, in a Boat sandbox)
 node tests/e2e/run.ts --real-deepgram 83 84   # the backend's Deepgram is the real one, its key from the keychain
 node tests/e2e/run.ts --keep           # keep every sandbox (a failed case always keeps its own)
+node tests\e2e\run.ts                  # on Windows: build apps/windows (build.ps1), then the w… cases and the backend's own (no app launched)
+node tests\e2e\run.ts --no-build w0-  # on Windows: the app already built (apps\windows\build\ARCH\Cue.exe)
+node tests\e2e\run.ts --no-build w --except=w1- --shard=2/5  # on Windows: what one of CI's app jobs runs (every w case but the installer's, one part of five)
 pnpm install && vp check               # format, lint, type-check; run it before you commit
 ```
 
@@ -367,7 +552,7 @@ is cut to it, smaller than it was (GitHub's runner has a small screen).
 Each case is a TypeScript file, `tests/e2e/cases/NN-name.test.ts`, numbered
 by feature area (`0x` CLI and launch, `1x` prompter and recording, `2x`
 projects and dashboard, `3x` call audio, `4x` the notes' second pass (upload, steps, retries), `5x`
-speakers, `6x` calendar, `7x` the backend's Anthropic calls, `8x` Deepgram through the backend, `9x` signing in, the backend and the admin: the admin's are `9a-…`, the live calls' `9b-…`, the notes' `9c-…`, the limits, usage and rate limits' `9d-…`). It declares one test, whose title says the
+speakers, `6x` calendar, `7x` the backend's Anthropic calls, `8x` Deepgram through the backend, `9x` signing in, the backend and the admin: the admin's are `9a-…`, the live calls' `9b-…`, the notes' `9c-…`, the limits, usage and rate limits' `9d-…`, the Windows app's OAuth client `9e-…`; `wN-…` are Windows-only: `w0-…` the Windows app, `w1-…` its installer). It declares one test, whose title says the
 behaviour it checks:
 
 ```ts
@@ -511,7 +696,7 @@ updating the cases.
 
 - Never run the app for testing without `CUE_HOME`: it would read and change
   the user's real settings, library and notes (and run migrations on them).
-- Build with `apps/mac/scripts/build.sh` before running cases; the build must be
+- Build with `apps/mac/scripts/build.sh` (`apps/windows/scripts/build.ps1` for Windows) before running cases; the build must be
   warning-free for new code.
 - Match the surrounding code: comment density, naming, SwiftUI and HIG idioms
   (standard controls, semantic colours, system Liquid Glass).
@@ -529,15 +714,27 @@ updating the cases.
   snapshot cases skip there, with the probe's reason, if the probe finds those unreadable: CI covers the build, the
   command-line modes, the dashboard and the speech cases. **Run the
   whole suite on an authorized remote Mac before merging** and put its summary
-  in the PR. Keep CI green; never fake what's missing.
+  in the PR. Keep CI green; never fake what's missing. The `windows` jobs are parallel and each about eight minutes or less
+  (they must never be the slowest check): a small `windows-plan` job makes their matrix from two numbers at its top, `WINDOWS_APP_SHARDS` (5) and `WINDOWS_BACKEND_SHARDS` (3). Per
+  architecture, `ARCH-app-1`…`-N` build the app and run **every `w` case but the installer's** (`run.ts w --except=w1- --shard=K/N`: a slice's new `w2-`, `w3-`, … cases join by their
+  name, with no edit to the workflow), balanced by `durations.json`; `ARCH-installer` builds the app and the MSI and runs `w1-`. On x64 (`windows-latest`) `x64-backend-1`…`-M` also
+  run the backend's own cases without building anything (`run.ts --no-app --shard=K/M`; setup.ps1 `-Backend` skips the .NET SDK and OCR). Each app job pays about three minutes for
+  the toolchain and the build, so raise `WINDOWS_APP_SHARDS` (it applies to both architectures) when one nears ten minutes; the arm64 jobs are the slow ones, about two and a half
+  times the x64 case time. **arm64 CI covers the Arm build, the app's cases and the installer, not the backend's cases**: Node.js, workerd and Vite+ run emulated there, and the
+  backend does not differ by processor; the whole suite on Arm is the Windows 11 VM's run in each PR. `build-and-test` requires every one of them; each keeps its logs on failure,
+  the installer jobs keep the MSI as an artifact. A new push cancels the run it replaces (`concurrency`). No NuGet cache: restoring one from the cache took longer than restoring
+  from nuget.org (50 s against 35 on arm64). Add a case's seconds to `durations.json` from a CI run (a case not in it counts as 30).
 - `.github/workflows/deploy.yml` runs on pushes to `main` that touch `apps/api`, `apps/admin`, `packages/contract` or their build (and on demand), never on a fork: `vp check`, the remote
   migrations, `cf deploy`, the migrations again, a check that the Worker answers. It needs the secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` and the variable `ADMIN_EMAILS`. Do not
   run it, or `cf deploy` without `--dry-run`, from here.
 - `.github/workflows/release.yml` runs on every push to `main`: it builds
-  `Cue.app`, zips it and publishes a GitHub release `v<version>.<patch>`
+  `Cue.app` (macOS runner) and the two Windows installers (`Cue-VERSION-x64.msi`, `Cue-VERSION-arm64.msi`, both from one `windows-latest` runner: the arm64 one is cross-built),
+  and publishes a GitHub release `v<version>.<patch>` with all three
   (`<version>` is `CFBundleShortVersionString` in `apps/mac/Resources/Info.plist`,
-  bump it for a new minor or major) with `scripts/changelog.sh` as its notes:
+  bump it for a new minor or major; one version for both platforms) with `scripts/changelog.sh` as its notes:
   every change on `main` since the previous release, one line each, with a
-  merged pull request's own commits listed under it. Write commit subjects and
+  merged pull request's own commits listed under it, then how to install on each platform (the MSI is unsigned: the notes say what SmartScreen shows).
+  Write commit subjects and
   pull request titles that read well in that list.
-  `scripts/changelog.sh v2.0.0` prints the notes of an earlier release.
+  `scripts/changelog.sh v2.0.0` prints the notes of an earlier release. Run by hand (Actions › Release › Run workflow) it is a dry run: it builds the
+  Windows installers, keeps them as the `Cue-windows` artifact and publishes nothing.
