@@ -1,6 +1,8 @@
 # Checks the TypeScript, builds the apps and runs the end-to-end suite on every pull request (and only there). The Mac suite is split across
-# four macOS runners (`run.ts --shard`); Cue for Windows is built and tested on a Windows runner for each processor (its own cases and the
-# backend's). `build-and-test`, the check main requires, passes when the check, every shard and the Windows jobs did.
+# four macOS runners (`run.ts --shard`). Cue for Windows is built and tested in parallel jobs, each well under ten minutes: on x64 the app's
+# cases, the installer's, and the backend's cases in three shards (they need no build); on arm64, where Node.js, workerd and Vite+ run emulated
+# and three times slower, the app is built for Arm and its own cases run (the app's, the installer's), not the backend's, which the x64 jobs
+# cover. `build-and-test`, the check main requires, passes when the check, every shard and every Windows job did.
 name: CI
 
 on:
@@ -107,18 +109,26 @@ jobs:
 
   windows:
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { runner: windows-latest, arch: x64 }
-          - { runner: windows-11-arm, arch: arm64 }
-    name: windows (${{ matrix.arch }})
+          # `kind`: app builds Cue.exe and runs the w0 cases; installer also builds the MSI and runs w1; backend builds nothing and runs the
+          # cases that never launch the app (`run.ts --no-app`), split by `--shard` from durations.json.
+          - { id: x64-app, runner: windows-latest, arch: x64, kind: app, cases: 'w0-' }
+          - { id: x64-installer, runner: windows-latest, arch: x64, kind: installer, cases: 'w1-' }
+          - { id: x64-backend-1, runner: windows-latest, arch: x64, kind: backend, cases: '--no-app --shard=1/3' }
+          - { id: x64-backend-2, runner: windows-latest, arch: x64, kind: backend, cases: '--no-app --shard=2/3' }
+          - { id: x64-backend-3, runner: windows-latest, arch: x64, kind: backend, cases: '--no-app --shard=3/3' }
+          - { id: arm64-app, runner: windows-11-arm, arch: arm64, kind: app, cases: 'w0-' }
+          - { id: arm64-installer, runner: windows-11-arm, arch: arm64, kind: installer, cases: 'w1-' }
+    name: windows (${{ matrix.id }})
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-dotnet@v4
+        if: matrix.kind != 'backend'
         with:
           dotnet-version: 10.0.x
 
@@ -129,6 +139,7 @@ jobs:
           architecture: x64
 
       - name: NuGet cache
+        if: matrix.kind != 'backend'
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
@@ -136,9 +147,14 @@ jobs:
           restore-keys: nuget-${{ runner.os }}-${{ matrix.arch }}-
 
       - name: Toolchain
-        run: powershell -ExecutionPolicy Bypass -File apps/windows/scripts/setup.ps1 -Install
+        run: powershell -ExecutionPolicy Bypass -File apps/windows/scripts/setup.ps1 -Install ${{ matrix.kind == 'backend' && '-Backend' || '' }}
+
+      - name: Build the app
+        if: matrix.kind == 'app'
+        run: powershell -ExecutionPolicy Bypass -File apps/windows/scripts/build.ps1 -Arch ${{ matrix.arch }}
 
       - name: Build the app and the installer
+        if: matrix.kind == 'installer'
         run: powershell -ExecutionPolicy Bypass -File apps/windows/scripts/build.ps1 -Arch ${{ matrix.arch }} -Msi
 
       - name: Worker types
@@ -148,13 +164,13 @@ jobs:
       - name: End-to-end tests
         env:
           E2E_WORK: ${{ runner.temp }}\e2e
-        run: node tests/e2e/run.ts --no-build
+        run: node tests/e2e/run.ts --no-build ${{ matrix.cases }}
 
       - name: Keep the e2e logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs-windows-${{ matrix.arch }}
+          name: e2e-logs-windows-${{ matrix.id }}
           # Logs, session logs and snapshots only, not the sandboxes.
           path: |
             ${{ runner.temp }}\e2e\*.log
@@ -168,6 +184,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Keep the installer
+        if: matrix.kind == 'installer'
         uses: actions/upload-artifact@v4
         with:
           name: Cue-windows-${{ matrix.arch }}
