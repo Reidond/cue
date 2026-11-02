@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // Runs Cue's end-to-end cases against the built app.
 //
-//   node tests/e2e/run.ts [--no-build] [--no-app] [--real-deepgram] [--keep] [PREFIX…]
+//   node tests/e2e/run.ts [--no-build] [--no-app] [--real-deepgram] [--keep] [--shard=K/N] [PREFIX…]
 //
 //   --no-build        use the existing apps/mac/build/Cue.app
 //   --no-app          don't build or need Cue.app: only the cases about the backend run (no Swift tools; any case that launches Cue fails)
 //   --real-deepgram   the backend talks to the real Deepgram (its key from the keychain) instead of the stand-in
 //   --keep            keep every case's sandbox (failed cases are always kept)
+//   --shard=K/N       run the K-th of N parts of the cases, split so that N machines finish together (CI)
 //   PREFIX…           run only cases whose file name starts with one of these
 //
 // Exit status: 0 when nothing failed (skips are fine), 1 otherwise.
@@ -23,7 +24,7 @@ const ROOT = resolve(E2E, '..', '..');
 function usage(): string {
     return readFileSync(import.meta.filename, 'utf8')
         .split('\n')
-        .slice(1, 14)
+        .slice(1, 15)
         .map((line) => line.replace(/^\/\/ ?/, ''))
         .join('\n');
 }
@@ -44,14 +45,22 @@ function modified(path: string): number {
 let build = true,
     withApp = true,
     deepgram = 'fake',
-    keep = false;
+    keep = false,
+    shard = { part: 1, of: 1 };
 const prefixes: string[] = [];
 for (const arg of process.argv.slice(2)) {
     if (arg === '--no-build') build = false;
     else if (arg === '--no-app') withApp = false;
     else if (arg === '--real-deepgram') deepgram = 'real';
     else if (arg === '--keep') keep = true;
-    else if (arg === '-h' || arg === '--help') {
+    else if (arg.startsWith('--shard=')) {
+        const [, part = 0, of = 0] = /^--shard=(\d+)\/(\d+)$/.exec(arg)?.map(Number) ?? [];
+        if (!(part >= 1 && part <= of)) {
+            console.log(`No such shard: ${arg}`);
+            process.exit(1);
+        }
+        shard = { part, of };
+    } else if (arg === '-h' || arg === '--help') {
         console.log(usage());
         process.exit(0);
     } else prefixes.push(arg);
@@ -92,13 +101,35 @@ for (const source of readdirSync(join(E2E, 'tools'))
     }
 }
 
-const cases = readdirSync(join(E2E, 'cases'))
+const matching = readdirSync(join(E2E, 'cases'))
     .filter((name) => name.endsWith('.test.ts'))
     .filter((name) => prefixes.length === 0 || prefixes.some((prefix) => name.startsWith(prefix)))
     .sort();
-if (cases.length === 0) {
+
+/**
+ * The cases of this shard: each case, longest first, goes to the part that has the least to do so far, by how long it took on CI
+ * (durations.json, seconds; a case not in it counts as 30). Every shard works this out alike, so the parts never overlap.
+ */
+function shardOf(names: string[]): string[] {
+    if (shard.of === 1) return names;
+    const durations = JSON.parse(readFileSync(join(E2E, 'durations.json'), 'utf8')) as Record<string, number>;
+    const seconds = (name: string): number => durations[basename(name, '.test.ts')] ?? 30;
+    const parts = Array.from({ length: shard.of }, () => ({ seconds: 0, names: [] as string[] }));
+    for (const name of [...names].sort((a, b) => seconds(b) - seconds(a) || a.localeCompare(b))) {
+        const part = parts.reduce((least, part) => (part.seconds < least.seconds ? part : least));
+        part.seconds += seconds(name);
+        part.names.push(name);
+    }
+    return (parts[shard.part - 1]?.names ?? []).sort();
+}
+if (matching.length === 0) {
     console.log(`No cases match: ${prefixes.join(' ')}`);
     process.exit(1);
+}
+const cases = shardOf(matching);
+if (cases.length === 0) {
+    console.log(`No cases in shard ${shard.part}/${shard.of}`);
+    process.exit(0);
 }
 
 // What every case reads (see harness/config.ts).
@@ -185,7 +216,9 @@ function finish(file: string, seconds: number, outcome: Outcome): void {
     }
 }
 
-console.log(`Running ${cases.length} case(s), Deepgram: ${deepgram}`);
+console.log(
+    `Running ${cases.length} case(s)${shard.of > 1 ? ` (shard ${shard.part}/${shard.of} of ${matching.length})` : ''}, Deepgram: ${deepgram}`,
+);
 const done = new Set<string>();
 for await (const event of run({ files, concurrency: 1, signal: stop.signal })) {
     if (

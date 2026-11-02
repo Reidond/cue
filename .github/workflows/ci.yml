@@ -1,4 +1,5 @@
-# Checks the TypeScript, builds the app and runs the end-to-end suite on every pull request (and only there).
+# Checks the TypeScript, builds the app and runs the end-to-end suite on every pull request (and only there). The suite is split across
+# four macOS runners (`run.ts --shard`); `build-and-test`, the check main requires, passes when the check and every shard did.
 name: CI
 
 on:
@@ -9,9 +10,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: voidzero-dev/setup-vp@v1.22.0
+        with:
+          node-version: latest
+          cache: true
+
+      - name: Worker toolchain (cf must build with Vite+)
+        run: node apps/api/scripts/check-vite.ts
+
+      - name: Worker types
+        working-directory: apps/api
+        run: ./node_modules/.bin/cf workers types
+
+      - name: Check (format, lint, types)
+        run: vp check
+
+  e2e:
     runs-on: macos-26
-    timeout-minutes: 90
+    timeout-minutes: 45
+    strategy:
+      # Every shard runs to the end, so one run reports every failing case.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    name: e2e (${{ matrix.shard }}/4)
     steps:
       - uses: actions/checkout@v4
 
@@ -34,49 +62,26 @@ jobs:
           # New code must build warning-free (dependencies' warnings are theirs).
           if grep -E "Sources/Cue/.*: warning:" build.log; then echo "::error::Cue has build warnings"; exit 1; fi
 
-      - name: Install whisper.cpp
-        run: brew install whisper-cpp
-
-      - name: Speech model cache
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Application Support/Cue/models/ggml-large-v3-turbo.bin
-          key: whisper-ggml-large-v3-turbo-1
-
-      - name: Download the speech model
-        run: |
-          model="$HOME/Library/Application Support/Cue/models/ggml-large-v3-turbo.bin"
-          if [[ ! -s $model ]]; then
-            mkdir -p "$(dirname "$model")"
-            curl -fL --retry 3 -o "$model" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
-          fi
-
       - uses: voidzero-dev/setup-vp@v1.22.0
         with:
           node-version: latest
           cache: true
 
-      - name: Worker toolchain (cf must build with Vite+)
-        run: node apps/api/scripts/check-vite.ts
-
       - name: Worker types
         working-directory: apps/api
         run: ./node_modules/.bin/cf workers types
 
-      - name: Check (format, lint, types)
-        run: vp check
-
       - name: End-to-end tests
         env:
           E2E_WORK: ${{ runner.temp }}/e2e
-        run: node tests/e2e/run.ts --no-build
+        run: node tests/e2e/run.ts --no-build --shard=${{ matrix.shard }}/4
 
       - name: Keep the e2e logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs
-          # Logs, session logs and snapshots only: each sandbox links the 1.6 GB speech model.
+          name: e2e-logs-${{ matrix.shard }}
+          # Logs, session logs and snapshots only, not the sandboxes.
           path: |
             ${{ runner.temp }}/e2e/*.log
             ${{ runner.temp }}/e2e/*/cue.out
@@ -88,12 +93,22 @@ jobs:
           if-no-files-found: ignore
 
       - name: Keep the app
-        if: always()
+        if: always() && matrix.shard == 1
         run: if [[ -d apps/mac/build/Cue.app ]]; then ditto -c -k --keepParent apps/mac/build/Cue.app Cue.zip; fi
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && matrix.shard == 1
         with:
           name: Cue
           path: Cue.zip
           if-no-files-found: ignore
+
+  build-and-test:
+    needs: [check, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: The check and every shard passed
+        run: |
+          echo "check: ${{ needs.check.result }}, e2e: ${{ needs.e2e.result }}"
+          [[ "${{ needs.check.result }}" == success && "${{ needs.e2e.result }}" == success ]]
