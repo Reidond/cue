@@ -15,7 +15,11 @@ e2eCase(
         await cue.waitLog(/🧐 Question judge ready: Claude Haiku/, 90);
 
         // Another program plays the sound through the default speakers, as a call app would.
-        const played = await exec('powershell.exe', ['-NoProfile', '-Command', `(New-Object System.Media.SoundPlayer '${sound}').PlaySync()`]);
+        const played = await exec('powershell.exe', [
+            '-NoProfile',
+            '-Command',
+            `(New-Object System.Media.SoundPlayer '${sound}').PlaySync()`,
+        ]);
         if (played.code !== 0) fail('playing the sound failed', played.output);
         await cue.waitLog(/\*\*\[Participant\]\*\* The PC played this line\./, 60);
 
