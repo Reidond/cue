@@ -1,0 +1,51 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <!-- Per machine, into Program Files\Cue, with a Start menu shortcut. The UpgradeCode never changes: it is what lets a newer MSI replace an older one
+       (MajorUpgrade), and the one MSI per architecture share it, as only one of them is ever installed. Signing in needs nothing registered: the app
+       takes the browser's answer on a loopback address of its own. Settings, the library and the notes live in the person's own folders and stay when
+       Cue is uninstalled. -->
+  <Package
+    Name="Cue"
+    Manufacturer="Andrii Shafar"
+    Version="$(CueVersion)"
+    UpgradeCode="B8D0E6C2-9C41-4B7A-8E55-3F2A6D1C7A94"
+    Scope="perMachine"
+    Language="1033"
+    InstallerVersion="500">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Cue is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon.ico" SourceFile="$(IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Reidond/cue" />
+
+    <Feature Id="Main" Title="Cue" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="CueExe" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Cue" />
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <!-- Cue.exe has the shortcut; everything else the publish made (the .NET and Windows App SDK runtimes, the assets) is one folder's worth of files. -->
+    <Component Id="CueExe" Directory="INSTALLFOLDER" Bitness="always64">
+      <File Id="CueExeFile" Source="$(AppDir)\Cue.exe" KeyPath="yes">
+        <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Cue" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" Advertise="no" />
+      </File>
+    </Component>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(AppDir)\**">
+        <Exclude Files="$(AppDir)\Cue.exe" />
+        <Exclude Files="$(AppDir)\**\*.pdb" />
+      </Files>
+    </ComponentGroup>
+  </Fragment>
+
+</Wix>
