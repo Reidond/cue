@@ -76,6 +76,14 @@ jobs:
           E2E_WORK: ${{ runner.temp }}/e2e
         run: node tests/e2e/run.ts --no-build --shard=${{ matrix.shard }}/4
 
+      - name: Crash reports and the system log
+        if: failure()
+        run: |
+          # ReportCrash may write a report after the case gave up waiting for it; the system log says what it did.
+          mkdir -p "$RUNNER_TEMP/e2e/system"
+          cp ~/Library/Logs/DiagnosticReports/Cue* /Library/Logs/DiagnosticReports/Cue* "$RUNNER_TEMP/e2e/system/" 2>/dev/null || true
+          log show --last 60m --style compact --predicate '(process == "Cue" AND (messageType == error OR messageType == fault)) OR process == "ReportCrash" OR process == "osanalyticshelper"' > "$RUNNER_TEMP/e2e/system/log.txt" || true
+
       - name: Keep the e2e logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -91,6 +99,7 @@ jobs:
             ${{ runner.temp }}/e2e/*/*.png
             ${{ runner.temp }}/e2e/*/crash.ips
             ${{ runner.temp }}/e2e/*/home/Application Support/Cue/sessions/*.md
+            ${{ runner.temp }}/e2e/system/*
           if-no-files-found: ignore
 
       - name: Keep the app

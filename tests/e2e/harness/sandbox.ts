@@ -333,8 +333,9 @@ export class Cue {
 
     /**
      * The crash report macOS wrote for the Cue that just exited, kept in the case's folder as crash.ips: what killed it and where (the
-     * faulting thread's frames, and a Swift fatal error's message). ReportCrash writes it a few seconds after the crash; none comes for a
-     * plain exit. The report must name this process: another checkout's Cue, or an earlier case's, may have crashed meanwhile.
+     * faulting thread's frames, and a Swift fatal error's message). ReportCrash writes it seconds after the crash, on CI's runners up to
+     * half a minute; none comes for a plain exit. The report must name this process: another checkout's Cue, or an earlier case's, may
+     * have crashed meanwhile.
      */
     async #crashReport(): Promise<string[]> {
         const pid = this.#app?.pid;
@@ -356,7 +357,7 @@ export class Cue {
             return undefined;
         };
         let report = ours();
-        for (let waited = 0; report === undefined && waited < 20; waited++) {
+        for (let waited = 0; report === undefined && waited < 80; waited++) {
             await sleep(0.5);
             report = ours();
         }
