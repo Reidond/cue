@@ -145,17 +145,19 @@ enum SecretStore {
 /// The URL scheme the browser sheet hands the sign-in back to the app by (the OAuth redirect is `com.andriishafar.cue:/oauth/callback`).
 private let callbackScheme = "com.andriishafar.cue"
 
-/// Stops the headless sign-in at the redirect back to the app (a custom scheme URLSession can't follow) and keeps it.
+/// Stops the headless sign-in at the redirect back to the app (a custom scheme URLSession can't follow) and keeps it. It answers on the
+/// session's queue, at once: the async form of this method answers later, from a task of its own.
 private final class RedirectCatcher: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     var callback: URL?
 
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest) async -> URLRequest? {
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         if let url = request.url, url.scheme == callbackScheme {
             callback = url
-            return nil
+            completionHandler(nil)
+        } else {
+            completionHandler(request)
         }
-        return request
     }
 }
 
@@ -517,19 +519,14 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
     /// page, and stop at the redirect back to the app.
     private func authorizeHeadless(_ start: URL) async throws -> URL {
         let catcher = RedirectCatcher()
-        let session = URLSession(configuration: .ephemeral)
+        let session = URLSession(configuration: .ephemeral, delegate: catcher, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
         var request = URLRequest(url: start)
         for _ in 0..<8 {
             // What a browser says, so the authorization endpoint answers with a redirect instead of JSON.
             request.setValue("navigate", forHTTPHeaderField: "Sec-Fetch-Mode")
             request.setValue("text/html", forHTTPHeaderField: "Accept")
-            let result: (Data, URLResponse)
-            do {
-                result = try await session.data(for: request, delegate: catcher)
-            } catch {
-                throw CueAPIError.network(error.localizedDescription)
-            }
-            let (data, response) = result
+            let (data, response) = try await Self.load(request, in: session)
             if let callback = catcher.callback { return callback }
             guard let http = response as? HTTPURLResponse, let landed = http.url else { break }
             if landed.path == "/invite-only" || landed.path == "/sign-in-failed" { return landed }
@@ -550,6 +547,20 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
             request = URLRequest(url: next)
         }
         throw CueAPIError.server("The sign-in didn't end at the app.")
+    }
+
+    /// One step of the headless sign-in. Not `URLSession.data(for:)`, which traps (SIGTRAP) on a task that ends with neither a response nor
+    /// an error, as one whose redirect back to the app was refused now and then does; the redirect caught is the answer then.
+    nonisolated private static func load(_ request: URLRequest, in session: URLSession) async throws -> (Data, URLResponse?) {
+        try await withCheckedThrowingContinuation { continuation in
+            session.dataTask(with: request) { data, response, error in
+                if let error {
+                    continuation.resume(throwing: CueAPIError.network(error.localizedDescription))
+                } else {
+                    continuation.resume(returning: (data ?? Data(), response))
+                }
+            }.resume()
+        }
     }
 
     /// The code in the redirect back to the app; or the reason there is none.
