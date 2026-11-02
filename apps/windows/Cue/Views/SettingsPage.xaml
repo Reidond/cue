@@ -7,6 +7,7 @@
             <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" />
             <SelectorBar x:Name="Tabs" SelectionChanged="OnTabChanged">
                 <SelectorBarItem x:Name="GeneralTab" Text="General" />
+                <SelectorBarItem x:Name="CalendarTab" Text="Calendar" />
                 <SelectorBarItem x:Name="AccountTab" Text="Account" />
             </SelectorBar>
             <Border x:Name="TabHost" />

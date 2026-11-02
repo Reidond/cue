@@ -123,6 +123,17 @@ and your notes move from `~/Documents/Cue Recordings` into its `Notes/`.
 | ⌃⌥← / ⌃⌥→ | Previous / next answer |
 | ⌃⌥↑ / ⌃⌥↓ | Text size |
 
+On Windows, Ctrl+Alt is AltGr on many keyboard layouts, so Cue's shortcuts there are Win+Alt:
+
+| Shortcut | Action |
+|---|---|
+| Win+Alt+Enter | Answer now (what's being said, or the last line) |
+| Win+Alt+H | Show or hide Cue (starts it when it isn't running) |
+| Win+Alt+A | Toggle automatic answers |
+| Win+Alt+C | Start or stop recording the call (Win+Alt+R is the Game Bar's) |
+| Win+Alt+PgUp / Win+Alt+PgDn | Previous / next answer |
+| Win+Alt++ / Win+Alt+- | Text size |
+
 Click any transcript line to get an answer for it, or type a question into the
 field at the bottom. Drag the top bar to move Cue.
 
@@ -281,10 +292,19 @@ can also record a call in progress from its row in Upcoming.
 
 ## Cue for Windows
 
-A native Windows port (WinUI 3, `apps/windows`) is on its way, one piece at a time. So far it is the foundation: the dashboard window
-(Home, Upcoming, Settings; Mica, light and dark), signing in to the same invite-only Cue account in your browser (Google or GitHub), Settings ›
-Account with the month's usage and Sign Out, the session log and the test hooks, the installer and its CI. Projects, the live call and its
-overlay, recordings and notes, and meetings from your calendar follow.
+A native Windows port (WinUI 3, `apps/windows`) is on its way, one piece at a time. So far it has the dashboard window (Home, Upcoming,
+Settings; Mica, light and dark), signing in to the same invite-only Cue account in your browser (Google or GitHub), Settings › Account with the
+month's usage and Sign Out, your projects and their materials (the same ones the Mac shows: the account holds them, and the projects in
+`Documents\Cue` go up to it at the first sign-in), the session log and the test hooks, the installer and its CI; and the live call: Start Cue on a
+project's page (Ctrl+Enter anywhere in the dashboard), the microphone and the call's audio (everything the PC plays but Cue's own sound) streamed
+to the backend, the overlay with the questions and answers (above other windows, never taking the focus, hidden from screen sharing, designed as
+a Windows 11 app), the Win+Alt shortcuts and the icon in the notification area; and recordings and notes: the Record button in the overlay and on a
+project's Notes page (or Win+Alt+C) records a call, its live transcript is saved at once in the project's `Notes` folder as Markdown, the audio goes up to
+the account, which reads it again, tells the voices apart and writes a summary, and the notes page shows the note with a player, name suggestions and
+speakers you can rename; and meetings: the calls with a Meet, Zoom, Teams or Webex link in the calendars Windows keeps (the accounts added in
+Settings › Accounts, and the apps that write to them) are listed on Upcoming and on Home, each with the project its notes go to. When a call starts and
+Zoom, Teams, Webex, Slack or a browser is using the microphone, Cue shows a Windows notification with Record and Not Now (or records on its own, or does
+nothing: Settings › Calendar), and stops recording a minute after the app lets go of the microphone.
 
 - **Install**: download `Cue-VERSION-x64.msi` (or `-arm64.msi` for Windows on Arm) from the Releases page and open it. It installs Cue for
   everyone on the PC, adds it to the Start menu, replaces an older Cue, and needs no .NET or Windows App SDK installed. The installer is not
@@ -371,7 +391,7 @@ CUE_HOME=$(mktemp -d) CUE_NO_LIVE_AUDIO=1 CUE_APPEARANCE=dark CUE_SNAPSHOT=/tmp/
 `CUE_WEB_AUTH=headless` signs in without the browser sheet (the redirects followed by hand), `CUE_ME_TICK` sets how often (seconds)
 Cue reads its account again, `CUE_UPLOAD_PART_BYTES` sets the size of the parts a recording is uploaded in (8 MiB; the backend wants 5 MiB or
 more except for the last), `CUE_UPLOAD_BREAK=n` cuts the upload's connection once after `n` parts (to see it resume),
-`CUE_PROJECT=name` picks the project at launch, and
+`CUE_REHEARSE_RECORD=1` records a rehearsal (`CUE_REHEARSE_PARTICIPANT` / `CUE_REHEARSE_ME`) into notes, `CUE_PROJECT=name` picks the project at launch, and
 `CUE_CONTROL=file` runs each line appended to the file as a click would
 (`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
 `ask TEXT`, `timestamp 00:00:12`, `assign EVENT | PROJECT`,
@@ -379,9 +399,11 @@ more except for the last), `CUE_UPLOAD_BREAK=n` cuts the upload's connection onc
 `show TEXT`, `newest`, `prepare`, `record`, `settings account`, `signin`, `signout`,
 `size 820 700`; see `AGENTS.md`) and keeps notifications in the
 session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` reads the
-calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs using the
+calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs (on Windows the
+programs' file names or package family names) using the
 microphone from a text file, both again on every check; `CUE_MEETING_TICK` and
 `CUE_MIC_RELEASE` shorten the 5 s check and the 60 s wait after a call app lets
-go of the microphone. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay
-(snapshots always can).
+go of the microphone. On Windows `CUE_SYSTEM_NOTIFICATIONS=1` shows the real notifications even under `CUE_CONTROL`. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay
+(snapshots always can). On Windows `CUE_SURFACES=1` gives a test run the overlay on top of other windows, the
+tray icon and the shortcuts that `CUE_BACKGROUND` otherwise leaves out (`AGENTS.md › Live call on Windows`).
 `cd apps/mac && swift scripts/make_icon.swift` regenerates the app icon.
