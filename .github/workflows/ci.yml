@@ -115,7 +115,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      WINDOWS_APP_SHARDS: 4
+      WINDOWS_APP_SHARDS: 5
       WINDOWS_BACKEND_SHARDS: 3
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
