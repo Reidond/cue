@@ -6,11 +6,11 @@ e2eCase(
     async (cue) => {
         await accountProject(cue, 'Bees', { materials: [fixture('materials', 'talk.md')] });
         // The call asks the first question; you read its answer aloud (your microphone), the call asks another in a breath you take, and you read on.
-        const call = await bursts(cue.path('call.wav'), 40, [
-            [1, 3.5],
-            [11, 13.5],
+        const call = await bursts(cue.path('call.wav'), 16, [
+            [1, 3],
+            [10, 12],
         ]);
-        const me = await bursts(cue.path('me.wav'), 40, [[8, 22]]);
+        const me = await bursts(cue.path('me.wav'), 16, [[7, 14]]);
         await cue.launch({
             CUE_PROJECT: 'Bees',
             CUE_REHEARSE_PARTICIPANT: call,

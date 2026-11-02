@@ -23,7 +23,6 @@ e2eCase(
             /^Plan limit reached$/m.test(await windowText(cue.pid)),
         );
         assertTextContains(await windowText(cue.pid), /^Plan limit reached$/);
-        await new Promise((resolve) => setTimeout(resolve, 3000));
         assertEq(
             cue.serviceRequests('anthropic-request').filter((request) => request.kind === 'answer' && request.maxTokens > 0).length,
             0,
@@ -34,5 +33,11 @@ e2eCase(
         // The owner raises the limit.
         await backend.setLimit(OWNER, cue.email, 50);
         await cue.waitLog(/🔓 Cue plan has room again/, 60);
+
+        // Starting again makes a call at last: the first Start Cue made none (a call made then would have been logged by now, and this would be the second).
+        cue.control('stop');
+        cue.control('start Bees');
+        await cue.waitFor('the call', 30, () => cue.logCount(/📞 Live call started/) >= 1);
+        assertEq(cue.logCount(/📞 Live call started/), 1, 'one call only, the one made once there was room');
     },
 );

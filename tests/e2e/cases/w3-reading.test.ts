@@ -2,10 +2,10 @@ import { accountProject, assertTextContains, assertTextNotContains, bursts, e2eC
 
 e2eCase('Cue for Windows: an older answer opened to read stays open as new questions arrive under a New Question button.', async (cue) => {
     await accountProject(cue, 'Bees', { materials: [fixture('materials', 'talk.md')] });
-    const call = await bursts(cue.path('call.wav'), 42, [
-        [1, 3.5],
-        [14, 16.5],
-        [30, 32.5],
+    const call = await bursts(cue.path('call.wav'), 18, [
+        [1, 3],
+        [7, 9],
+        [14, 16],
     ]);
     await cue.launch({
         CUE_PROJECT: 'Bees',

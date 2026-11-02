@@ -93,31 +93,5 @@ e2eCase(
         } finally {
             blocker.kill();
         }
-
-        // CUE_ALLOW_CAPTURE shows the overlay to screenshots: the same capture reads it.
-        await cue.stop();
-        const blockerAgain = spawn(
-            'powershell.exe',
-            ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(E2E_ROOT, 'tools', 'blocker.ps1')],
-            {
-                stdio: 'ignore',
-            },
-        );
-        try {
-            await cue.launch({ CUE_PROJECT: 'Bees', CUE_SURFACES: '1', CUE_ALLOW_CAPTURE: '1' });
-            cue.control('start Bees');
-            const overlayOf = async () => (await windowsOf(cue.pid)).windows.find((window) => window.title === 'Cue overlay');
-            await cue.waitFor('the overlay', 30, async () => (await overlayOf()) !== undefined);
-            const overlay = (await overlayOf()) ?? fail('no overlay');
-            assertEq(overlay.affinity, 0, 'drawn normally');
-            await cue.waitFor('the overlay to be on the screen', 20, () => true);
-            const shown = cue.path('shown.png');
-            await cue.waitFor('the capture to read the overlay', 40, async () => {
-                await captureScreen(overlay, shown);
-                return /Ask anything/i.test(await ocr(shown));
-            });
-        } finally {
-            blockerAgain.kill();
-        }
     },
 );

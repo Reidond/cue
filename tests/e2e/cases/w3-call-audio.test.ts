@@ -7,7 +7,7 @@ e2eCase(
         await needAudioOutput();
         await accountProject(cue, 'Bees');
         await cue.defaults('autoAnswer', false);
-        const sound = await bursts(cue.path('sound.wav'), 6, [[0.5, 3]]);
+        const sound = await bursts(cue.path('sound.wav'), 3, [[0.3, 2.5]]);
         // The real capture: no CUE_NO_LIVE_AUDIO, no rehearsal file. The harness has no microphone to give it; the call's audio is whatever the PC plays.
         await cue.launch({ CUE_PROJECT: 'Bees', CUE_NO_LIVE_AUDIO: '0', FAKE_DEEPGRAM_LIVE: JSON.stringify(['The PC played this line.']) });
         cue.control('start Bees');

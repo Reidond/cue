@@ -7,7 +7,7 @@ e2eCase(
         if (DEEPGRAM !== 'fake') skip('needs the stand-in to drop a stream on purpose');
         await accountProject(cue, 'Bees');
         await cue.defaults('autoAnswer', false);
-        const call = await bursts(cue.path('call.wav'), 10, [[1, 4]]);
+        const call = await bursts(cue.path('call.wav'), 6, [[1, 3]]);
         // The participant's first utterance loses its connection as it starts.
         await cue.launch({ CUE_PROJECT: 'Bees', CUE_REHEARSE_PARTICIPANT: call, FAKE_DEEPGRAM_DROP: '1' });
         await cue.waitLog(/⚠︎ Speech recognition unavailable: Speech recognition stopped answering/, 60);

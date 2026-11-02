@@ -1,11 +1,13 @@
 import {
     accountProject,
     assertContains,
+    assertEq,
     assertTextContains,
     bursts,
     e2eCase,
     fixture,
     needWindowsOcr,
+    windowsOf,
     windowText,
 } from '../harness/index.ts';
 
@@ -15,7 +17,7 @@ e2eCase(
     async (cue) => {
         await needWindowsOcr();
         await accountProject(cue, 'Bees', { materials: [fixture('materials', 'talk.md')] });
-        const call = await bursts(cue.path('call.wav'), 9, [[1, 3.5]]);
+        const call = await bursts(cue.path('call.wav'), 5, [[1, 3.5]]);
         await cue.launch({
             CUE_PROJECT: 'Bees',
             CUE_REHEARSE_PARTICIPANT: call,
@@ -48,7 +50,9 @@ e2eCase(
         assertTextContains(text, /^Listening$/, 'the status line');
         assertTextContains(text, /^Bees$/, 'the project');
 
-        // The snapshot has the overlay too (CUE_SNAPSHOT lets screenshots see it).
+        // The snapshot has the overlay too: CUE_SNAPSHOT lets screenshots see it (without it Windows hides it from them: w3-overlay).
+        const overlay = (await windowsOf(cue.pid)).windows.find((window) => window.title === 'Cue overlay');
+        assertEq(overlay?.affinity, 0, 'drawn normally');
         await cue.waitLog(/📸 Snapshots: window capture/, 30);
         const snapshot = cue.save('overlay-snapshot.txt', await cue.snapshotText(cue.path('cue.png')));
         assertContains(snapshot, /How many hives/);

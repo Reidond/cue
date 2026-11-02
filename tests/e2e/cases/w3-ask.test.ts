@@ -7,9 +7,9 @@ e2eCase(
         await accountProject(cue, 'Bees', { materials: [fixture('materials', 'talk.md')] });
         // Auto off: what Cue notices waits for Prepare Answer.
         await cue.defaults('autoAnswer', false);
-        const call = await bursts(cue.path('call.wav'), 14, [
-            [1, 3.5],
-            [7, 9.5],
+        const call = await bursts(cue.path('call.wav'), 10, [
+            [1, 3],
+            [6, 8],
         ]);
         await cue.launch({
             CUE_PROJECT: 'Bees',

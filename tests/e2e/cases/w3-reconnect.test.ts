@@ -4,14 +4,14 @@ e2eCase(
     'Cue for Windows: when the live socket is lost the call reconnects by itself, goes on over the same call, and nothing it showed is shown twice.',
     async (cue) => {
         await accountProject(cue, 'Bees', { materials: [fixture('materials', 'talk.md')] });
-        const call = await bursts(cue.path('call.wav'), 40, [
-            [1, 3.5],
-            [22, 24.5],
+        const call = await bursts(cue.path('call.wav'), 18, [
+            [1, 3],
+            [14, 16],
         ]);
         await cue.launch({
             CUE_PROJECT: 'Bees',
-            // The first connection is lost 12 s after it came up: after the first answer, before the second question.
-            CUE_LIVE_BREAK: '12',
+            // The first connection is lost 9 s after it came up: after the first answer, before the second question.
+            CUE_LIVE_BREAK: '9',
             CUE_REHEARSE_PARTICIPANT: call,
             FAKE_DEEPGRAM_LIVE: JSON.stringify(['How many hives did you study?', 'Which rooftops did you use?']),
             FAKE_CLAUDE_ANSWERS: JSON.stringify({
