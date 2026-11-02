@@ -56,6 +56,7 @@ export {
 } from './recordings.ts';
 export { exec, shellQuote, type Ran } from './process.ts';
 export {
+    hasAudioOutput,
     needAudioOutput,
     needElevation,
     needInteractiveDesktop,
@@ -75,6 +76,7 @@ export {
     appWindows,
     captureScreen,
     click,
+    clickToast,
     ocr,
     press,
     pressKeys,

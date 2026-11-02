@@ -5,7 +5,7 @@ namespace Cue;
 
 /// <summary>
 /// The icon in the notification area (the Mac's menu bar item): Start or Stop Cue, Show or Hide, Answer Now, Restart Live Call, the dashboard, Settings and
-/// Quit, in a native menu. It turns red while a call is recorded (<see cref="Recording"/>; the recordings slice sets it).
+/// Quit, in a native menu. It turns red while a call is recorded (<see cref="Recording"/>).
 /// </summary>
 internal sealed class Tray : IDisposable
 {
@@ -57,6 +57,7 @@ internal sealed class Tray : IDisposable
         Restart,
         Dashboard,
         Settings,
+        Record,
         Quit,
     }
 
@@ -139,7 +140,7 @@ internal sealed class Tray : IDisposable
             AppendMenuW(menu, 0, (UIntPtr)(uint)Item.Cue, live.CueRunning ? "Stop Cue" : "Start Cue");
             AppendMenuW(menu, 0, (UIntPtr)(uint)Item.Overlay, "Show or Hide Cue\tWin+Alt+H");
             AppendMenuW(menu, 0, (UIntPtr)(uint)Item.Answer, "Answer Now\tWin+Alt+Enter");
-            // The recordings slice adds Start Recording / Stop Recording here.
+            AppendMenuW(menu, 0, (UIntPtr)(uint)Item.Record, (state.Live.Recorder.IsRecording ? "Stop Recording" : "Start Recording") + "\tWin+Alt+C");
             AppendMenuW(menu, 0x800, UIntPtr.Zero, null);
             AppendMenuW(menu, 0, (UIntPtr)(uint)Item.Dashboard, "Open Dashboard");
             AppendMenuW(menu, 0, (UIntPtr)(uint)Item.Settings, "Settings");
@@ -161,6 +162,9 @@ internal sealed class Tray : IDisposable
                     break;
                 case Item.Answer:
                     live.AnswerNow();
+                    break;
+                case Item.Record:
+                    live.ToggleRecording(RecordingTrigger.Tray);
                     break;
                 case Item.Restart:
                     live.RestartCall();

@@ -3,7 +3,7 @@ namespace Cue;
 /// <summary>
 /// System-wide shortcuts (`RegisterHotKey`), which work while PowerPoint or Teams has the focus and need no special permission. The Mac's are Control+Option;
 /// on Windows Ctrl+Alt is AltGr on many keyboard layouts (Polish, German, Ukrainian…) and would swallow typed characters, so Cue's are Win+Alt:
-/// Windows keeps the Win key for itself, but not Win+Alt with these keys (it does keep the arrows). (Win+Alt+R is the Game Bar's recording: the recordings slice takes Win+Alt+C.)
+/// Windows keeps the Win key for itself, but not Win+Alt with these keys (it does keep the arrows). (Win+Alt+R is the Game Bar's recording: Cue's own is Win+Alt+C.)
 /// </summary>
 internal sealed class HotKeys : IDisposable
 {

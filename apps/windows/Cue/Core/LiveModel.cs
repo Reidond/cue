@@ -11,7 +11,7 @@ namespace Cue;
 /// (`POST /v1/calls`), its socket carries the audio up and the events down, and the events drive the same exchange and answer state, and the same reading
 /// rules, as on the Mac. State changes on the UI thread only; the capture threads only push audio (thread-safe).
 /// </summary>
-public sealed class LiveModel : Observable
+public sealed partial class LiveModel : Observable
 {
     private readonly AppState state;
     private readonly AudioSink sink = new();
@@ -83,6 +83,7 @@ public sealed class LiveModel : Observable
         {
             (side == Side.Me ? micMeter : callMeter).Add(samples);
             sink.Push(samples, side, time);
+            audioRecorder.Push(samples, side, time);
         };
         RegisterControl();
     }
@@ -250,6 +251,7 @@ public sealed class LiveModel : Observable
             if (e.PropertyName is nameof(Preferences.SpeakerName) or nameof(Preferences.AutoAnswer) or nameof(Preferences.MicQuestions)) SendConfig();
             else if (e.PropertyName == nameof(Preferences.ActiveProject)) ProjectChanged();
         };
+        WatchRecorder();
         StartRehearsalIfRequested();
         timer = state.Queue.CreateTimer();
         timer.Interval = TimeSpan.FromMilliseconds(100);
@@ -266,6 +268,8 @@ public sealed class LiveModel : Observable
     /// <summary>Quit: the call ends (the server closes its speech streams and keeps the transcript) and the audio closes.</summary>
     public void Shutdown()
     {
+        audioRecorder.Cancel();
+        state.Recordings.CancelAll();
         var id = liveCall?.Id;
         micCapture?.Dispose();
         callCapture?.Dispose();
@@ -337,7 +341,7 @@ public sealed class LiveModel : Observable
         Touch();
     }
 
-    /// <summary>Stop Cue: hides the overlay and stops listening. (A call being recorded keeps recording, once the recordings slice has one.)</summary>
+    /// <summary>Stop Cue: hides the overlay and stops listening. (A call being recorded keeps recording.)</summary>
     public void StopCue()
     {
         if (!CueRunning) return;
@@ -352,7 +356,7 @@ public sealed class LiveModel : Observable
     /// <summary>Opens the microphone and call audio while Cue runs (or a call is recorded), and closes them after.</summary>
     private void UpdateCapture()
     {
-        var needed = CueRunning; // the recordings slice adds: || a recording is under way
+        var needed = CueRunning || Recorder.StartedAt is not null;
         if (needed == capturing) return;
         capturing = needed;
         if (needed)
@@ -485,10 +489,18 @@ public sealed class LiveModel : Observable
             await Task.Delay(300);
         try
         {
-            // Play returns the length in seconds, which a recorded rehearsal (CUE_REHEARSE_RECORD, with the recordings slice) waits for.
-            Rehearsal.Play(participant, (samples, time) => Samples?.Invoke(Side.Others, samples, time));
+            // CUE_REHEARSE_RECORD=1 also records the rehearsal and writes its notes.
+            var record = Env.Get("CUE_REHEARSE_RECORD") == "1";
+            if (record) StartRecording(RecordingTrigger.Rehearsal);
+            // Play returns the length in seconds, which a recorded rehearsal waits for.
+            var length = Rehearsal.Play(participant, (samples, time) => Samples?.Invoke(Side.Others, samples, time));
             // CUE_REHEARSE_ME plays a second recording as your microphone, in parallel.
-            if (Env.Get("CUE_REHEARSE_ME") is { } mine) Rehearsal.Play(mine, (samples, time) => Samples?.Invoke(Side.Me, samples, time));
+            if (Env.Get("CUE_REHEARSE_ME") is { } mine) length = Math.Max(length, Rehearsal.Play(mine, (samples, time) => Samples?.Invoke(Side.Me, samples, time)));
+            if (record)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(length + 1));
+                StopRecording(RecordingTrigger.Rehearsal);
+            }
         }
         catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
         {
@@ -752,6 +764,7 @@ public sealed class LiveModel : Observable
         // `e.Speaker` (the live recognizer's guess at the voice) is not used: the notes' Workflow tells the voices apart in the recording.
         var utterance = new Utterance(side, e.Text, started, ended > started ? ended : started);
         utterances.Add(utterance);
+        Recorder.Add(utterance);
         if (utterances.Count > 300) utterances.RemoveRange(0, utterances.Count - 300);
         Log.Write($"**[{PromptLabel(side)}]** {e.Text}", utterance.Time);
     }

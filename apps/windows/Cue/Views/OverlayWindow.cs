@@ -73,6 +73,7 @@ public sealed class OverlayWindow : Window
         SystemBackdrop = new ActiveAcrylicBackdrop();
         handle = WindowNative.GetWindowHandle(this);
         Content = Build();
+        RecordSlot.Content = new RecordControl(state, RecordingTrigger.Overlay, subtle: true);
         ConfigureWindow();
         Place();
 
@@ -107,7 +108,7 @@ public sealed class OverlayWindow : Window
 
     public IntPtr Handle => handle;
 
-    /// <summary>The place the recordings slice puts its record button (and, while recording, the timer that stops it): the bar leaves it empty.</summary>
+    /// <summary>The record button (and, while recording, the timer that stops it) sits here.</summary>
     public ContentControl RecordSlot { get; } = new() { VerticalAlignment = VerticalAlignment.Center };
 
     public bool IsShown => shown;
@@ -381,7 +382,6 @@ public sealed class OverlayWindow : Window
             OverflowButtonVisibility = CommandBarOverflowButtonVisibility.Collapsed,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
-        // The recordings slice's button and timer go here.
         recordHost = new AppBarElementContainer { Content = RecordSlot };
         commands.PrimaryCommands.Add(recordHost);
 

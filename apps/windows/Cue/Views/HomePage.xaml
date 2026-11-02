@@ -22,11 +22,8 @@
                         TextAlignment="Center" />
                     <Button Content="New Project" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Center" Click="OnNewProject" />
                 </StackPanel>
-                <TextBlock
-                    x:Name="Placeholder"
-                    Text="Notes of your calls will be here as Cue for Windows gets them."
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    TextWrapping="Wrap" />
+                <StackPanel x:Name="Upcoming" Spacing="10" Margin="0,12,0,0" />
+                <StackPanel x:Name="Recent" Spacing="10" Margin="0,12,0,0" />
             </StackPanel>
         </ScrollViewer>
     </Grid>
