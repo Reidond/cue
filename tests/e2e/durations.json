@@ -102,5 +102,20 @@
     "w0-not-invited": 13,
     "w0-sign-in": 16,
     "w0-sign-out": 14,
-    "w1-installer": 57
+    "w1-installer": 57,
+    "w2-account-projects": 21,
+    "w2-active-project": 26,
+    "w2-import-projects": 15,
+    "w2-materials": 14,
+    "w2-projects": 22,
+    "w3-ask": 30,
+    "w3-call-audio": 5,
+    "w3-deepgram-drops": 20,
+    "w3-hot-keys": 24,
+    "w3-limit": 25,
+    "w3-overlay": 32,
+    "w3-reading": 52,
+    "w3-reading-aloud": 44,
+    "w3-reconnect": 42,
+    "w3-rehearsal": 25
 }
