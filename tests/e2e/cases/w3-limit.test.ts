@@ -1,4 +1,4 @@
-import { accountProject, assertEq, assertTextContains, e2eCase, windowText } from '../harness/index.ts';
+import { accountProject, assertEq, assertTextContains, e2eCase, press, windowText } from '../harness/index.ts';
 
 const OWNER = 'owner@cue.test';
 
@@ -36,7 +36,10 @@ e2eCase(
 
         // Starting again makes a call at last: the first Start Cue made none (a call made then would have been logged by now, and this would be the second).
         cue.control('stop');
-        cue.control('start Bees');
+        // The project page's own Start Cue button.
+        cue.control('page Bees');
+        await cue.waitFor('the project page', 30, async () => /^Start Cue$/m.test(await windowText(cue.pid)));
+        await press(cue.pid, 'Start Cue');
         await cue.waitFor('the call', 30, () => cue.logCount(/📞 Live call started/) >= 1);
         assertEq(cue.logCount(/📞 Live call started/), 1, 'one call only, the one made once there was room');
     },

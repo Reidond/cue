@@ -424,14 +424,14 @@ public sealed class OverlayWindow : Window
         {
             menu.Items.Clear();
             var live = state.Live;
-            foreach (var project in live.Projects)
+            foreach (var project in state.Projects.Projects)
             {
                 var item = new ToggleMenuFlyoutItem { Text = project.Name, IsChecked = project.Id == live.ActiveProject?.Id };
                 var chosen = project;
                 item.Click += (_, _) => live.Activate(chosen);
                 menu.Items.Add(item);
             }
-            if (live.Projects.Count > 0) menu.Items.Add(new MenuFlyoutSeparator());
+            if (state.Projects.Projects.Count > 0) menu.Items.Add(new MenuFlyoutSeparator());
             var dashboard = new MenuFlyoutItem { Text = "Open Dashboard…", Icon = new FontIcon { Glyph = "" } };
             dashboard.Click += (_, _) => state.OpenDashboard();
             menu.Items.Add(dashboard);
@@ -622,7 +622,7 @@ public sealed class OverlayWindow : Window
             (glyph, title, description) = ("", "Create a project", "A project holds your slides, documents and prepared answers for a talk. Cue answers from them.");
             action = true;
         }
-        else if (live.ActiveProject.MaterialCount == 0)
+        else if (live.ActiveProject.Materials.Count == 0)
         {
             (glyph, title, description) = ("", "Add your materials", "Drop your slides, documents and prepared answers onto the project in the dashboard. Cue reads them and answers from them.");
             action = true;

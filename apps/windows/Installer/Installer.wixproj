@@ -13,8 +13,10 @@
          can't hold (the files are as they were published); ICE43 and ICE57, the Start menu shortcut is the file's own and goes with it, with no per-user
          registry value to hold it, and there is none to keep: Cue writes nothing to the registry. -->
     <SuppressIces>ICE03;ICE43;ICE57</SuppressIces>
+    <!-- `build.ps1 -Quick` (an installer for a test, never shipped): files stored, not compressed (6 s, not 40), and no validation (16 s less). -->
+    <CueCompression Condition="'$(CueCompression)' == ''">medium</CueCompression>
     <AppDir Condition="'$(AppDir)' == ''">$(MSBuildThisFileDirectory)..\build\$(Platform)\</AppDir>
-    <DefineConstants>$(DefineConstants);CueVersion=$(CueVersion);AppDir=$(AppDir.TrimEnd('\'));IconFile=$(MSBuildThisFileDirectory)..\Cue\Assets\AppIcon.ico</DefineConstants>
+    <DefineConstants>$(DefineConstants);CueVersion=$(CueVersion);CueCompression=$(CueCompression);AppDir=$(AppDir.TrimEnd('\'));IconFile=$(MSBuildThisFileDirectory)..\Cue\Assets\AppIcon.ico</DefineConstants>
   </PropertyGroup>
 
 </Project>

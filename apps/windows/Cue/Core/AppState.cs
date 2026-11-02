@@ -2,11 +2,14 @@ using Microsoft.UI.Dispatching;
 
 namespace Cue;
 
-/// <summary>The pages of the dashboard's navigation. Later slices add theirs (a project's pages, Notes) here and in <see cref="MainWindow"/>.</summary>
+/// <summary>The pages of the dashboard's navigation. Later slices add theirs (Notes) here and in <see cref="MainWindow"/>.</summary>
 public enum DashboardPage
 {
     Home,
     Upcoming,
+
+    /// <summary>A project's page (<see cref="DashboardModel.ProjectId"/>, <see cref="DashboardModel.Section"/>).</summary>
+    Project,
     Settings,
 }
 
@@ -16,11 +19,21 @@ public enum SettingsTab
     Account,
 }
 
+/// <summary>The pages of a project, picked in the bar under its name.</summary>
+public enum ProjectTab
+{
+    Overview,
+    Answers,
+    Notes,
+}
+
 /// <summary>Where the dashboard is, so the app (and a case's `page` and `settings`) can open it on a page.</summary>
 public sealed class DashboardModel : Observable
 {
     private DashboardPage page = DashboardPage.Home;
     private SettingsTab tab = SettingsTab.General;
+    private string? projectId;
+    private ProjectTab section = ProjectTab.Overview;
 
     public DashboardPage Page
     {
@@ -34,17 +47,41 @@ public sealed class DashboardModel : Observable
         set => Set(ref tab, value);
     }
 
+    /// <summary>The project the project page shows (its folder name, <see cref="Project.Id"/>).</summary>
+    public string? ProjectId
+    {
+        get => projectId;
+        set => Set(ref projectId, value);
+    }
+
+    /// <summary>Which page of the project: its overview, its prepared answers, its notes.</summary>
+    public ProjectTab Section
+    {
+        get => section;
+        set => Set(ref section, value);
+    }
+
+    /// <summary>The project on screen: null unless the dashboard is on a project's page.</summary>
+    public string? CurrentProjectId => Page == DashboardPage.Project ? ProjectId : null;
+
     /// <summary>How `page NAME` finds a page: each slice adds one for its own (a project's pages, Notes). It says whether it knew the name.</summary>
     public List<Func<string, bool>> PageResolvers { get; } = [];
 
     public DashboardModel() => PageResolvers.Add(name =>
     {
-        if (!Enum.TryParse<DashboardPage>(name, ignoreCase: true, out var found) || found == DashboardPage.Settings) return false;
+        if (!Enum.TryParse<DashboardPage>(name, ignoreCase: true, out var found) || found is not (DashboardPage.Home or DashboardPage.Upcoming)) return false;
         Page = found;
         return true;
     });
 
     public bool ShowPage(string name) => PageResolvers.Any(resolve => resolve(name));
+
+    public void OpenProject(string id, ProjectTab to = ProjectTab.Overview)
+    {
+        ProjectId = id;
+        Section = to;
+        Page = DashboardPage.Project;
+    }
 
     public void ShowSettings(SettingsTab? tab = null)
     {
@@ -69,6 +106,9 @@ public sealed class AppState : Observable
     /// <summary>The live call: listening, the overlay's lists, the reading rules.</summary>
     public LiveModel Live { get; }
 
+    /// <summary>The person's projects, and the one Cue answers from (<see cref="ProjectStore.Active"/>): loaded after signing in, see <see cref="CueApi.OnSignedIn"/>.</summary>
+    public ProjectStore Projects { get; }
+
     private string? planLimit;
 
     public AppState(DispatcherQueue queue)
@@ -76,7 +116,48 @@ public sealed class AppState : Observable
         Queue = queue;
         Api = new CueApi(Log);
         Control = new ControlCommands(this);
+        Projects = new ProjectStore(Api, Log, Preferences);
+        // The projects are the account's: once someone is signed in they are loaded (and the ones found in the library imported), and one is chosen.
+        Api.OnSignedIn = async () =>
+        {
+            try
+            {
+                await Projects.SyncWithAccount();
+                await Projects.ChooseActive();
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // The library can't be read or written (say, Documents is on a drive that is gone): signing in still works.
+                Log.Write($"{SessionLog.Warning} Couldn't load your projects: {e.Message}");
+            }
+        };
+        Api.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(CueApi.Phase) || Api.Phase != Phase.SignedOut) return;
+            Projects.Clear();
+            if (Dashboard.Page == DashboardPage.Project) Dashboard.Page = DashboardPage.Home;
+        };
+        ProjectCommands.Register(this);
+        // After the projects: it follows the one Cue answers from.
         Live = new LiveModel(this);
+    }
+
+    /// <summary>The dashboard's window, for the pickers Windows shows over it (set by <see cref="MainWindow"/>).</summary>
+    public IntPtr WindowHandle { get; set; }
+
+    /// <summary>Renames a project (in the account, and its folder here); the dashboard follows if it shows the project.</summary>
+    public async Task<Project> RenameProject(Project project, string name)
+    {
+        var renamed = await Projects.Rename(project, name);
+        if (Dashboard.ProjectId == project.Id) Dashboard.ProjectId = renamed.Id;
+        return renamed;
+    }
+
+    /// <summary>Deletes a project from the account and moves its folder to the Recycle Bin; the dashboard leaves its page.</summary>
+    public async Task DeleteProject(Project project)
+    {
+        await Projects.Delete(project);
+        if (Dashboard.CurrentProjectId == project.Id) Dashboard.Page = DashboardPage.Home;
     }
 
     /// <summary>Set while the month's allowance is spent: the sentence the backend worded (`limit_reached`). Nothing is answered meanwhile.</summary>

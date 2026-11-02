@@ -7,7 +7,11 @@ namespace Cue;
 /// <summary>Small builders for the settings panes: a card of rows, a caption, as Windows 11's own Settings lays them out.</summary>
 internal static class Ui
 {
-    private static Brush Theme(string key) => (Brush)Application.Current.Resources[key];
+    public static Brush Theme(string key) => (Brush)Application.Current.Resources[key];
+
+    /// <summary>A Segoe Fluent Icons glyph (the system's icon font: Segoe MDL2 Assets on Windows 10), as small as the text it sits by.</summary>
+    public static FontIcon Glyph(string glyph, double size = 16, string brush = "TextFillColorSecondaryBrush") =>
+        new() { Glyph = glyph, FontSize = size, Foreground = Theme(brush), VerticalAlignment = VerticalAlignment.Center };
 
     /// <summary>A rounded card holding the rows, divided by lines.</summary>
     public static Border Card(params UIElement[] rows)

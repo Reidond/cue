@@ -2,13 +2,15 @@
 # git, the .NET 10 SDK, Node.js 26 and pnpm. Whatever is there already is kept. Run it from an elevated PowerShell (winget installs
 # these machine-wide); `-Install` also runs `pnpm install` for the repository (the cases need the backend's packages).
 #
-#   powershell -ExecutionPolicy Bypass -File apps\windows\scripts\setup.ps1 [-Install]
+#   powershell -ExecutionPolicy Bypass -File apps\windows\scripts\setup.ps1 [-Install] [-Backend]
+#
+#   -Backend  only what the backend's own cases need (`run.ts --no-app`): git, Node.js and pnpm, without the .NET SDK and the OCR language
 #
 # On Windows 11 for Arm the SDK is the native one, but Node.js is the x64 build on purpose: the backend's `cf dev` runs workerd and
 # Vite+'s native packages, which exist for x64 only, and pnpm installs the packages that match the Node.js that runs it. Windows
 # runs x64 programs on Arm, so the cases work there (slower to start).
 [CmdletBinding()]
-param([switch]$Install)
+param([switch]$Install, [switch]$Backend)
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
@@ -16,10 +18,13 @@ $package = Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json
 $pnpmVersion = ($package.packageManager -replace '^pnpm@', '')
 $arm = $env:PROCESSOR_ARCHITECTURE -eq 'ARM64'
 
+# What an installer added to the machine's or the user's Path joins this process's, in front: replacing the Path would lose the Node.js that CI's
+# setup-node put there (the x64 one on Arm) for whatever the image has of its own.
 function Update-Path {
-    $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    $user = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = "$machine;$user"
+    $have = $env:Path -split ';'
+    $added = @([Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environment]::GetEnvironmentVariable('Path', 'User')) -split ';' |
+        Where-Object { $_ -and ($have -notcontains $_) }
+    $env:Path = (@($added) + $have) -join ';'
 }
 
 function Test-Tool([string]$name) { return [bool](Get-Command $name -ErrorAction SilentlyContinue) }
@@ -35,8 +40,10 @@ function Install-Package([string]$id, [string[]]$extra = @()) {
 
 if (-not (Test-Tool git)) { Install-Package 'Git.Git' }
 
-$sdk = if (Test-Tool dotnet) { (& dotnet --list-sdks | Where-Object { $_ -match '^10\.' }) } else { $null }
-if (-not $sdk) { Install-Package 'Microsoft.DotNet.SDK.10' }
+if (-not $Backend) {
+    $sdk = if (Test-Tool dotnet) { (& dotnet --list-sdks | Where-Object { $_ -match '^10\.' }) } else { $null }
+    if (-not $sdk) { Install-Package 'Microsoft.DotNet.SDK.10' }
+}
 
 $nodeOk = $false
 if (Test-Tool node) {
@@ -60,18 +67,20 @@ if (-not (Test-Tool pnpm) -or ((& pnpm --version) -ne $pnpmVersion)) {
 
 # The cases read the app's snapshots with Windows' own OCR (tests/e2e/tools/ocr.ps1), which needs the English recognizer; a Windows without it (a Server
 # image, say) can't add it, and those cases skip.
-try {
-    if ((Get-WindowsCapability -Online -Name 'Language.OCR~~~en-US*' -ErrorAction Stop | Select-Object -First 1).State -ne 'Installed') {
-        Write-Host 'Installing the English OCR language...'
-        $null = Add-WindowsCapability -Online -Name 'Language.OCR~~~en-US~0.0.1.0' -ErrorAction Stop
+if (-not $Backend) {
+    try {
+        if ((Get-WindowsCapability -Online -Name 'Language.OCR~~~en-US*' -ErrorAction Stop | Select-Object -First 1).State -ne 'Installed') {
+            Write-Host 'Installing the English OCR language...'
+            $null = Add-WindowsCapability -Online -Name 'Language.OCR~~~en-US~0.0.1.0' -ErrorAction Stop
+        }
+    } catch {
+        Write-Warning "No English OCR language: the cases that read snapshots will skip ($($_.Exception.Message))"
     }
-} catch {
-    Write-Warning "No English OCR language: the cases that read snapshots will skip ($($_.Exception.Message))"
 }
 
 Write-Host ''
 Write-Host "git    $(& git --version)"
-Write-Host "dotnet $(& dotnet --version) ($($env:PROCESSOR_ARCHITECTURE))"
+if (-not $Backend) { Write-Host "dotnet $(& dotnet --version) ($($env:PROCESSOR_ARCHITECTURE))" }
 Write-Host "node   $(& node --version) ($(& node -p 'process.arch'))"
 Write-Host "pnpm   $(& pnpm --version)"
 

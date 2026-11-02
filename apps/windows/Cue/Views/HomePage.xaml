@@ -8,9 +8,23 @@
             <StackPanel Padding="36,24" Spacing="12" MaxWidth="760" HorizontalAlignment="Left">
                 <TextBlock Text="Home" Style="{StaticResource TitleTextBlockStyle}" />
                 <TextBlock x:Name="WhoText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                <Border x:Name="LiveHost" />
+                <StackPanel x:Name="FirstProject" Spacing="14" Margin="0,36,0,0" MaxWidth="440" HorizontalAlignment="Center">
+                    <FontIcon Glyph="&#xE8B7;" FontSize="52" Foreground="{ThemeResource AccentFillColorDefaultBrush}" />
+                    <TextBlock
+                        Text="Create Your First Project"
+                        Style="{StaticResource SubtitleTextBlockStyle}"
+                        HorizontalAlignment="Center"
+                        TextAlignment="Center" />
+                    <TextBlock
+                        Text="A project holds what Cue needs for one talk — the occasion, your slides, documents and prepared answers — and the notes of its calls."
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        TextWrapping="Wrap"
+                        TextAlignment="Center" />
+                    <Button Content="New Project" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Center" Click="OnNewProject" />
+                </StackPanel>
                 <TextBlock
-                    Text="Your projects and notes will be here as Cue for Windows gets them."
+                    x:Name="Placeholder"
+                    Text="Notes of your calls will be here as Cue for Windows gets them."
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     TextWrapping="Wrap" />
             </StackPanel>

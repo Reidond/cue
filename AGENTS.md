@@ -215,15 +215,15 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
 - **Layout**: `Cue.slnx`, `Cue/` (the app: `Core/` has no UI, `Views/` the pages, `MainWindow`), `Installer/` (WiX), `scripts/{build,setup}.ps1`.
   The app is unpackaged (`WindowsPackageType=None`) and self-contained (`SelfContained`, `WindowsAppSDKSelfContained`): `Cue.exe` and the .NET and
   Windows App SDK runtimes sit in one folder, so the MSI needs no runtime installer. x64 and arm64; Windows 11 and Windows 10 22H2 (`TargetPlatformMinVersion` 10.0.19041).
-- **Build**: `powershell -ExecutionPolicy Bypass -File apps\windows\scripts\build.ps1 [-Arch x64|arm64] [-Version 2.0.1] [-Msi] [-Output DIR]` is the one
+- **Build**: `powershell -ExecutionPolicy Bypass -File apps\windows\scripts\build.ps1 [-Arch x64|arm64] [-Version 2.0.1] [-Msi [-Quick]] [-Output DIR]` is the one
   entry point (you, the suite, CI, release): it publishes to `apps\windows\build\ARCH\Cue.exe` and with `-Msi` makes `build\Cue-VERSION-ARCH.msi` (`dotnet
   build` of `Installer\Installer.wixproj`, WiX `WixToolset.Sdk` 6.0.2: no Visual Studio). Warnings fail it (`TreatWarningsAsErrors`; the installer's ICE rules
-  it ignores on purpose are named in the wixproj). The version is the Mac's, `CFBundleShortVersionString` of `apps/mac/Resources/Info.plist` plus the patch
+  it ignores on purpose are named in the wixproj; `-Quick` makes an installer only a case installs, files stored and no validation: 6 s, not 55). The version is the Mac's, `CFBundleShortVersionString` of `apps/mac/Resources/Info.plist` plus the patch
   (`-Version`, which release.yml computes from the tags), and goes into both the app (`Env.Version`, `Cue-Version: windows/VERSION`) and the MSI; the
   backend's address is stamped from `apps/api/production-url.txt` (assembly metadata `CueApiUrl`; `CUE_API_URL` overrides it; a plain `dotnet build`
   talks to `cf dev`). WiX 7 makes its user accept the OSMF EULA (`AcceptEula`: a fee above $10k revenue a year): that is the owner's call, so
-  the repository stays on 6.0.2. `scripts/setup.ps1 [-Install]` installs the toolchain on a fresh Windows (git, .NET 10 SDK, Node.js 26, pnpm; `-Install` runs
-  `pnpm install`); on Windows for Arm Node.js is the x64 build on purpose and the x64 Visual C++ runtime is added, as workerd and Vite+'s native
+  the repository stays on 6.0.2. `scripts/setup.ps1 [-Install] [-Backend]` installs the toolchain on a fresh Windows (git, .NET 10 SDK, Node.js 26, pnpm; `-Install` runs
+  `pnpm install`; `-Backend` leaves out the SDK and OCR for the backend's cases); on Windows for Arm Node.js is the x64 build on purpose and the x64 Visual C++ runtime is added, as workerd and Vite+'s native
   packages exist for x64 only and run emulated.
 - **The MSI** (`Installer/Package.wxs`): per machine into `Program Files\Cue`, a Start menu shortcut, an entry in Apps, a stable `UpgradeCode` with `MajorUpgrade` (a newer
   MSI replaces an older one, an older one is refused), nothing in the registry; the person's settings, library and notes stay on uninstall. It is unsigned: the release notes
@@ -237,19 +237,32 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   port), and `src/pages.ts` builds "Return to Cue" from it (the Mac's when there is none). The refresh token is in Windows Credential Manager (`Core/SecretStore.cs`); under
   `CUE_HOME` in `CUE_HOME/Keychain.json` as on the Mac. `CUE_WEB_AUTH=headless` follows the authorize URL with `HttpClient` and cookies, presses the stand-in provider's
   button, and ends where a browser would, at Cue's own listener.
-- **Where the next slices plug in**: `AppState` (`Core/AppState.cs`: the log, preferences, `Api`, `Dashboard`, `Control`, `PlanLimit`; one instance, `App.State`); `CueApi.Request(method, path, query, json,
+- **Projects and materials** (`Core/{Projects,ProjectStore,ProjectsApi,ProjectCommands,Shell}.cs`, `Views/{ProjectPage,ProjectOverviewView,PreparedAnswersView,ProjectDialogs}`): the port of the Mac's
+  `ProjectStore`, `Project` and `ProjectView`, with the same behaviour (see "Projects and materials" above: the account holds them, `Documents\Cue\NAME\project.json` with `serverID` and a `Notes\` folder is the
+  library). `AppState.Projects` is **the one place the rest of the app finds the projects**: `Projects` (sorted as Explorer sorts names), `Find(id)`, `FindByName(name)` (name or folder, as `CUE_PROJECT` and the hooks
+  take it), `MostRecent`, `Active` (the project Cue answers from and records into: the folder name kept in `settings.json` as `activeProject`, chosen after sign-in by `ChooseActive`: `CUE_PROJECT`, else the last one,
+  else the most recently used; `📁 Project: NAME`), `Activate(project)` (stamps `LastUsed`, saves it to the account, logs `📁 Project: NAME` when it changed), `Project.ServerId` (what a call is made for) and
+  `Project.Materials`. After sign-in (`CueApi.OnSignedIn`, before `Signed in` is logged) `SyncWithAccount` lists the account's projects, makes a folder for those this PC hasn't seen and uploads every folder
+  without a `serverID` once with its `Materials\` files (`📦 Imported N projects from this PC (M files)`: **"this PC", not "this Mac"**, the one log line the Windows app words differently). Create, rename, delete and
+  adding or removing a file wait for the server; field edits are saved to `project.json` at once and to the account after 0.8 s (`☁️ Saved “NAME” to your account`). A deleted project's folder goes to the Recycle Bin
+  (`Shell.MoveToRecycleBin`). The dashboard: `DashboardPage.Project` with `Dashboard.ProjectId` and `Dashboard.Section` (`ProjectTab`: Overview, Answers, Notes; the notes slice fills `ProjectPage`'s Notes tab, now a
+  placeholder, and Home's recent notes); `Dashboard.OpenProject(id, tab)`; the pane (`MainWindow.RefreshProjects`) has a "Projects" header, an item per project with a context menu (Rename…, Show in Explorer, Move to
+  Recycle Bin…) and New Project (Ctrl+N) below; the start-Cue button belongs in `ProjectPage`'s header (the live-call slice). The prepared answers and the token estimate on a page come from `ProjectStore.Documents`
+  (`KnowledgeBase`, as the Mac's); the account's server builds the prompt.
+- **Where the next slices plug in**: `AppState` (`Core/AppState.cs`: the log, preferences, `Api`, `Projects`, `Dashboard`, `Control`, `PlanLimit`; one instance, `App.State`); `CueApi.Request(method, path, query, json,
   file, body, contentType, timeout)` and `Bearer()` for every call (a bearer token refreshed on its own, `{error: {code, message, retryable}}` as `CueApiException`: kinds
   `LimitReached`, `RateLimited`, `PlanPaused`, `Ended`, `Network`, `Server`; `OnSignedIn` runs before Cue counts as signed in); `state.Control.Register("new", run, needsSignIn)` for a `CUE_CONTROL`
   command; `DashboardModel.PageResolvers` for `page NAME` and `DashboardPage` + `MainWindow` for navigation items (a page is a `Page` that gets the `AppState` as its navigation parameter,
   and shows a `SignInView` while signed out); `Settings` tabs in `SettingsPage`; `SessionLog.Write` (use `SessionLog.Warning` for `⚠︎`, whose second character is U+FE0E); `Storage.AppSupport` and
   `Storage.Documents` for paths (**keep every `DispatcherQueueTimer` in a field**: one that only a local variable holds is garbage-collected and silently stops, which looked like commands and snapshots going missing now and then); `SettingsFile`/`Preferences` for settings (`settings.json`).
 - **Where it is built and tested**: never on this Mac. The Windows 11 VM of vmpal (VM "Windows VM 1", Arm; `vmpal_*` tools, agent control on): share the worktree read-only
-  (`vmpal_update_vm` `sharedFolders` with name `cue-src`: it is `Z:\cue-src`), copy it to the VM's own disk (`robocopy Z:\cue-src C:\src\cue /MIR /XD node_modules .git build obj bin .vs`; never
-  build on the share), run `setup.ps1 -Install` once (from an elevated shell: `vmpal_exec_admin`), then `node tests\e2e\run.ts w0- 9e-` there with `vmpal_exec` (short `waitSeconds`, then `vmpal_exec_result`).
+  (`vmpal_update_vm` `sharedFolders` with name `cue-src`: it is `Z:\cue-src`), copy it to the VM's own disk (`robocopy Z:\cue-src C:\src\cue /MIR /XD node_modules .git build obj bin .vs .claude .build .cloudflare`:
+  `apps/mac/.build` is a gigabyte the share reads for minutes and then fails on, and `/MIR` would delete the VM's generated `apps/api/.cloudflare` types; never build on the share), run `setup.ps1 -Install` once (from an elevated shell: `vmpal_exec_admin`), then `node tests\e2e\run.ts w0- 9e-` there with `vmpal_exec` (short `waitSeconds`, then `vmpal_exec_result`).
   A process started by `vmpal_exec` ends with the command: to look at a window yourself start Cue with `Invoke-CimMethod -ClassName Win32_Process -MethodName Create`, and read the window
   with `vmpal_screenshot` in both themes (`CUE_APPEARANCE=light|dark`). The VM snapshot `cue-toolchain` has the toolchain installed and the repository's packages in `C:\src\cue`.
   `w1-installer` installs per machine, so it needs an elevated process (`vmpal_exec_admin`; a CI runner is one) and skips without.
-- **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks), `w1-…` (the installer) and `w3-…` (the live call: see Live call on Windows) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
+- **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks), `w1-…` (the installer), `w2-…` (projects and materials: `w2-projects`, `w2-materials`, `w2-import-projects`,
+  `w2-account-projects`, `w2-active-project`; they read the window with `windowText`, the account with `backend.accountOf(cue.email)`) and `w3-…` (the live call: see Live call on Windows) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
   them together with the cases that never launch the app (the source has no `.launch(`, `.cli(` or `.control(`: the backend's own, `9a-…` to `9e-…`, `95`–`99`). `9e-windows-sign-in` signs in as `cue-windows` end to end
   and runs anywhere with `--no-app`. A case reads what the window shows with `windowText(pid)` (`tools/uia.ps1`: the text of its UI Automation tree, exact (no recognition errors) and complete, what is scrolled out of view too),
   and `windowsOf(pid)` is `tools/windows.ps1` (the foreground, the windows' sizes and styles: the twin of `appWindows`); `ocr` is `tools/ocr.ps1` (Windows' own `Windows.Media.Ocr`; it needs the English recognizer,
@@ -259,14 +272,17 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   `CUE_LOCALE=en-US` makes numbers, dates and Windows' own strings that culture (the harness sets it: the Mac's `-AppleLocale`); `CUE_BACKGROUND=1` shows the window without activating it, as a tool window (no taskbar button) that a
   click doesn't activate, at the bottom of the z-order, with the process opted out of power throttling, and an alert goes only to the session log; `CUE_SNAPSHOT=png` writes `…-dashboard.png` every 2 s with `PrintWindow`
   (Settings is a page of the dashboard, so there is no `-settings.png`; `CUE_SNAPSHOT_METHOD` doesn't apply; `📸 Snapshots: window capture (PrintWindow), in the dark appearance`); `CUE_APPEARANCE`, `CUE_SHOW_SETTINGS`,
-  `CUE_ME_TICK`, `CUE_API_URL`, `CUE_WEB_AUTH=headless` as on the Mac; `CUE_CONTROL` commands now: `signin [google|github]`, `signout`, `settings general|account`, `page home|upcoming`, `size W H`, `quit`,
-  and the live call's `start NAME`, `stop`, `project NAME`, `ask TEXT`, `show TEXT`, `newest`, `prepare` (the project is found among the account's, by name, case aside)
-  (`signin`, `signout`, `settings`, `page`, `size` and `quit` work signed out; any other command then logs `⚠︎ Sign in to Cue first (NAME ignored)`). `CUE_SURFACES=1`, only here: under `CUE_BACKGROUND`
-  the live call's surfaces — the overlay, the tray icon, the hot keys — are as in normal use (the overlay above other windows, the keys registered); without it a test run has no tray icon or hot keys (as the Mac) and the overlay stays at the bottom.
+  `CUE_ME_TICK`, `CUE_API_URL`, `CUE_WEB_AUTH=headless`, `CUE_PROJECT=name` as on the Mac; `CUE_CONTROL` commands now: `signin [google|github]`, `signout`, `settings general|account`,
+  `page home|upcoming|NAME|NAME/overview|NAME/answers|NAME/notes`, `size W H`, `quit`, and the projects': `new NAME`, `add PATH` (a file dropped on the open project's materials, else the active project's),
+  `set PROJECT | occasion|language|names | VALUE`, `remove PROJECT | FILE`, plus two the Mac has no command for, because it does them in a dialog no case drives: `rename-project NAME | NEW` and `delete-project NAME`
+  (what the pane's context menu runs). Commands run one after another, so `new` and `add` finish before the next line. `signin`, `signout`, `settings`, `page`, `size` and `quit` work signed out; any other command then
+  logs `⚠︎ Sign in to Cue first (NAME ignored)`.
+  The live call's `CUE_CONTROL` commands: `start NAME` (Start Cue for that project: shows the overlay and listens), `stop`, `project NAME` (the overlay's project menu), `ask TEXT`, `show TEXT`, `newest`, `prepare`; the project is found as `page NAME` finds it (by name, else by folder name), and none is no-op, as on the Mac.
+  `CUE_SURFACES=1`, only here: under `CUE_BACKGROUND` the live call's surfaces — the overlay, the tray icon, the hot keys — are as in normal use (the overlay above other windows, the keys registered); without it a test run has no tray icon or hot keys (as the Mac) and the overlay stays at the bottom.
   `CUE_LIVE_BREAK=SECONDS` (only here) loses the live socket once, that long after it first came up: the call reconnects (`⚠︎ The live call's connection: …`) and goes on over the same call.
   `CUE_SNAPSHOT` also takes the overlay (`PrintWindow`, to the file itself, `…cue.png`; the dashboard's is `…-dashboard.png`) and, like `CUE_ALLOW_CAPTURE=1`, lets screenshots see it.
 
-## Live call on Windows (`apps/windows/Cue`: `Core/{LiveModel,LiveCall,AudioSink,AudioCapture,Wasapi,Rehearsal,…}.cs`, `Views/{OverlayWindow,LiveView}.cs`)
+## Live call on Windows (`apps/windows/Cue`: `Core/{LiveModel,LiveCall,AudioSink,AudioCapture,Wasapi,Rehearsal,…}.cs`, `Views/OverlayWindow.cs`)
 
 The port of `LiveCall`, `AudioCapture`, `OverlayView`, `HotKeys` and the call half of the Mac's `AppState`, on the foundation above. Session log lines, the reading rules and the exchange and answer state
 are the Mac's, word for word.
@@ -301,8 +317,11 @@ are the Mac's, word for word.
   characters: Enter answer now, H show/hide (starts Cue when it doesn't run), A Auto, Page Up / Page Down previous / next answer, + / - text size. Windows keeps Win+Alt with the arrows (they failed to register) and the Game Bar has
   Win+Alt+R. One another program holds is logged (`⚠︎ Couldn't register the shortcut for NAME: another program uses Win+Alt+KEY`) and skipped. None under `CUE_BACKGROUND` unless `CUE_SURFACES=1`.
 - **The tray icon** (`Core/Tray.cs`): `Shell_NotifyIconW` and a native popup menu (Start/Stop Cue, Show or Hide, Answer Now, Open Dashboard, Settings, Restart Live Call, Quit); with it, closing the dashboard only hides it.
-- **Starting**: Home's Live call card (`Views/LiveView.cs`: the account's projects, Start Cue; Ctrl+Enter anywhere in the dashboard) and `start NAME`. `Core/ProjectLookup.cs` is the one small place that lists the account's projects
-  (`GET /v1/projects`) and finds one by name; the projects slice's store replaces it, and the button moves onto a project's page. After sign-in the project is `CUE_PROJECT` (created when missing), else the last used.
+- **Starting, and the projects**: the live call follows the projects' store (`state.Projects`, the projects slice above): `LiveModel.ActiveProject` is `ProjectStore.Active`, chosen at sign-in (`CUE_PROJECT`, else the last used) or by the person
+  (the overlay's project drop-down lists `state.Projects.Projects`; `ProjectStore.Activate` marks it used and logs `📁 Project: NAME`). **Start Cue is on a project's page** (`Views/ProjectPage`: *Start Cue* / *Stop Cue* beside its name), and Ctrl+Enter anywhere in the
+  dashboard is the Mac's File › Start Cue (`LiveModel.ToggleCue(open)`: Stop Cue while it runs for the project open, or none; else Start Cue for the open project, else the active one; none at all, the dashboard). A call is made for the project's `ServerId`:
+  one that has not reached the account yet shows "Waiting for the project to reach your account" and the call starts once it has, and another project (or its materials arriving) changes the status line and the call (`LiveModel.ProjectChanged`).
+  `start NAME` / `project NAME` find the project as `page NAME` does (`ProjectStore.FindByName`: by name, else by folder name), and none is a no-op, as on the Mac.
 - **Cases** `w3-…`: `rehearsal` (transcript, question, prepared match, streamed answer on the overlay, and in the snapshot), `reconnect` (the socket lost with `CUE_LIVE_BREAK`: the same call goes on, nothing shown twice), `ask` (Prepare Answer, Ask, Answer now), `reading` and `reading-aloud` (show, newest, the
   New question button, the reading rules), `limit`, `deepgram-drops`, `overlay` (above another program's window, never the focus, a real click and real typing, hidden from `CopyFromScreen`, shown with `CUE_ALLOW_CAPTURE`),
   `hot-keys` (real key presses), `call-audio` (real loopback). They use `bursts` and the stand-ins' lines (`FAKE_DEEPGRAM_LIVE`), `accountProject(cue, name, { materials })` (a project in the case user's account, made
@@ -639,8 +658,14 @@ updating the cases.
   snapshot cases skip there, with the probe's reason, if the probe finds those unreadable: CI covers the build, the
   command-line modes, the dashboard and the speech cases. **Run the
   whole suite on an authorized remote Mac before merging** and put its summary
-  in the PR. Keep CI green; never fake what's missing. The `windows` job (x64 on `windows-latest`, arm64 on `windows-11-arm`) sets up the toolchain
-  (`setup.ps1 -Install`), builds the app and the MSI (`build.ps1 -Msi`: warnings fail it), and runs `run.ts --no-build` there: the `w…` cases and the backend's own; `build-and-test` requires it, and it keeps the MSI as an artifact.
+  in the PR. Keep CI green; never fake what's missing. The `windows` job is seven parallel jobs, each ten minutes or less
+  (they must never be the slowest check): on x64 (`windows-latest`) `x64-app` builds the app and runs the `w0-` and `w2-` cases (every case that launches it, the installer's apart), `x64-installer` builds the app and the MSI and runs
+  `w1-`, and `x64-backend-1`…`-3` run the backend's own cases without building anything (`run.ts --no-app --shard=K/3`, balanced by `durations.json`; setup.ps1 `-Backend`
+  skips the .NET SDK and OCR); on arm64 (`windows-11-arm`) `arm64-app` and `arm64-installer` do the same as their x64 twins. **arm64 CI covers the Arm build, the app's cases and the
+  installer, not the backend's cases**: Node.js, workerd and Vite+ run emulated there (about three times slower), and the backend does not differ by processor; the whole suite on Arm is
+  the Windows 11 VM's run in each PR. `build-and-test` requires every one of them; each keeps its logs on failure, the installer jobs keep the MSI as an artifact. A new push cancels the
+  run it replaces (`concurrency`). No NuGet cache: restoring one from the cache took longer than restoring from nuget.org (50 s against 35 on arm64). Add a case's seconds to `durations.json`
+  from a CI run; a backend case goes to a shard by them without anything else.
 - `.github/workflows/deploy.yml` runs on pushes to `main` that touch `apps/api`, `apps/admin`, `packages/contract` or their build (and on demand), never on a fork: `vp check`, the remote
   migrations, `cf deploy`, the migrations again, a check that the Worker answers. It needs the secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` and the variable `ADMIN_EMAILS`. Do not
   run it, or `cf deploy` without `--dry-run`, from here.

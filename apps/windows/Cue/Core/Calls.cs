@@ -84,9 +84,6 @@ public sealed class CallEvent
 /// <param name="Time">When the speaker stopped.</param>
 public sealed record Utterance(Side Side, string Text, DateTime Started, DateTime Time);
 
-/// <summary>A prepared question and its answer, found in a material by the Cue API.</summary>
-public sealed record PreparedAnswer(string Q, string A, string? Who, string Source);
-
 /// <summary>What was asked in one go: one question or several, each answered on its own and shown together.</summary>
 public sealed class Exchange
 {

@@ -2,18 +2,21 @@
 # It publishes the app (WinUI 3, unpackaged, with the .NET and Windows App SDK runtimes next to it) to <Output>\<arch>\Cue.exe, and with -Msi also makes
 # the installer <Output>\Cue-<version>-<arch>.msi. Warnings fail the build.
 #
-#   powershell -ExecutionPolicy Bypass -File apps\windows\scripts\build.ps1 [-Arch x64|arm64] [-Version 2.0.1] [-Msi] [-Output DIR]
+#   powershell -ExecutionPolicy Bypass -File apps\windows\scripts\build.ps1 [-Arch x64|arm64] [-Version 2.0.1] [-Msi] [-Quick] [-Output DIR]
 #
 #   -Arch     the processor the app is for; this PC's by default (an x64 PC builds arm64 as well, and the other way round)
 #   -Version  MAJOR.MINOR.PATCH for the app and the installer; release.yml passes the Mac's version and the patch from the tags, else
 #             CFBundleShortVersionString of apps/mac/Resources/Info.plist with patch 0
 #   -Msi      also build the installer (WiX, through `dotnet build`)
+#   -Quick    with -Msi, an installer for a test and not for shipping: its files are stored, not compressed, and it is not validated
+#             (a few seconds, not a minute; about 250 MB, not 70)
 #   -Output   where the build goes: apps\windows\build by default
 [CmdletBinding()]
 param(
     [ValidateSet('x64', 'arm64')][string]$Arch,
     [string]$Version,
     [switch]$Msi,
+    [switch]$Quick,
     [string]$Output
 )
 
@@ -44,17 +47,20 @@ function Invoke-DotNet {
 }
 
 $app = Join-Path $Output $Arch
+$clock = [System.Diagnostics.Stopwatch]::StartNew()
 Write-Host "Publishing Cue $Version for $Arch..."
 # TreatWarningsAsErrors is on in Cue.csproj: new code must build warning-free.
 Invoke-DotNet publish (Join-Path $windows 'Cue\Cue.csproj') -c Release -r "win-$Arch" --self-contained `
     "-p:Version=$Version" "-p:CueApiUrl=$apiUrl" "-p:PublishDir=$app" '-p:DebugType=None' '-p:DebugSymbols=false' -nologo '-v:minimal'
-Write-Host "Built $app\Cue.exe"
+Write-Host ("Built $app\Cue.exe in {0:N0} s" -f $clock.Elapsed.TotalSeconds)
 
 if ($Msi) {
+    $clock.Restart()
     Write-Host "Building the installer..."
     # Always from scratch: the installer's inputs are the published files, which MSBuild's up-to-date check doesn't follow.
-    Invoke-DotNet build (Join-Path $windows 'Installer\Installer.wixproj') -c Release "-p:Platform=$Arch" "-p:CueVersion=$Version" `
-        "-p:AppDir=$app" "-p:OutDir=$Output" --no-incremental -nologo '-v:minimal'
+    $wix = @("-p:Platform=$Arch", "-p:CueVersion=$Version", "-p:AppDir=$app", "-p:OutDir=$Output")
+    if ($Quick) { $wix += '-p:CueCompression=none', '-p:SuppressValidation=true' }
+    Invoke-DotNet build (Join-Path $windows 'Installer\Installer.wixproj') -c Release @wix --no-incremental -nologo '-v:minimal'
     Get-ChildItem $Output -Filter '*.wixpdb' | Remove-Item -Force
-    Write-Host "Built $Output\Cue-$Version-$Arch.msi"
+    Write-Host ("Built $Output\Cue-$Version-$Arch.msi in {0:N0} s" -f $clock.Elapsed.TotalSeconds)
 }

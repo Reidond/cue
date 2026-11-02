@@ -291,11 +291,13 @@ can also record a call in progress from its row in Upcoming.
 
 ## Cue for Windows
 
-A native Windows port (WinUI 3, `apps/windows`) is on its way, one piece at a time. So far it is the foundation: the dashboard window
-(Home, Upcoming, Settings; Mica, light and dark), signing in to the same invite-only Cue account in your browser (Google or GitHub), Settings ›
-Account with the month's usage and Sign Out, the session log and the test hooks, the installer and its CI; and the live call: Start Cue on Home (Ctrl+Enter),
-the microphone and the call's audio (everything the PC plays but Cue's own sound) streamed to the backend, the overlay with the questions and answers (above other windows, never taking the focus, hidden
-from screen sharing), the Win+Alt shortcuts and the icon in the notification area. Projects, recordings and notes, and meetings from your calendar follow.
+A native Windows port (WinUI 3, `apps/windows`) is on its way, one piece at a time. So far it has the dashboard window (Home, Upcoming,
+Settings; Mica, light and dark), signing in to the same invite-only Cue account in your browser (Google or GitHub), Settings › Account with the
+month's usage and Sign Out, your projects and their materials (the same ones the Mac shows: the account holds them, and the projects in
+`Documents\Cue` go up to it at the first sign-in), the session log and the test hooks, the installer and its CI; and the live call: Start Cue on a
+project's page (Ctrl+Enter anywhere in the dashboard), the microphone and the call's audio (everything the PC plays but Cue's own sound) streamed
+to the backend, the overlay with the questions and answers (above other windows, never taking the focus, hidden from screen sharing, designed as
+a Windows 11 app), the Win+Alt shortcuts and the icon in the notification area. Recordings and notes, and meetings from your calendar follow.
 
 - **Install**: download `Cue-VERSION-x64.msi` (or `-arm64.msi` for Windows on Arm) from the Releases page and open it. It installs Cue for
   everyone on the PC, adds it to the Start menu, replaces an older Cue, and needs no .NET or Windows App SDK installed. The installer is not

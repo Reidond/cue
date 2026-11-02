@@ -22,7 +22,22 @@
             IsPaneToggleButtonVisible="False"
             IsSettingsVisible="True"
             OpenPaneLength="220"
-            SelectionChanged="OnSelectionChanged">
+            SelectionChanged="OnSelectionChanged"
+            ItemInvoked="OnItemInvoked">
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem
+                    x:Name="NewProjectItem"
+                    Content="New Project"
+                    Visibility="Collapsed"
+                    ToolTipService.ToolTip="New project (Ctrl+N)">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE710;" />
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="N" Modifiers="Control" Invoked="OnNewProjectAccelerator" />
+                    </NavigationViewItem.KeyboardAccelerators>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="HomeItem" Content="Home" Tag="Home">
                     <NavigationViewItem.Icon>

@@ -7,8 +7,6 @@ public sealed partial class Preferences
     private bool? micQuestions;
     private bool? showTranscript;
     private double? textSize;
-    private string? activeProject;
-    private bool activeProjectRead;
 
     /// <summary>Answer the questions Cue notices by itself; off, they are listed for Prepare Answer.</summary>
     public bool AutoAnswer
@@ -61,27 +59,6 @@ public sealed partial class Preferences
             if (TextSize == value) return;
             textSize = value;
             file.Set("textSize", value);
-            Raise();
-        }
-    }
-
-    /// <summary>The name of the project Cue was last bound to.</summary>
-    public string? ActiveProject
-    {
-        get
-        {
-            if (!activeProjectRead)
-            {
-                activeProject = file.String("activeProject");
-                activeProjectRead = true;
-            }
-            return activeProject;
-        }
-        set
-        {
-            if (ActiveProject == value) return;
-            activeProject = value;
-            file.Set("activeProject", value);
             Raise();
         }
     }

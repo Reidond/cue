@@ -32,7 +32,6 @@ public sealed class LiveModel : Observable
     private bool speechUnavailable;
     private bool capturing;
     private bool rehearsalStarted;
-    private Task choosing = Task.CompletedTask;
 
     /// <summary>Who is talking right now, by the server's word.</summary>
     private readonly Dictionary<Side, bool> speaking = [];
@@ -66,7 +65,6 @@ public sealed class LiveModel : Observable
     private readonly HashSet<Guid> unseen = [];
     private readonly HashSet<Guid> seen = [];
 
-    private ProjectInfo? activeProject;
     private bool cueRunning;
     private ServiceStatus mic = new(false, "Not listening — Start Cue to listen");
     private ServiceStatus call = new(false, "Not listening — Start Cue to listen");
@@ -113,15 +111,8 @@ public sealed class LiveModel : Observable
 
     // MARK: State the overlay shows
 
-    /// <summary>The project Cue answers from (and, with the recordings slice, records into).</summary>
-    public ProjectInfo? ActiveProject
-    {
-        get => activeProject;
-        private set
-        {
-            if (Set(ref activeProject, value)) Touch();
-        }
-    }
+    /// <summary>The project Cue answers from (and, with the recordings slice, records into): the projects' store holds it, as the person chose it or sign-in did.</summary>
+    public Project? ActiveProject => state.Projects.Active;
 
     /// <summary>Between Start Cue and Stop Cue: the overlay is up and Cue listens for questions.</summary>
     public bool CueRunning
@@ -129,9 +120,6 @@ public sealed class LiveModel : Observable
         get => cueRunning;
         private set => Set(ref cueRunning, value);
     }
-
-    /// <summary>The account's projects, as last read (after signing in, and whenever one is made or the list is asked for): the overlay's project menu.</summary>
-    public IReadOnlyList<ProjectInfo> Projects { get; private set; } = [];
 
     public IReadOnlyList<Exchange> Exchanges => exchanges;
 
@@ -234,8 +222,8 @@ public sealed class LiveModel : Observable
             if (!speech.Ok) return (speech.Detail, speech.Working ? StatusKind.Working : StatusKind.Problem);
             if (!claude.Ok) return (claude.Detail, claude.Working ? StatusKind.Working : StatusKind.Problem);
             if (!call.Ok && !mic.Ok) return ("No audio", StatusKind.Problem);
-            if (activeProject is null) return ("No project", StatusKind.Problem);
-            if (activeProject.MaterialCount == 0) return ("No materials", StatusKind.Problem);
+            if (ActiveProject is not { } project) return ("No project", StatusKind.Problem);
+            if (project.Materials.Count == 0) return ("No materials", StatusKind.Problem);
             return ("Listening", StatusKind.Ready);
         }
     }
@@ -244,13 +232,14 @@ public sealed class LiveModel : Observable
 
     public void Start()
     {
-        // Signing out (or losing the session) ends listening: the overlay goes, and so does anything that would answer. Signing in finds the project.
+        // Signing out (or losing the session) ends listening: the overlay goes, and so does anything that would answer.
         Api.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName != nameof(CueApi.Phase)) return;
-            if (Api.Phase == Phase.SignedOut) StopCue();
-            else if (Api.Phase == Phase.SignedIn) choosing = ChooseProject();
+            if (e.PropertyName == nameof(CueApi.Phase) && Api.Phase == Phase.SignedOut) StopCue();
         };
+        // The projects are the store's: another project (or the same one, once it reached the account) means another call, and what the overlay says of it
+        // (no materials yet) changes with the files.
+        state.Projects.PropertyChanged += (_, _) => ProjectChanged();
         state.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(AppState.PlanLimit)) Touch();
@@ -259,6 +248,7 @@ public sealed class LiveModel : Observable
         Prefs.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(Preferences.SpeakerName) or nameof(Preferences.AutoAnswer) or nameof(Preferences.MicQuestions)) SendConfig();
+            else if (e.PropertyName == nameof(Preferences.ActiveProject)) ProjectChanged();
         };
         StartRehearsalIfRequested();
         timer = state.Queue.CreateTimer();
@@ -287,69 +277,32 @@ public sealed class LiveModel : Observable
 
     // MARK: Projects
 
-    /// <summary>
-    /// The project Cue is bound to after signing in. CUE_PROJECT=name picks it (creating it when missing); otherwise the last one used.
-    /// </summary>
-    private async Task ChooseProject()
+    /// <summary>A call listens for one project: when the active one is another (or reached the account since), another call takes over.</summary>
+    private void ProjectChanged()
     {
-        try
-        {
-            var all = await ProjectLookup.List(Api);
-            ProjectInfo? chosen;
-            if (Env.Get("CUE_PROJECT") is { } name)
-            {
-                chosen = all.FirstOrDefault(project => string.Equals(project.Name, name, StringComparison.CurrentCultureIgnoreCase));
-                if (chosen is null)
-                {
-                    chosen = await ProjectLookup.Create(Api, name);
-                    all = [.. all, chosen];
-                }
-            }
-            else
-            {
-                chosen = all.FirstOrDefault(project => project.Name == Prefs.ActiveProject) ?? all.OrderByDescending(project => project.LastUsedAt ?? 0).FirstOrDefault();
-            }
-            Projects = all;
-            ActiveProject = chosen;
-            Touch();
-            Prefs.ActiveProject = chosen?.Name;
-            if (chosen is not null) Log.Write($"📁 Project: {chosen.Name}");
-        }
-        catch (CueApiException e)
-        {
-            Log.Write($"{SessionLog.Warning} Couldn't read your projects: {e.Message}");
-        }
+        if (capturing && ActiveProject?.ServerId != callProjectId) StartCall();
+        Touch();
     }
 
-    /// <summary>Binds Cue to a project: the call listens for it.</summary>
-    public void Activate(ProjectInfo project)
-    {
-        if (project.Id == activeProject?.Id)
-        {
-            // Its materials may have changed since.
-            ActiveProject = project;
-            return;
-        }
-        ActiveProject = project;
-        Prefs.ActiveProject = project.Name;
-        Log.Write($"📁 Project: {project.Name}");
-        _ = ProjectLookup.Touch(Api, project.Id);
-        // A call listens for one project: another project means another call.
-        if (capturing && callProjectId != project.Id) StartCall();
-    }
+    /// <summary>Binds Cue to a project (the store: it is the one used last now, and `📁 Project: NAME` is logged when it changes); the call follows.</summary>
+    public void Activate(Project project) => state.Projects.Activate(project);
 
     /// <summary>The project page's Start Cue: shows the overlay and listens, answering from this project.</summary>
-    public void StartCue(ProjectInfo project)
+    public void StartCue(Project project)
     {
         Activate(project);
         StartListening();
     }
 
-    /// <summary>Start Cue for the current project; Stop Cue when it runs. The dashboard's button, its Ctrl+Enter and the tray's menu.</summary>
-    public void ToggleCue()
+    /// <summary>
+    /// Ctrl+Enter, the project page's button and the tray's menu (the Mac's File › Start Cue): Stop Cue while it runs for the project open in the dashboard
+    /// (or with none open); otherwise Start Cue for that project, else the current one; with none at all, the dashboard to make one.
+    /// </summary>
+    public void ToggleCue(Project? open = null)
     {
-        if (CueRunning) StopCue();
-        else StartListening();
+        if (CueRunning && (open is null || open.Id == ActiveProject?.Id)) StopCue();
+        else if ((open ?? ActiveProject) is { } project) StartCue(project);
+        else state.OpenDashboard();
     }
 
     /// <summary>Hides or shows the overlay while Cue runs (it keeps listening); starts Cue when it doesn't.</summary>
@@ -378,7 +331,7 @@ public sealed class LiveModel : Observable
         ShowOverlay();
         if (CueRunning) return;
         CueRunning = true;
-        Log.Write($"▶︎ Cue started{(activeProject is { } project ? $": {project.Name}" : "")}");
+        Log.Write($"▶︎ Cue started{(ActiveProject is { } project ? $": {project.Name}" : "")}");
         UpdateCapture();
         SendConfig();
         Touch();
@@ -517,12 +470,8 @@ public sealed class LiveModel : Observable
         {
             if (e.PropertyName != nameof(CueApi.Phase) || Api.Phase != Phase.SignedIn) return;
             Api.PropertyChanged -= StartOnceSignedIn;
-            // `Phase` is set before the project is chosen (and the overlay is first shown): hop to the next turn.
-            state.Queue.TryEnqueue(async () =>
-            {
-                await choosing;
-                StartListening();
-            });
+            // The projects were loaded and one chosen before `Phase` was set (CueApi.OnSignedIn): hop to the next turn, when it is.
+            state.Queue.TryEnqueue(StartListening);
         }
         Api.PropertyChanged += StartOnceSignedIn;
         _ = Rehearse(path);
@@ -557,23 +506,24 @@ public sealed class LiveModel : Observable
     {
         EndCall();
         var generation = callGeneration;
-        if (activeProject is not { } project)
+        if (ActiveProject is not { } project || project.ServerId is not { } serverId)
         {
-            Claude = new ServiceStatus(false, "No project");
-            Speech = new ServiceStatus(false, "No project");
+            var detail = ActiveProject is null ? "No project" : "Waiting for the project to reach your account";
+            Claude = new ServiceStatus(false, detail);
+            Speech = new ServiceStatus(false, detail);
             return;
         }
-        callProjectId = project.Id;
+        callProjectId = serverId;
         Claude = new ServiceStatus(false, "Warming up Claude…", true);
         Speech = new ServiceStatus(false, "Starting speech recognition…", true);
-        _ = MakeCall(project, generation);
+        _ = MakeCall(serverId, generation);
     }
 
-    private async Task MakeCall(ProjectInfo project, int generation)
+    private async Task MakeCall(string projectId, int generation)
     {
         try
         {
-            var info = await Api.CreateCall(project.Id, Prefs.SpeakerName, Prefs.AutoAnswer, Prefs.MicQuestions, CueRunning);
+            var info = await Api.CreateCall(projectId, Prefs.SpeakerName, Prefs.AutoAnswer, Prefs.MicQuestions, CueRunning);
             if (generation != callGeneration)
             {
                 await Api.EndCall(info.CallId);
@@ -989,19 +939,20 @@ public sealed class LiveModel : Observable
     private void RegisterControl()
     {
         var control = state.Control;
-        control.Register("start", async argument =>
+        control.Register("start", argument =>
         {
-            if (await ProjectLookup.Find(Api, argument) is { } project) StartCue(project);
-            else Log.Write($"{SessionLog.Warning} No project named “{argument}”");
+            if (state.Projects.FindByName(argument) is { } project) StartCue(project);
+            return Task.CompletedTask;
         });
         control.Register("stop", _ =>
         {
             StopCue();
             return Task.CompletedTask;
         });
-        control.Register("project", async argument =>
+        control.Register("project", argument =>
         {
-            if (await ProjectLookup.Find(Api, argument) is { } project) Activate(project);
+            if (state.Projects.FindByName(argument) is { } project) Activate(project);
+            return Task.CompletedTask;
         });
         control.Register("ask", argument =>
         {

@@ -42,10 +42,22 @@ public sealed partial class Preferences : Observable
 {
     private readonly SettingsFile file = new();
     private string speakerName;
+    private string? activeProject;
 
     public Preferences()
     {
         speakerName = file.String("speakerName") ?? Environment.UserName;
+        activeProject = file.String("activeProject");
+    }
+
+    /// <summary>Folder name of the project Cue was last bound to.</summary>
+    public string? ActiveProject
+    {
+        get => activeProject;
+        set
+        {
+            if (Set(ref activeProject, value)) file.Set("activeProject", value);
+        }
     }
 
     /// <summary>What notes and answers call the person who uses Cue.</summary>
