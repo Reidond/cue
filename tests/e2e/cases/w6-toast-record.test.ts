@@ -55,9 +55,9 @@ e2eCase(
         await cue.waitLog(/🔔 Record “Weekly design sync”\?/, 10);
         assertEq(cue.logCount(/Notifications unavailable|Couldn't show a notification/), 0, 'Windows took the notification');
 
-        // The banner stays about five seconds: look for its Record button every second until it is there, and click it.
+        // The banner stays about five seconds: look for its Record button until it is there (each look takes a couple of seconds), and click it.
         let clicked = false;
-        for (let waited = 0; waited < 20 && !clicked; waited++) {
+        for (let waited = 0; waited < 6 && !clicked; waited++) {
             clicked = await clickToast('Record');
             if (!clicked) await sleep(1);
         }

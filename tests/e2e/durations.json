@@ -125,5 +125,15 @@
     "w4-speakers": 26,
     "w4-step-fails": 65,
     "w4-trash": 24,
-    "w4-upload-resumes": 35
+    "w4-upload-resumes": 35,
+    "w6-appointment-store": 11,
+    "w6-meeting-auto": 31,
+    "w6-meeting-nothing": 16,
+    "w6-meeting-project": 26,
+    "w6-meeting-prompt": 24,
+    "w6-meeting-record": 33,
+    "w6-mic-registry": 19,
+    "w6-native-call": 20,
+    "w6-toast-record": 40,
+    "w6-upcoming": 20
 }
