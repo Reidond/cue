@@ -1,7 +1,8 @@
 # Checks the TypeScript, builds the apps and runs the end-to-end suite on every pull request (and only there). The Mac suite is split across
-# four macOS runners (`run.ts --shard`). Cue for Windows is built and tested in parallel jobs, each well under ten minutes: on x64 the app's
-# cases, the installer's, and the backend's cases in three shards (they need no build); on arm64, where Node.js, workerd and Vite+ run emulated
-# and three times slower, the app is built for Arm and its own cases run (the app's, the installer's), not the backend's, which the x64 jobs
+# four macOS runners (`run.ts --shard`). Cue for Windows is built and tested in parallel jobs, each well under ten minutes: the app's cases (every
+# `w` case but the installer's, so a slice's new cases join without an edit here) split into WINDOWS_APP_SHARDS jobs per architecture, the
+# installer's case, and on x64 the backend's cases in shards (they need no build). On arm64, where Node.js, workerd and Vite+ run emulated and
+# about three times slower, the app is built for Arm and its own cases run (the app's, the installer's), not the backend's, which the x64 jobs
 # cover. `build-and-test`, the check main requires, passes when the check, every shard and every Windows job did.
 name: CI
 
@@ -107,22 +108,44 @@ jobs:
           path: Cue.zip
           if-no-files-found: ignore
 
+  # The Windows jobs' matrix, made from two numbers. Raise WINDOWS_APP_SHARDS when the app jobs near ten minutes (each also pays about three
+  # minutes for the toolchain and the build); it applies to both architectures. The app jobs run every `w` case but the installer's
+  # (`--except=w1-`), balanced by the seconds in tests/e2e/durations.json.
+  windows-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      WINDOWS_APP_SHARDS: 4
+      WINDOWS_BACKEND_SHARDS: 3
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        # `kind`: app builds Cue.exe and runs the w cases but the installer's; installer also builds the MSI and runs w1-; backend builds
+        # nothing and runs the cases that never launch the app (`run.ts --no-app`), on x64 only.
+        run: |
+          matrix=$(jq -nc --argjson app "$WINDOWS_APP_SHARDS" --argjson backend "$WINDOWS_BACKEND_SHARDS" '
+            def runner: if . == "arm64" then "windows-11-arm" else "windows-latest" end;
+            [
+              ("x64", "arm64") as $arch
+              | (range(1; $app + 1) as $k
+                  | { id: "\($arch)-app-\($k)", runner: ($arch | runner), arch: $arch, kind: "app", cases: "w --except=w1- --shard=\($k)/\($app)" }),
+                { id: "\($arch)-installer", runner: ($arch | runner), arch: $arch, kind: "installer", cases: "w1-" }
+            ] + [
+              range(1; $backend + 1) as $k
+              | { id: "x64-backend-\($k)", runner: "windows-latest", arch: "x64", kind: "backend", cases: "--no-app --shard=\($k)/\($backend)" }
+            ]')
+          echo "$matrix" | jq .
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   windows:
+    needs: windows-plan
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # `kind`: app builds Cue.exe and runs the cases that launch it (w0, w2); installer also builds the MSI and runs w1; backend builds nothing and runs the
-          # cases that never launch the app (`run.ts --no-app`), split by `--shard` from durations.json.
-          - { id: x64-app, runner: windows-latest, arch: x64, kind: app, cases: 'w0- w2-' }
-          - { id: x64-installer, runner: windows-latest, arch: x64, kind: installer, cases: 'w1-' }
-          - { id: x64-backend-1, runner: windows-latest, arch: x64, kind: backend, cases: '--no-app --shard=1/3' }
-          - { id: x64-backend-2, runner: windows-latest, arch: x64, kind: backend, cases: '--no-app --shard=2/3' }
-          - { id: x64-backend-3, runner: windows-latest, arch: x64, kind: backend, cases: '--no-app --shard=3/3' }
-          - { id: arm64-app, runner: windows-11-arm, arch: arm64, kind: app, cases: 'w0- w2-' }
-          - { id: arm64-installer, runner: windows-11-arm, arch: arm64, kind: installer, cases: 'w1-' }
+        include: ${{ fromJSON(needs.windows-plan.outputs.matrix) }}
     name: windows (${{ matrix.id }})
     steps:
       - uses: actions/checkout@v4

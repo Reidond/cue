@@ -257,14 +257,14 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   `Storage.Documents` for paths (**keep every `DispatcherQueueTimer` in a field**: one that only a local variable holds is garbage-collected and silently stops, which looked like commands and snapshots going missing now and then); `SettingsFile`/`Preferences` for settings (`settings.json`).
 - **Where it is built and tested**: never on this Mac. The Windows 11 VM of vmpal (VM "Windows VM 1", Arm; `vmpal_*` tools, agent control on): share the worktree read-only
   (`vmpal_update_vm` `sharedFolders` with name `cue-src`: it is `Z:\cue-src`), copy it to the VM's own disk (`robocopy Z:\cue-src C:\src\cue /MIR /XD node_modules .git build obj bin .vs .claude .build .cloudflare`:
-  `apps/mac/.build` is a gigabyte the share reads for minutes and then fails on, and `/MIR` would delete the VM's generated `apps/api/.cloudflare` types; never build on the share), run `setup.ps1 -Install` once (from an elevated shell: `vmpal_exec_admin`), then `node tests\e2e\run.ts w0- 9e-` there with `vmpal_exec` (short `waitSeconds`, then `vmpal_exec_result`).
+  `apps/mac/.build` is a gigabyte the share reads for minutes and then fails on, and `/MIR` would delete the VM's generated `apps/api/.cloudflare` types; never build on the share), run `setup.ps1 -Install` once (from an elevated shell: `vmpal_exec_admin`), then `node tests\e2e\run.ts w --except=w1- 9e-` there with `vmpal_exec` (short `waitSeconds`, then `vmpal_exec_result`).
   A process started by `vmpal_exec` ends with the command: to look at a window yourself start Cue with `Invoke-CimMethod -ClassName Win32_Process -MethodName Create`, and read the window
   with `vmpal_screenshot` in both themes (`CUE_APPEARANCE=light|dark`). The VM snapshot `cue-toolchain` has the toolchain installed and the repository's packages in `C:\src\cue`.
   `w1-installer` installs per machine, so it needs an elevated process (`vmpal_exec_admin`; a CI runner is one) and skips without.
 - **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks), `w1-…` (the installer) and `w2-…` (projects and materials: `w2-projects`, `w2-materials`, `w2-import-projects`,
   `w2-account-projects`, `w2-active-project`; they read the window with `windowText`, the account with `backend.accountOf(cue.email)`) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
   them together with the cases that never launch the app (the source has no `.launch(`, `.cli(` or `.control(`: the backend's own, `9a-…` to `9e-…`, `95`–`99`). `9e-windows-sign-in` signs in as `cue-windows` end to end
-  and runs anywhere with `--no-app`. A case reads what the window shows with `windowText(pid)` (`tools/uia.ps1`: the text of its UI Automation tree, exact (no recognition errors) and complete, what is scrolled out of view too),
+  and runs anywhere with `--no-app`. Every later `wN-…` case is the app's too (CI runs all `w` cases but `w1-`; see CI and releases). A case reads what the window shows with `windowText(pid)` (`tools/uia.ps1`: the text of its UI Automation tree, exact (no recognition errors) and complete, what is scrolled out of view too),
   and `windowsOf(pid)` is `tools/windows.ps1` (the foreground, the windows' sizes and styles: the twin of `appWindows`); `ocr` is `tools/ocr.ps1` (Windows' own `Windows.Media.Ocr`; it needs the English recognizer,
   `Language.OCR~~~en-US~0.0.1.0`, which `setup.ps1` adds) for what a snapshot shows; `cue.defaults()` edits `settings.json`; `cue.stop()` sends `quit` through the control file and kills the tree after 10 s.
 - **Hooks that differ** (the rest of the table below applies as it reads; the audio ones arrive with their slice): `CUE_HOME` has the Mac's layout (`CUE_HOME/Application Support/Cue`, `CUE_HOME/Documents`, sessions in
@@ -422,6 +422,7 @@ node tests/e2e/run.ts --real-deepgram 83 84   # the backend's Deepgram is the re
 node tests/e2e/run.ts --keep           # keep every sandbox (a failed case always keeps its own)
 node tests\e2e\run.ts                  # on Windows: build apps/windows (build.ps1), then the w… cases and the backend's own (no app launched)
 node tests\e2e\run.ts --no-build w0-  # on Windows: the app already built (apps\windows\build\ARCH\Cue.exe)
+node tests\e2e\run.ts --no-build w --except=w1- --shard=2/4  # on Windows: what one of CI's app jobs runs (every w case but the installer's, one part of four)
 pnpm install && vp check               # format, lint, type-check; run it before you commit
 ```
 
@@ -608,14 +609,16 @@ updating the cases.
   snapshot cases skip there, with the probe's reason, if the probe finds those unreadable: CI covers the build, the
   command-line modes, the dashboard and the speech cases. **Run the
   whole suite on an authorized remote Mac before merging** and put its summary
-  in the PR. Keep CI green; never fake what's missing. The `windows` job is seven parallel jobs, each ten minutes or less
-  (they must never be the slowest check): on x64 (`windows-latest`) `x64-app` builds the app and runs the `w0-` and `w2-` cases (every case that launches it, the installer's apart), `x64-installer` builds the app and the MSI and runs
-  `w1-`, and `x64-backend-1`…`-3` run the backend's own cases without building anything (`run.ts --no-app --shard=K/3`, balanced by `durations.json`; setup.ps1 `-Backend`
-  skips the .NET SDK and OCR); on arm64 (`windows-11-arm`) `arm64-app` and `arm64-installer` do the same as their x64 twins. **arm64 CI covers the Arm build, the app's cases and the
-  installer, not the backend's cases**: Node.js, workerd and Vite+ run emulated there (about three times slower), and the backend does not differ by processor; the whole suite on Arm is
-  the Windows 11 VM's run in each PR. `build-and-test` requires every one of them; each keeps its logs on failure, the installer jobs keep the MSI as an artifact. A new push cancels the
-  run it replaces (`concurrency`). No NuGet cache: restoring one from the cache took longer than restoring from nuget.org (50 s against 35 on arm64). Add a case's seconds to `durations.json`
-  from a CI run; a backend case goes to a shard by them without anything else.
+  in the PR. Keep CI green; never fake what's missing. The `windows` jobs are parallel and each about eight minutes or less
+  (they must never be the slowest check): a small `windows-plan` job makes their matrix from two numbers at its top, `WINDOWS_APP_SHARDS` (4) and `WINDOWS_BACKEND_SHARDS` (3). Per
+  architecture, `ARCH-app-1`…`-N` build the app and run **every `w` case but the installer's** (`run.ts w --except=w1- --shard=K/N`: a slice's new `w2-`, `w3-`, … cases join by their
+  name, with no edit to the workflow), balanced by `durations.json`; `ARCH-installer` builds the app and the MSI and runs `w1-`. On x64 (`windows-latest`) `x64-backend-1`…`-M` also
+  run the backend's own cases without building anything (`run.ts --no-app --shard=K/M`; setup.ps1 `-Backend` skips the .NET SDK and OCR). Each app job pays about three minutes for
+  the toolchain and the build, so raise `WINDOWS_APP_SHARDS` (it applies to both architectures) when one nears ten minutes; the arm64 jobs are the slow ones, about two and a half
+  times the x64 case time. **arm64 CI covers the Arm build, the app's cases and the installer, not the backend's cases**: Node.js, workerd and Vite+ run emulated there, and the
+  backend does not differ by processor; the whole suite on Arm is the Windows 11 VM's run in each PR. `build-and-test` requires every one of them; each keeps its logs on failure,
+  the installer jobs keep the MSI as an artifact. A new push cancels the run it replaces (`concurrency`). No NuGet cache: restoring one from the cache took longer than restoring
+  from nuget.org (50 s against 35 on arm64). Add a case's seconds to `durations.json` from a CI run (a case not in it counts as 30).
 - `.github/workflows/deploy.yml` runs on pushes to `main` that touch `apps/api`, `apps/admin`, `packages/contract` or their build (and on demand), never on a fork: `vp check`, the remote
   migrations, `cf deploy`, the migrations again, a check that the Worker answers. It needs the secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` and the variable `ADMIN_EMAILS`. Do not
   run it, or `cf deploy` without `--dry-run`, from here.
