@@ -42,6 +42,16 @@ export async function needWindowsOcr(): Promise<void> {
         skip("Windows has no OCR language installed (setup.ps1 adds the English one), so the app's snapshots can't be read");
 }
 
+/** On Windows: a sound device to play through and listen to the PC play (a CI runner has none; a VM has a virtual one), for the cases that let Cue hear real audio. */
+export async function needAudioOutput(): Promise<void> {
+    const ran = await exec('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        "if (@(Get-CimInstance Win32_SoundDevice | Where-Object { $_.Status -eq 'OK' }).Count -gt 0) { 'yes' }",
+    ]);
+    if (ran.stdout.trim() !== 'yes') skip('this PC has no sound device to play through and listen to (a CI runner has none)');
+}
+
 /** A snapshot of the overlay that Vision can read here (it is drawn differently: it is all glass). */
 export function needOverlaySnapshots(): void {
     const overlay = probed('overlay');

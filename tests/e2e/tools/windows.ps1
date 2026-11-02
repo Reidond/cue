@@ -4,8 +4,13 @@
 #
 #   foreground  whether one of its windows has the keyboard focus
 #   windows     its top-level windows, front to back: title, size, whether they are shown, and whether Windows gives them a taskbar button
-#               (no button: a tool window) or lets a click activate them (no-activate windows don't); `inFront` is how many other visible windows lie in front of it
+#               (no button: a tool window) or lets a click activate them (no-activate windows don't); `inFront` is how many other visible windows lie in front of it;
+#               `topmost` (above all normal windows), `affinity` (SetWindowDisplayAffinity: 0 drawn normally, 0x11 hidden from capture) and its place on screen
 param([Parameter(Mandatory = $true)][int]$ProcessId)
+
+# Pixels as Windows has them, not as a program that knows nothing of the screen's scale would be told.
+Add-Type -Name Dpi -Namespace Cue -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
+[void][Cue.Dpi]::SetProcessDPIAware()
 
 Add-Type @'
 using System;
@@ -19,11 +24,12 @@ public static class CueWindows
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, IntPtr lparam);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
-    [DllImport("user32.dll")] static extern int GetWindowTextW(IntPtr hwnd, StringBuilder text, int count);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr hwnd, StringBuilder text, int count);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hwnd, uint command);
+    [DllImport("user32.dll")] static extern bool GetWindowDisplayAffinity(IntPtr hwnd, out uint affinity);
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 
     public static List<IntPtr> All()
@@ -37,6 +43,7 @@ public static class CueWindows
     public static string Title(IntPtr h) { var s = new StringBuilder(256); GetWindowTextW(h, s, 256); return s.ToString(); }
     public static RECT Rect(IntPtr h) { RECT r; GetWindowRect(h, out r); return r; }
     public static long ExStyle(IntPtr h) { return GetWindowLongPtr(h, -20).ToInt64(); }
+    public static uint Affinity(IntPtr h) { uint a; GetWindowDisplayAffinity(h, out a); return a; }
 }
 '@
 
@@ -62,6 +69,11 @@ for ($i = 0; $i -lt $all.Count; $i++) {
         height = $r.Bottom - $r.Top
         toolWindow = [bool]($ex -band 0x80)
         noActivate = [bool]($ex -band 0x08000000)
+        # Above every normal window (WS_EX_TOPMOST), and hidden from screenshots and screen sharing (WDA_EXCLUDEFROMCAPTURE is 0x11, WDA_NONE 0).
+        topmost = [bool]($ex -band 0x8)
+        affinity = [int][CueWindows]::Affinity($h)
+        left = $r.Left
+        top = $r.Top
         # Visible windows in front of it, of any program (EnumWindows lists front to back), apart from the desktop's own.
         inFront = $front
     }

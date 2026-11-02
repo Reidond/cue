@@ -24,7 +24,20 @@ export interface WindowsOfApp {
     /** Whether one of its windows has the keyboard focus. */
     foreground: boolean;
     /** Its visible windows, front to back. */
-    windows: { title: string; width: number; height: number; toolWindow: boolean; noActivate: boolean; inFront: number }[];
+    windows: {
+        title: string;
+        width: number;
+        height: number;
+        left: number;
+        top: number;
+        toolWindow: boolean;
+        noActivate: boolean;
+        /** Above every normal window (WS_EX_TOPMOST). */
+        topmost: boolean;
+        /** SetWindowDisplayAffinity: 0 drawn normally, 0x11 hidden from screenshots and screen sharing. */
+        affinity: number;
+        inFront: number;
+    }[];
 }
 
 /**
@@ -35,6 +48,42 @@ export async function windowText(pid: number): Promise<string> {
     const read = await powershell('uia.ps1', String(pid));
     if (read.code !== 0) fail(`uia.ps1 ${pid} failed`, read.output);
     return read.stdout.replaceAll('\r\n', '\n');
+}
+
+/**
+ * Presses a control of the program's windows by its name through UI Automation (tools/uia-click.ps1), as a click would: a button is invoked, a toggle
+ * toggled; with `text` a text box gets that text. Fails the case when nothing in the program has that name.
+ */
+export async function press(pid: number, name: string, text?: string): Promise<void> {
+    const ran = await powershell('uia-click.ps1', String(pid), name, ...(text === undefined ? [] : [text]));
+    if (ran.stdout.trim() !== 'ok') fail(`nothing named "${name}" to press in the program's windows`, ran.output);
+}
+
+/**
+ * A real click on a control of the program's windows, found by its name through UI Automation (tools/uia-click.ps1 -Mouse): the pointer moves to its
+ * middle and the left button goes down and up. A window that must not take the focus has its chance to here, which `press` (an invocation) never gives it.
+ */
+export async function click(pid: number, name: string): Promise<void> {
+    const ran = await powershell('uia-click.ps1', String(pid), name, '-Mouse');
+    if (ran.stdout.trim() !== 'ok') fail(`nothing named "${name}" to click in the program's windows`, ran.output);
+}
+
+/** Types letters, digits and spaces on the keyboard, one after another, into whatever has the focus (tools/keys.ps1). */
+export async function typeText(text: string): Promise<void> {
+    const ran = await powershell('keys.ps1', 'type', text);
+    if (ran.code !== 0) fail('keys.ps1 failed', ran.output);
+}
+
+/** A picture of part of the screen as a screenshot or a screen share would show it (tools/capture.ps1), at the screen's own pixels. */
+export async function captureScreen(area: { left: number; top: number; width: number; height: number }, out: string): Promise<void> {
+    const ran = await powershell('capture.ps1', ...[area.left, area.top, area.width, area.height].map(String), out);
+    if (ran.code !== 0) fail('capture.ps1 failed', ran.output);
+}
+
+/** Presses a chord on the keyboard as a person would (tools/keys.ps1): `pressKeys('win', 'alt', 'enter')`. */
+export async function pressKeys(...keys: string[]): Promise<void> {
+    const ran = await powershell('keys.ps1', ...keys);
+    if (ran.code !== 0) fail('keys.ps1 failed', ran.output);
 }
 
 /** Runs tools/windows.ps1 for the program with this process ID. */
