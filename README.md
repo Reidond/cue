@@ -130,6 +130,7 @@ On Windows, Ctrl+Alt is AltGr on many keyboard layouts, so Cue's shortcuts there
 | Win+Alt+Enter | Answer now (what's being said, or the last line) |
 | Win+Alt+H | Show or hide Cue (starts it when it isn't running) |
 | Win+Alt+A | Toggle automatic answers |
+| Win+Alt+C | Start or stop recording the call (Win+Alt+R is the Game Bar's) |
 | Win+Alt+PgUp / Win+Alt+PgDn | Previous / next answer |
 | Win+Alt++ / Win+Alt+- | Text size |
 
@@ -297,7 +298,10 @@ month's usage and Sign Out, your projects and their materials (the same ones the
 `Documents\Cue` go up to it at the first sign-in), the session log and the test hooks, the installer and its CI; and the live call: Start Cue on a
 project's page (Ctrl+Enter anywhere in the dashboard), the microphone and the call's audio (everything the PC plays but Cue's own sound) streamed
 to the backend, the overlay with the questions and answers (above other windows, never taking the focus, hidden from screen sharing, designed as
-a Windows 11 app), the Win+Alt shortcuts and the icon in the notification area. Recordings and notes, and meetings from your calendar follow.
+a Windows 11 app), the Win+Alt shortcuts and the icon in the notification area; and recordings and notes: the Record button in the overlay and on a
+project's Notes page (or Win+Alt+C) records a call, its live transcript is saved at once in the project's `Notes` folder as Markdown, the audio goes up to
+the account, which reads it again, tells the voices apart and writes a summary, and the notes page shows the note with a player, name suggestions and
+speakers you can rename. Meetings from your calendar follow.
 
 - **Install**: download `Cue-VERSION-x64.msi` (or `-arm64.msi` for Windows on Arm) from the Releases page and open it. It installs Cue for
   everyone on the PC, adds it to the Start menu, replaces an older Cue, and needs no .NET or Windows App SDK installed. The installer is not
@@ -384,7 +388,7 @@ CUE_HOME=$(mktemp -d) CUE_NO_LIVE_AUDIO=1 CUE_APPEARANCE=dark CUE_SNAPSHOT=/tmp/
 `CUE_WEB_AUTH=headless` signs in without the browser sheet (the redirects followed by hand), `CUE_ME_TICK` sets how often (seconds)
 Cue reads its account again, `CUE_UPLOAD_PART_BYTES` sets the size of the parts a recording is uploaded in (8 MiB; the backend wants 5 MiB or
 more except for the last), `CUE_UPLOAD_BREAK=n` cuts the upload's connection once after `n` parts (to see it resume),
-`CUE_PROJECT=name` picks the project at launch, and
+`CUE_REHEARSE_RECORD=1` records a rehearsal (`CUE_REHEARSE_PARTICIPANT` / `CUE_REHEARSE_ME`) into notes, `CUE_PROJECT=name` picks the project at launch, and
 `CUE_CONTROL=file` runs each line appended to the file as a click would
 (`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
 `ask TEXT`, `timestamp 00:00:12`, `assign EVENT | PROJECT`,
