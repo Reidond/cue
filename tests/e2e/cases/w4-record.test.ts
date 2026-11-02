@@ -1,4 +1,5 @@
-import { basename } from 'node:path';
+import { existsSync, rmSync, statSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import {
     accountProject,
     assertBetween,
@@ -17,9 +18,9 @@ import {
     LIVE_SCRIPT,
     matches,
     RECORDED_SCRIPT,
+    sleep,
     windowText,
 } from '../harness/index.ts';
-import { statSync } from 'node:fs';
 
 e2eCase(
     'Cue for Windows: a two-sided rehearsal is recorded into notes (the live transcript saved at once, the audio next to it, then the second pass, the ' +
@@ -117,10 +118,32 @@ e2eCase(
         assertTextNotContains(page, /^Saving audio$/);
 
         // The timestamp plays the audio from there (where there is a sound device to play it through).
-        if (await hasAudioOutput()) {
+        const sound = await hasAudioOutput();
+        if (sound) {
             cue.control('timestamp 00:00:05');
             await cue.waitLog(/▶︎ Playing .*\.m4a from 0:05 \(player at 5\.0 s\)/, 30);
-            await cue.waitFor('the player to be playing', 20, async () => /^Pause$/m.test(await windowText(cue.pid)));
+            // The player’s position is where the timestamp put it, or later (it plays on, to the end, 0:16).
+            await cue.waitFor('the player to be at 0:05 or later', 30, async () => /^0:(0[5-9]|1[0-6])$/m.test(await windowText(cue.pid)));
+        }
+
+        // On another PC the note’s file and its audio aren’t there, but the account has them: signing in writes the note again, naming the audio the account
+        // keeps, and the page fetches it (with the token) and plays it from there.
+        await cue.stop();
+        rmSync(notes);
+        rmSync(audio);
+        await sleep(1); // session logs are named by the second
+        await cue.launch({ CUE_PROJECT: 'Bees' });
+        await cue.waitLog(/☁️ Restored 1 note from your account/, 60);
+        const restored = cue.findNotes()[0] ?? fail('the note should be restored');
+        assertContains(restored, /^audio-online: yes$/, 'the account’s audio is named, for the player to fetch');
+        assertNotContains(restored, /^audio: /);
+        assertContains(restored, /^\*\*00:00:05 · Andrii Test\*\*$/);
+        cue.control('page Bees/notes');
+        const fetched = join(cue.support, 'cache', 'audio', `${stored[0]?.id}.m4a`);
+        await cue.waitFor('the page to fetch the account’s audio', 60, () => existsSync(fetched) && statSync(fetched).size > 5_000);
+        if (sound) {
+            cue.control('timestamp 00:00:05');
+            await cue.waitLog(/▶︎ Playing .*\.m4a from 0:05 \(player at 5\.0 s\)/, 30);
         }
     },
 );

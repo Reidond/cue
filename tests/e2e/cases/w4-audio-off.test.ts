@@ -58,7 +58,11 @@ e2eCase(
         const backend = await cue.backend();
         const account = await backend.accountOf(cue.email);
         await cue.waitFor('the audio to be gone from the account', 30, async () => (await account.notes())[0]?.audio.length === 0);
-        assertEq(backend.objects().length, 0, 'the account’s storage should hold no audio');
+        assertEq(
+            backend.objects().filter((key) => key.includes('/calls/')).length,
+            0,
+            'the account’s storage should hold no recording (the project’s materials are another matter)',
+        );
 
         // The switches in Settings are the preferences.
         const settings = (): { keepAudio?: boolean; summarizeRecordings?: boolean } =>
