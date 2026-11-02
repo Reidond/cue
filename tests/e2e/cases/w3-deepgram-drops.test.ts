@@ -7,12 +7,16 @@ e2eCase(
         if (DEEPGRAM !== 'fake') skip('needs the stand-in to drop a stream on purpose');
         await accountProject(cue, 'Bees');
         await cue.defaults('autoAnswer', false);
-        const call = await bursts(cue.path('call.wav'), 6, [[1, 3]]);
+        // The second burst comes after the stream is back (about 3 s on an Arm runner), so it is heard whatever the speed of the machine.
+        const call = await bursts(cue.path('call.wav'), 9, [
+            [1, 3],
+            [6, 8],
+        ]);
         // The participant's first utterance loses its connection as it starts.
         await cue.launch({ CUE_PROJECT: 'Bees', CUE_REHEARSE_PARTICIPANT: call, FAKE_DEEPGRAM_DROP: '1' });
         await cue.waitLog(/⚠︎ Speech recognition unavailable: Speech recognition stopped answering/, 60);
         await cue.waitLog(/🗣 Speech recognition ready again: Cue plan/, 30);
-        // The utterance goes on over the new stream, and is still transcribed (the stand-in numbers the utterances it hears).
+        // The call goes on over the new stream, and is still transcribed (the stand-in numbers the utterances it hears).
         await cue.waitLog(/\*\*\[Participant\]\*\* Utterance [0-9]+\./, 30);
 
         cue.control('stop');
