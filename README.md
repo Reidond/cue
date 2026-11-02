@@ -403,7 +403,7 @@ calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs (on Windows the
 programs' file names or package family names) using the
 microphone from a text file, both again on every check; `CUE_MEETING_TICK` and
 `CUE_MIC_RELEASE` shorten the 5 s check and the 60 s wait after a call app lets
-go of the microphone. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay
+go of the microphone. On Windows `CUE_SYSTEM_NOTIFICATIONS=1` shows the real notifications even under `CUE_CONTROL`. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay
 (snapshots always can). On Windows `CUE_SURFACES=1` gives a test run the overlay on top of other windows, the
 tray icon and the shortcuts that `CUE_BACKGROUND` otherwise leaves out (`AGENTS.md › Live call on Windows`).
 `cd apps/mac && swift scripts/make_icon.swift` regenerates the app icon.

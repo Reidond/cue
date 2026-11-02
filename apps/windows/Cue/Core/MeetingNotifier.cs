@@ -8,7 +8,7 @@ namespace Cue;
 
 /// <summary>
 /// Windows notifications (toasts) with Record / Not Now, and notices. Every one is written to the session log; under CUE_CONTROL they go only there, and the
-/// case answers through the control file. The toasts are the Windows App SDK's `AppNotificationManager`, registered at run time (`Register`), which works
+/// case answers through the control file (unless CUE_SYSTEM_NOTIFICATIONS=1 asks for the real ones as well). The toasts are the Windows App SDK's `AppNotificationManager`, registered at run time (`Register`), which works
 /// for a program that is not packaged: the installer needs no more than the program itself. The Mac's `MeetingNotifier`.
 /// </summary>
 public sealed class MeetingNotifier : IDisposable
@@ -19,7 +19,8 @@ public sealed class MeetingNotifier : IDisposable
     public MeetingNotifier(AppState state)
     {
         this.state = state;
-        if (Env.Get("CUE_CONTROL") is not null) return;
+        // CUE_SYSTEM_NOTIFICATIONS=1: a case that clicks the real notification (the harness always sets CUE_CONTROL).
+        if (Env.Get("CUE_CONTROL") is not null && Env.Get("CUE_SYSTEM_NOTIFICATIONS") != "1") return;
         try
         {
             var made = AppNotificationManager.Default;

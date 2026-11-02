@@ -76,6 +76,7 @@ export {
     appWindows,
     captureScreen,
     click,
+    clickToast,
     ocr,
     press,
     pressKeys,
