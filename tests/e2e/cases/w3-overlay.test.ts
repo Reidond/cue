@@ -12,6 +12,7 @@ import {
     e2eCase,
     fail,
     fixture,
+    needInteractiveDesktop,
     needWindowsOcr,
     ocr,
     typeText,
@@ -27,6 +28,7 @@ e2eCase(
     'Cue for Windows: the overlay floats above another program’s window without taking the focus (a click on it too), is hidden from screen captures ' +
         '(unless CUE_ALLOW_CAPTURE), and typing into Ask is the one time it takes the keyboard, giving it back after.',
     async (cue) => {
+        await needInteractiveDesktop();
         await needWindowsOcr();
         await accountProject(cue, 'Bees', { materials: [fixture('materials', 'talk.md')] });
         // CUE_SURFACES: a test run keeps the overlay behind everything; this case is about the overlay in its real place.

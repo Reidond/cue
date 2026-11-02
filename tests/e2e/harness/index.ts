@@ -58,6 +58,7 @@ export { exec, shellQuote, type Ran } from './process.ts';
 export {
     needAudioOutput,
     needElevation,
+    needInteractiveDesktop,
     needOverlaySnapshots,
     needReachable,
     needRealDeepgram,

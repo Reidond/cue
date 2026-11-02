@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { accountProject, assertEq, e2eCase, pressKeys, windowsOf } from '../harness/index.ts';
+import { accountProject, assertEq, e2eCase, needInteractiveDesktop, pressKeys, windowsOf } from '../harness/index.ts';
 
 e2eCase(
     'Cue for Windows: the system-wide shortcuts (Win+Alt+…) hide and show the overlay, switch Auto answers, and make the text bigger and smaller, ' +
         'wherever the focus is.',
     async (cue) => {
+        await needInteractiveDesktop();
         await accountProject(cue, 'Bees');
         await cue.launch({ CUE_PROJECT: 'Bees', CUE_SURFACES: '1' });
         cue.control('start Bees');

@@ -300,7 +300,7 @@ are the Mac's, word for word.
   New question button, the reading rules), `limit`, `deepgram-drops`, `overlay` (above another program's window, never the focus, a real click and real typing, hidden from `CopyFromScreen`, shown with `CUE_ALLOW_CAPTURE`),
   `hot-keys` (real key presses), `call-audio` (real loopback). They use `bursts` and the stand-ins' lines (`FAKE_DEEPGRAM_LIVE`), `accountProject(cue, name, { materials })` (a project in the case user's account, made
   through the API), `press(pid, name)` (UI Automation invoke: `tools/uia-click.ps1`), `click(pid, name)` (a real mouse click at the control), `typeText`, `pressKeys('win', 'alt', 'h')` (`tools/keys.ps1`, `SendInput`),
-  `captureScreen(rect, png)` (`tools/capture.ps1`: what a screenshot sees), `windowsOf` now also has `topmost`, `affinity`, `left` and `top`, and `tools/blocker.ps1` is the other program's window.
+  `captureScreen(rect, png)` (`tools/capture.ps1`: what a screenshot sees), `needInteractiveDesktop()` (skips `overlay` and `hot-keys` where a window shown never gets the keyboard focus and injected keys go nowhere: it showed on the `windows-11-arm` runner, where they failed; the x64 runner and the VM have one), `needAudioOutput()`, `windowsOf` now also has `topmost`, `affinity`, `left` and `top`, and `tools/blocker.ps1` is the other program's window.
 
 ## Cloud sandboxes (Boat)
 
