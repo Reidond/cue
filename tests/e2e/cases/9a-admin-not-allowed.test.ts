@@ -12,7 +12,7 @@ e2eCase(
         const stranger = await fetch(new URL('/admin/v1/overview', backend.url));
         assertEq(stranger.status, 401, 'the API without a session');
         const signedOut = await (await browser()).newPage();
-        await signedOut.goto(`${backend.url}/admin/users`);
+        await signedOut.goto(`${await backend.admin()}/users`);
         await signedOut.getByRole('link', { name: 'Continue with Google' }).waitFor();
         await signedOut.close();
 

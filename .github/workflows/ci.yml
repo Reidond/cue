@@ -25,7 +25,7 @@ jobs:
           node-version: latest
           cache: true
 
-      - name: Worker toolchain (cf must build with Vite+)
+      - name: Workers' toolchain (cf must build with Vite+)
         run: node apps/api/scripts/check-vite.ts
 
       - name: Worker types

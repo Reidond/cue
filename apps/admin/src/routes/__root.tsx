@@ -3,7 +3,7 @@ import { type QueryClient, useQuery } from '@tanstack/react-query';
 import { createRootRouteWithContext, Link, Outlet } from '@tanstack/react-router';
 import { InviteIcon, OverviewIcon, SettingsIcon, SignOutIcon, UsersIcon } from '../components/icons.tsx';
 import { Button, ErrorState } from '../components/ui.tsx';
-import { ApiFailure } from '../lib/api.ts';
+import { API_URL, api, ApiFailure, unwrap } from '../lib/api.ts';
 import { sessionQuery, settingsQuery } from '../lib/queries.ts';
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
@@ -40,7 +40,7 @@ function Root() {
     return <Shell who={session.data} />;
 }
 
-// The same sign-in pages as the Mac app (Google or GitHub); `next=admin` brings the browser back here once the session exists.
+// The API's sign-in pages, the Mac app's too (Google or GitHub); `next=admin` brings the browser back here once the session exists.
 function SignIn() {
     return (
         <main className="centered">
@@ -50,10 +50,10 @@ function SignIn() {
                     <p>Sign in with the Google or GitHub account that owns Cue.</p>
                 </div>
                 <div className="stack">
-                    <a className="btn btn-primary btn-wide" href="/login/google?next=admin">
+                    <a className="btn btn-primary btn-wide" href={`${API_URL}/login/google?next=admin`}>
                         Continue with Google
                     </a>
-                    <a className="btn btn-wide" href="/login/github?next=admin">
+                    <a className="btn btn-wide" href={`${API_URL}/login/github?next=admin`}>
                         Continue with GitHub
                     </a>
                 </div>
@@ -63,10 +63,8 @@ function SignIn() {
 }
 
 async function signOut() {
-    await fetch('/api/auth/sign-out', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(
-        () => undefined,
-    );
-    location.assign('/admin/');
+    await unwrap(api.session.delete()).catch(() => undefined);
+    location.assign('/');
 }
 
 function NotAllowed({ who }: { who: AdminSession }) {

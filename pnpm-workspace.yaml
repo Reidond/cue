@@ -10,8 +10,8 @@ allowBuilds:
 
 # Vite+ replaces Vite everywhere, including the copy `cf` and @cloudflare/vite-plugin spawn
 # (docs/backend.md; the backend spike's FINDINGS § 1). Keep all three settings: the override here,
-# `autoInstallPeers: false` below, and no `vite` dependency in apps/api. Without any of them `cf`
-# quietly builds with upstream Vite. `pnpm --filter api check-vite` fails when any of them is missing (CI runs it).
+# `autoInstallPeers: false` below, and no `vite` dependency in apps/api or apps/admin. Without any of
+# them `cf` quietly builds with upstream Vite. `pnpm --filter api check-vite` fails when any of them is missing (CI runs it).
 overrides:
   vite@*: npm:@voidzero-dev/vite-plus-core@1.4.0
 

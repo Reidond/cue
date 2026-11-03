@@ -5,7 +5,7 @@
     "module": "preserve",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
@@ -14,5 +14,5 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src", "vite.preset.ts", "../api/admin-entry.ts", "../api/.cloudflare/types"]
+  "include": ["src", "vite.config.ts", "cloudflare.config.ts", "../api/.cloudflare/types"]
 }
