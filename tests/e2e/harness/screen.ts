@@ -50,6 +50,25 @@ export async function windowText(pid: number): Promise<string> {
     return read.stdout.replaceAll('\r\n', '\n');
 }
 
+/** A control of a window as UI Automation lays it out (see `controlsOf`). */
+export interface Control {
+    name: string;
+    /** UI Automation's control type: `Button`, `Text`, … */
+    type: string;
+    /** In the screen's own pixels. */
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+}
+
+/** Where the named controls of the program's window with this title are (tools/uia-bounds.ps1), in the order the tree has them. */
+export async function controlsOf(pid: number, title: string): Promise<Control[]> {
+    const read = await powershell('uia-bounds.ps1', String(pid), title);
+    if (read.code !== 0) fail(`uia-bounds.ps1 ${pid} failed`, read.output);
+    return JSON.parse(read.stdout) as Control[];
+}
+
 /**
  * Presses a control of the program's windows by its name through UI Automation (tools/uia-click.ps1), as a click would: a button is invoked, a toggle
  * toggled; with `text` a text box gets that text. Fails the case when nothing in the program has that name.

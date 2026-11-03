@@ -77,6 +77,7 @@ export {
     captureScreen,
     click,
     clickToast,
+    controlsOf,
     ocr,
     press,
     pressKeys,
@@ -84,6 +85,7 @@ export {
     windowText,
     windowsOf,
     type AppWindows,
+    type Control,
     type WindowsOfApp,
 } from './screen.ts';
 export { minutesFromNow, sleep, tomorrowAt } from './time.ts';
