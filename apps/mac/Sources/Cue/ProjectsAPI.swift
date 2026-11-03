@@ -6,12 +6,33 @@ import Foundation
 struct RemoteProject: Decodable {
     let id: String
     let name: String
+    /// The person's own words; empty: the brief's are used.
     let occasion: String
+    /// The language Cue last heard in the project's calls (detected, never set).
     let language: String
     let namesAndTerms: String
+    let brief: ProjectBrief
     /// Milliseconds since the epoch.
     let createdAt: Double
     let lastUsedAt: Double?
+}
+
+/// What Cue wrote from a project's materials: the occasion, the names and terms, answers to the likely questions. Written again (after a few
+/// seconds of quiet) whenever a file is added or removed.
+struct ProjectBrief: Decodable, Hashable {
+    enum State: String, Decodable { case none, working, ready, failed }
+    var state: State = .none
+    /// Why it couldn't be written.
+    var error: String?
+    var occasion = ""
+    /// One per line.
+    var namesAndTerms = ""
+    var answerCount = 0
+    /// Milliseconds since the epoch.
+    var updatedAt: Double?
+
+    /// The names and terms, one by one.
+    var terms: [String] { namesAndTerms.split(separator: "\n").map(String.init) }
 }
 
 /// A file in a project, and what the server read from it.
@@ -46,13 +67,14 @@ struct RemotePreparedAnswer: Decodable {
     let who: String?
     let source: String
     let materialId: String
+    /// `materials`: written in the file; `cue`: prepared by Cue from the materials.
+    let from: String
 }
 
 /// Fields of a new project; the times are for a project moved in from this Mac.
 struct ProjectFields: Encodable {
     var name: String
     var occasion: String?
-    var language: String?
     var namesAndTerms: String?
     var createdAt: Double?
     var lastUsedAt: Double?
@@ -62,7 +84,6 @@ struct ProjectFields: Encodable {
 struct ProjectChanges: Encodable {
     var name: String?
     var occasion: String?
-    var language: String?
     var namesAndTerms: String?
     var lastUsedAt: Double?
 }
@@ -81,6 +102,10 @@ extension CueAPI {
     func listProjects() async throws -> [RemoteProject] {
         struct Projects: Decodable { let projects: [RemoteProject] }
         return try decode(Projects.self, from: try await get("v1/projects")).projects
+    }
+
+    func project(_ id: String) async throws -> RemoteProject {
+        try decode(RemoteProject.self, from: try await get("v1/projects/\(id)"))
     }
 
     func createProject(_ fields: ProjectFields) async throws -> RemoteProject {
@@ -108,6 +133,11 @@ extension CueAPI {
     func preparedAnswers(of project: String) async throws -> [RemotePreparedAnswer] {
         struct Answers: Decodable { let answers: [RemotePreparedAnswer] }
         return try decode(Answers.self, from: try await get("v1/projects/\(project)/prepared-answers")).answers
+    }
+
+    /// Asks the account to write the project's brief again (it does by itself when a file is added or removed).
+    func briefAgain(_ project: String) async throws {
+        _ = try await request("POST", "v1/projects/\(project)/brief")
     }
 
     /// Sends a file to a project; the server stores it and reads its text before it answers.

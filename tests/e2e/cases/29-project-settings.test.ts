@@ -7,7 +7,6 @@ e2eCase("A project's settings changed on one launch are still there on the next,
     cue.control('new Bee talk');
     await cue.waitFor('the project', 10, () => isFile(join(cue.projectPath('Bee talk'), 'project.json')));
     cue.control('set Bee talk | occasion | A talk at the city council');
-    cue.control('set Bee talk | language | uk');
     cue.control('set Bee talk | names | Varroa, Kyiv; linden');
     await cue.waitLog(/Saved “Bee talk” to your account/, 15);
 
@@ -19,7 +18,6 @@ e2eCase("A project's settings changed on one launch are still there on the next,
         return saved.occasion !== '' && saved.terms.length > 0;
     });
     assertEq(saved.occasion, 'A talk at the city council', 'the occasion reached the account');
-    assertEq(saved.language, 'uk');
     assertDeepEq(saved.terms, ['Varroa', 'Kyiv', 'linden']);
 
     // The next launch finds nothing of the project on this Mac: its settings come from the account.
@@ -30,7 +28,6 @@ e2eCase("A project's settings changed on one launch are still there on the next,
     const json = join(cue.projectPath('Bee talk'), 'project.json');
     await cue.waitFor('the project back from the account', 10, () => isFile(json));
     assertContains(json, /"occasion" : "A talk at the city council"/);
-    assertContains(json, /"language" : "uk"/);
     assertContains(json, /"namesAndTerms" : "Varroa, Kyiv; linden"/);
     assertEq((await account.projects()).length, 1, 'and it is still the one project');
 });

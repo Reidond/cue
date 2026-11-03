@@ -87,6 +87,32 @@ export async function press(pid: number, name: string, text?: string): Promise<v
 }
 
 /**
+ * Expands the Expander with this name in the program's windows (Advanced on a project's Overview) through UI Automation's expand pattern, as
+ * Narrator does: a WinUI Expander's header is no button of its own to press (`press` invokes or toggles). Fails the case when nothing has the name.
+ */
+export async function expand(pid: number, name: string): Promise<void> {
+    const script = [
+        'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
+        '$auto = [System.Windows.Automation.AutomationElement]',
+        `$mine = New-Object System.Windows.Automation.PropertyCondition($auto::ProcessIdProperty, ${pid})`,
+        `$named = New-Object System.Windows.Automation.PropertyCondition($auto::NameProperty, '${name.replaceAll("'", "''")}')`,
+        'foreach ($window in $auto::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $mine)) {',
+        '    foreach ($element in $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $named)) {',
+        '        $pattern = $null',
+        '        if ($element.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {',
+        '            $pattern.Expand()',
+        "            'ok'",
+        '            exit 0',
+        '        }',
+        '    }',
+        '}',
+        "'missing'",
+    ].join('\n');
+    const ran = await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script]);
+    if (ran.stdout.trim() !== 'ok') fail(`nothing named "${name}" to expand in the program's windows`, ran.output);
+}
+
+/**
  * A real click on a control of the program's windows, found by its name through UI Automation (tools/uia-click.ps1 -Mouse): the pointer moves to its
  * middle and the left button goes down and up. A window that must not take the focus has its chance to here, which `press` (an invocation) never gives it.
  */

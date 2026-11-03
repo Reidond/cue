@@ -3,7 +3,7 @@
 // backend rather than sharing one with the run, so that what the backend calls upstream is exactly what that case's stand-ins answer,
 // and cases stay independent and safe to run from several checkouts at once (see AGENTS.md › Testing).
 import { type ChildProcess, spawn } from 'node:child_process';
-import { closeSync, existsSync, openSync, readdirSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { basename, extname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
@@ -86,13 +86,33 @@ export class Backend {
     readonly log: string;
     readonly state: string;
     #child: ChildProcess;
+    readonly #spawn: () => ChildProcess;
+    #stopping = false;
+    #restarts = 0;
 
-    private constructor(url: string, idp: FakeIdp, log: string, state: string, child: ChildProcess) {
+    private constructor(url: string, idp: FakeIdp, log: string, state: string, spawnChild: () => ChildProcess) {
         this.url = url;
         this.idp = idp;
         this.log = log;
         this.state = state;
-        this.#child = child;
+        this.#spawn = spawnChild;
+        this.#child = this.#launch();
+    }
+
+    /**
+     * Starts the backend's process. Vite+ now and then panics, as it starts or a little later as it bundles dependencies ("entered
+     * unreachable code", a bug of its own, seen on CI's Windows runners): the process is started again then, on the same port and state,
+     * twice at most.
+     */
+    #launch(): ChildProcess {
+        const before = statSync(this.log, { throwIfNoEntry: false })?.size ?? 0;
+        const child = this.#spawn();
+        child.once('exit', () => {
+            if (this.#stopping || this.#restarts >= 2 || !/Vite\+ panicked/.test(readFileSync(this.log, 'utf8').slice(before))) return;
+            this.#restarts++;
+            this.#child = this.#launch();
+        });
+        return child;
     }
 
     /** Starts the backend with `dir` as its folder (database, logs) and waits until it answers. */
@@ -131,19 +151,22 @@ export class Backend {
                 const built = await exec(CF[0], [CF[1], 'build', '--mode', 'development'], { env, cwd: API, timeout: 300 });
                 if (built.code !== 0) fail('building the backend failed', built.output);
             }
-            const out = openSync(log, 'a');
-            // Its own process group: `cf dev` leaves `cf-vite` and `workerd` behind when only it is killed.
-            const child = preview
-                ? spawn(VP[0], [VP[1], 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
-                      cwd: API,
-                      env,
-                      stdio: ['ignore', out, out],
-                      detached: true,
-                      windowsHide: true,
-                  })
-                : spawn(CF[0], [CF[1], 'dev'], { cwd: API, env, stdio: ['ignore', out, out], detached: true, windowsHide: true });
-            closeSync(out);
-            backend = new Backend(url, idp, log, state, child);
+            const spawnChild = () => {
+                const out = openSync(log, 'a');
+                // Its own process group: `cf dev` leaves `cf-vite` and `workerd` behind when only it is killed.
+                const child = preview
+                    ? spawn(VP[0], [VP[1], 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
+                          cwd: API,
+                          env,
+                          stdio: ['ignore', out, out],
+                          detached: true,
+                          windowsHide: true,
+                      })
+                    : spawn(CF[0], [CF[1], 'dev'], { cwd: API, env, stdio: ['ignore', out, out], detached: true, windowsHide: true });
+                closeSync(out);
+                return child;
+            };
+            backend = new Backend(url, idp, log, state, spawnChild);
             await backend.#waitUntilReady();
             return backend;
         } catch (error) {
@@ -157,6 +180,8 @@ export class Backend {
         // The first start of a checkout optimizes dependencies, which takes a while.
         const deadline = Date.now() + 180_000;
         for (;;) {
+            // A process that panicked is started again (#launch): a moment for that before giving up.
+            if (this.#child.exitCode !== null) await sleep(1);
             if (this.#child.exitCode !== null) fail('the backend exited while starting', readFileSync(this.log, 'utf8').slice(-3000));
             const ready = await fetch(`${this.url}/`).then(
                 (response) => response.ok,
@@ -169,6 +194,7 @@ export class Backend {
     }
 
     async stop(): Promise<void> {
+        this.#stopping = true;
         const child = this.#child;
         if (child.pid !== undefined && child.exitCode === null) {
             const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
@@ -181,11 +207,17 @@ export class Backend {
     // MARK: The owner's script
 
     async #invite(...args: string[]): Promise<void> {
-        const ran = await exec(process.execPath, [join(API, 'scripts', 'invite.ts'), ...args], {
-            env: { ...process.env, CI: '1', CUE_STATE_DIR: this.state },
-            timeout: 60,
-        });
-        if (ran.code !== 0) fail(`invite ${args.join(' ')} failed`, ran.output);
+        for (let attempt = 0; ; attempt++) {
+            const ran = await exec(process.execPath, [join(API, 'scripts', 'invite.ts'), ...args], {
+                env: { ...process.env, CI: '1', CUE_STATE_DIR: this.state },
+                timeout: 60,
+            });
+            if (ran.code === 0) return;
+            // `cf d1 raw` asks Cloudflare's API even for the local database, which now and then answers 500 (see #d1): tried again.
+            if (attempt >= 5 || !/session commit token|500 Internal Server Error/i.test(ran.output))
+                fail(`invite ${args.join(' ')} failed`, ran.output);
+            await sleep(2 * (attempt + 1));
+        }
     }
 
     /** Invites `email` (`pnpm --filter api invite EMAIL`). */
@@ -262,7 +294,8 @@ export class Backend {
 
     /**
      * `cf d1 raw` on the backend's database, which the running backend has open too: SQLite answers `SQLITE_BUSY` when both write at once (the app
-     * reading the account every second, say), so a busy database is tried again.
+     * reading the account every second, say), so a busy database is tried again. So is a 500 from Cloudflare's API, which `cf` asks even for a
+     * local database (`Failed to get session commit token`, seen on CI's Windows runners), a little longer each time.
      */
     async #d1(sql: string): Promise<Ran> {
         let ran: Ran;
@@ -272,8 +305,10 @@ export class Backend {
                 cwd: API,
                 timeout: 60,
             });
-            if (ran.code === 0 || attempt >= 8 || !/SQLITE_BUSY|database is locked/i.test(ran.output)) return ran;
-            await sleep(0.5);
+            if (ran.code === 0 || attempt >= 8) return ran;
+            if (/SQLITE_BUSY|database is locked/i.test(ran.output)) await sleep(0.5);
+            else if (/session commit token|500 Internal Server Error/i.test(ran.output)) await sleep(2 * (attempt + 1));
+            else return ran;
         }
     }
 
@@ -381,9 +416,19 @@ export interface AccountProject {
     id: string;
     name: string;
     occasion: string;
+    /** The language Cue last heard in the project's calls. */
     language: string;
     namesAndTerms: string;
     terms: string[];
+    /** What Cue wrote from the materials. */
+    brief: {
+        state: 'none' | 'working' | 'ready' | 'failed';
+        error: string | null;
+        occasion: string;
+        namesAndTerms: string;
+        answerCount: number;
+        updatedAt: number | null;
+    };
     createdAt: number;
     lastUsedAt: number | null;
     materialCount: number;
@@ -440,7 +485,21 @@ export class Account {
         return read.status === 200 ? (read.body as Note) : fail(`the account has no note ${id}`, JSON.stringify(read));
     }
 
-    async answers(project: AccountProject): Promise<{ question: string; answer: string; who: string | null; source: string }[]> {
+    /** The prepared answers: the ones written in the materials first (`from` materials), then the ones Cue wrote from them (`cue`). */
+    async answers(
+        project: AccountProject,
+    ): Promise<{ question: string; answer: string; who: string | null; source: string; materialId: string; from: 'materials' | 'cue' }[]> {
         return (await this.#backend.call('GET', `/v1/projects/${project.id}/prepared-answers`, this.token)).body.answers;
+    }
+
+    /** Waits until Cue has written the project's brief from its materials (or failed to), and returns the project then. */
+    async briefed(name: string, seconds = 60): Promise<AccountProject> {
+        const deadline = Date.now() + seconds * 1000;
+        for (;;) {
+            const project = await this.project(name);
+            if (project.brief.state === 'ready' || project.brief.state === 'failed') return project;
+            if (Date.now() > deadline) return fail(`the brief of "${name}" was not written in ${seconds} s`, JSON.stringify(project));
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
     }
 }

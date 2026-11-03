@@ -7,6 +7,7 @@ import {
     assertNotContains,
     assertTextContains,
     e2eCase,
+    expand,
     fail,
     fixture,
     isDirectory,
@@ -43,14 +44,13 @@ e2eCase(
         if (!isDirectory(join(project, 'Notes'))) fail('a project has a Notes folder here');
         const remote = await account.project('Bee talk');
         assertEq(remote.materialCount, 0);
-        // The pane lists it, and the project's page is open: its name in both, About the Talk and no files.
-        await waitShows('the project page', /^About the Talk$/m);
+        // The pane lists it, and the project's page is open: its name in both, its materials (none yet) and Advanced.
+        await waitShows('the project page', /^Drop slides, documents and notes here$/m);
         const page = await windowText(cue.pid);
         assertEq(page.split('\n').filter((line) => line === 'Bee talk').length >= 2, true, 'the project is in the pane and on its page');
-        for (const text of ['Projects', 'New Project', 'Overview', 'Prepared Answers', 'Notes', 'Materials', 'Add Files…']) {
+        for (const text of ['Projects', 'New Project', 'Overview', 'Prepared Answers', 'Notes', 'Materials', 'Add Files…', 'Advanced']) {
             assertTextContains(page, new RegExp(`^${text}$`, 'm'), `${text} is on the page`);
         }
-        assertTextContains(page, /^Drop slides, documents and prepared answers here$/m);
 
         // The file goes to the account, which reads it.
         cue.control(`add ${fixture('materials', 'talk.md')}`);
@@ -62,9 +62,11 @@ e2eCase(
         );
         if (isDirectory(join(project, 'Materials'))) fail('nothing is copied into the project folder');
         await waitShows('the file on the page', /^133 words · 3 prepared answers$/m);
+        // Cue reads it and prepares the rest (the stand-in's brief has nothing in it).
+        await cue.waitLog(/✨ Prepared “Bee talk” from its materials: 0 answers, 0 names and terms/, 60);
         await waitShows('what the account read', /^~\d+ tokens · 3 prepared answers$/m);
         assertTextContains(await windowText(cue.pid), /^Remove talk\.md$/m);
-        assertTextContains(await windowText(cue.pid), /^English · 1 file$/m);
+        assertTextContains(await windowText(cue.pid), /^1 file$/m);
 
         // The prepared answers the account found.
         cue.control('page Bee talk/answers');
@@ -76,7 +78,6 @@ e2eCase(
 
         // The settings: saved here at once, and to the account after a moment.
         cue.control('set Bee talk | occasion | A talk at the city council');
-        cue.control('set Bee talk | language | uk');
         cue.control('set Bee talk | names | Varroa, Kyiv; linden');
         await cue.waitLog(/☁️ Saved “Bee talk” to your account/, 20);
         let saved = remote;
@@ -85,13 +86,14 @@ e2eCase(
             return saved.occasion !== '' && saved.terms.length > 0;
         });
         assertEq(saved.occasion, 'A talk at the city council', 'the occasion reached the account');
-        assertEq(saved.language, 'uk');
         assertDeepEq(saved.terms, ['Varroa', 'Kyiv', 'linden']);
         assertContains(join(project, 'project.json'), /"occasion": "A talk at the city council"/);
 
-        // The overview shows them (the occasion and the names are in the fields, the language in its box).
+        // The overview shows them, in the fields under Advanced.
         cue.control('page Bee talk');
-        await waitShows('the language on the page', /^Ukrainian · 1 file$/m);
+        await waitShows('the overview', /^1 file$/m);
+        await expand(cue.pid, 'Advanced');
+        await waitShows('the fields under Advanced', /^Occasion$/m);
         const overview = await windowText(cue.pid);
         assertTextContains(overview, /^A talk at the city council$/m);
         assertTextContains(overview, /^Varroa, Kyiv; linden$/m);
@@ -104,7 +106,6 @@ e2eCase(
         const json = join(project, 'project.json');
         await cue.waitFor('the project back from the account', 20, () => isFile(json));
         assertContains(json, /"occasion": "A talk at the city council"/);
-        assertContains(json, /"language": "uk"/);
         assertContains(json, /"namesAndTerms": "Varroa, Kyiv; linden"/);
         assertEq((await account.projects()).length, 1, 'and it is still the one project');
         cue.control('page Bee talk');

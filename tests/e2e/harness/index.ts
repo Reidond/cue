@@ -80,6 +80,7 @@ export {
     click,
     clickToast,
     controlsOf,
+    expand,
     ocr,
     press,
     pressKeys,

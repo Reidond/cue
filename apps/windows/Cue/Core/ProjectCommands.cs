@@ -1,9 +1,10 @@
 namespace Cue;
 
 /// <summary>
-/// The `CUE_CONTROL` commands of the projects (the Mac's, line for line): `new NAME`, `add PATH`, `set PROJECT | occasion|language|names | VALUE`,
-/// `remove PROJECT | FILE`, and `page NAME`, `page NAME/answers`, `page NAME/overview`, `page NAME/notes`. Two more are the Windows app's own, for what
-/// the Mac does in a dialog no case drives: `rename-project NAME | NEW` and `delete-project NAME` run what the project's context menu runs.
+/// The `CUE_CONTROL` commands of the projects (the Mac's, line for line): `new NAME`, `add PATH`, `set PROJECT | occasion|names | VALUE` (the
+/// person's own words, under Advanced), `remove PROJECT | FILE`, and `page NAME`, `page NAME/answers`, `page NAME/overview`, `page NAME/notes`. Two
+/// more are the Windows app's own, for what the Mac does in a dialog no case drives: `rename-project NAME | NEW` and `delete-project NAME` run what
+/// the project's context menu runs.
 /// </summary>
 internal static class ProjectCommands
 {
@@ -41,7 +42,6 @@ internal static class ProjectCommands
                 projects.Update(sides[1] switch
                 {
                     "occasion" => project with { Occasion = sides[2] },
-                    "language" => project with { Language = sides[2] },
                     "names" => project with { Vocabulary = sides[2] },
                     _ => project,
                 });

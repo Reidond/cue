@@ -74,10 +74,12 @@ e2eCase(
         assertEq((await account.answers(project)).length, 3 + 2 + 1);
 
         // The overview: every file with what the account said about it, and why the scan is empty.
-        await waitShows('the five files', /^English · 5 files$/m);
+        // Cue reads the files for the brief once they have settled, and the page is drawn again when it is written: wait for that, then for a
+        // reading of the window that has every file.
+        await cue.waitLog(/✨ Prepared “Bee talk” from its materials/, 60);
+        await waitShows('the five files', /^5 files$/m);
         await waitShows('what the account read', /^~\d+ tokens · 6 prepared answers$/m);
-        const overview = await windowText(cue.pid);
-        for (const text of [
+        const expected = [
             'talk.md',
             '133 words · 3 prepared answers',
             'prepared.docx',
@@ -88,9 +90,16 @@ e2eCase(
             'scan.pdf',
             'No text in this PDF (scanned?)',
             'Remove scan.pdf',
-        ]) {
-            assertTextContains(overview, new RegExp(`^${literal(text)}$`, 'm'), `${text} is on the page`);
-        }
+        ];
+        const has = (text: string, page: string) => new RegExp(`^${literal(text)}$`, 'm').test(page);
+        let overview = '';
+        await cue
+            .waitFor('the overview to list every file', 30, async () => {
+                overview = await windowText(cue.pid);
+                return expected.every((text) => has(text, overview));
+            })
+            .catch(() => undefined);
+        for (const text of expected) assertTextContains(overview, new RegExp(`^${literal(text)}$`, 'm'), `${text} is on the page`);
 
         // The prepared answers of all the files, with where each was found.
         cue.control('page Bee talk/answers');
@@ -119,7 +128,7 @@ e2eCase(
         );
         await cue.waitFor('the page to lose the file', 30, async () => !(await shows(/^How many hives did you study\?$/m)));
         cue.control('page Bee talk');
-        await waitShows('the four files', /^English · 4 files$/m);
+        await waitShows('the four files', /^4 files$/m);
         assertTextNotContains(await windowText(cue.pid), /^talk\.md$/m);
     },
 );

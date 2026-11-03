@@ -1,13 +1,13 @@
 import { assertContains, assertEq, audioLength, DEEPGRAM, e2eCase, fail, FAKE_KEYS, skip, sleep, speech } from '../harness/index.ts';
 
 e2eCase(
-    "What's said on the call is streamed by the backend to Deepgram while it's said, in the project's language and with " +
+    "What's said on the call is streamed by the backend to Deepgram while it's said, in Nova-3's multilingual mode (the language is heard) and with " +
         "its names and terms, one stream a side with the voices told apart on the call's; it comes back as the live " +
         'transcript, and its questions get answers.',
     async (cue) => {
         if (DEEPGRAM !== 'fake') skip('looks at what the backend sends the stand-in');
 
-        await cue.project('Bees', { language: 'en', namesAndTerms: 'Apis mellifera, varroa mite; Olena Mulesa' });
+        await cue.project('Bees', { namesAndTerms: 'Apis mellifera, varroa mite; Olena Mulesa' });
         await cue.defaults('autoAnswer', true);
         const question = cue.path('question.wav');
         await speech(question, 'Daniel', 'Thank you for the talk. How many hives did you study?');
@@ -33,7 +33,7 @@ e2eCase(
         for (const stream of streams) {
             assertEq(stream.key, FAKE_KEYS.deepgram, "the owner's key, not anything of the person's");
             assertEq(stream.query['model'], 'nova-3');
-            assertEq(stream.query['language'], 'en');
+            assertEq(stream.query['language'], 'multi', 'the language is heard, never chosen');
             assertEq(stream.query['encoding'], 'linear16');
             assertEq(stream.query['sample_rate'], '16000');
             assertEq(stream.query['interim_results'], 'true');

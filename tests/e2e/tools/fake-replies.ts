@@ -5,7 +5,8 @@
 // call's people (else the speaker lines of the summary file); FAKE_CLAUDE_ANSWERS (JSON
 // `{"pattern": "answer"}`) answers a question matching a pattern (a regex, ignoring case) its own way.
 // The judge finds the sentences of what was just said that end in "?", unless FAKE_CLAUDE_JUDGEMENTS
-// (JSON `{"pattern": "reply"}`, the first pattern matching what was just said wins) gives its reply.
+// (JSON `{"pattern": "reply"}`, the first pattern matching what was just said wins) gives its reply. A project's brief is
+// FAKE_CLAUDE_BRIEF (the JSON object prompts/brief.md asks for), else one with nothing in it.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -94,4 +95,9 @@ export function names(env: Env): string {
             .join('\n');
     }
     return speakerLines(readOrUndefined(env['FAKE_CLAUDE_SUMMARY']) ?? '').join('\n');
+}
+
+/** The brief written from a project's materials: FAKE_CLAUDE_BRIEF, else nothing (no occasion, names and terms or answers). */
+export function brief(env: Env): string {
+    return env['FAKE_CLAUDE_BRIEF'] ?? '{"occasion": "", "namesAndTerms": [], "answers": []}';
 }

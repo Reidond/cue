@@ -76,11 +76,16 @@ export default defineConfig(({ mode }) => ({
             Janitor: exports.durableObject({ storage: 'sqlite' }),
             // Makes the notes of a recording: the second pass, the voices, names, summary, the note stored (src/notes/workflow.ts).
             NotesWorkflow: exports.workflow({ name: 'cue-notes' }),
+            // Writes a project's brief from its materials: the occasion, the names and terms, the likely questions answered (src/materials/workflow.ts).
+            BriefWorkflow: exports.workflow({ name: 'cue-brief' }),
         },
         env: {
             CALL: bindings.durableObject({ worker: 'cue-api', exportName: 'Call' }),
             JANITOR: bindings.durableObject({ worker: 'cue-api', exportName: 'Janitor' }),
             NOTES: bindings.workflow({ name: 'cue-notes', worker: 'cue-api', exportName: 'NotesWorkflow' }),
+            BRIEF: bindings.workflow({ name: 'cue-brief', worker: 'cue-api', exportName: 'BriefWorkflow' }),
+            // Seconds of quiet after a project's files changed before Cue reads them for the brief.
+            BRIEF_SETTLE_SECONDS: bindings.text(process.env.BRIEF_SETTLE_SECONDS ?? '3'),
             // The recordings of calls: each side's audio, uploaded in parts after the call (the notes Workflow reads them; they go after the retention).
             RECORDINGS: bindings.r2({ name: 'cue-recordings' }),
             // Seconds: a step of the notes Workflow that failed waits this long before trying again (three times); how long a "day" of audio

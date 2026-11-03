@@ -210,7 +210,8 @@ final class AppState: ObservableObject {
 
     private struct KnowledgeInputs: Equatable {
         var materials: [Material]
-        var language: String
+        /// Cue's prepared answers come with the brief.
+        var brief: ProjectBrief
     }
 
     init(preferences: Preferences) {
@@ -246,8 +247,12 @@ final class AppState: ObservableObject {
         if let activeProject { log.write("📁 Project: \(activeProject.name)") }
     }
 
-    /// The active project's language data.
-    var lexicon: Lexicon { activeProject?.lexicon ?? Lexicon.load(Project.defaultLanguage) }
+    /// The language the live call is held in, as the server says (`language` events: the one it starts out in, then the one heard).
+    @Published private(set) var heardLanguage: String?
+
+    /// The language data of what is spoken: the live call's, else the language the project's last call was held in.
+    var lexicon: Lexicon { Lexicon.load(spokenLanguage) }
+    var spokenLanguage: String { heardLanguage ?? activeProject?.language ?? Project.defaultLanguage }
 
     /// One line for the control bar: what Cue is doing, or the first thing that needs attention.
     var status: (text: String, kind: StatusKind) {
@@ -333,7 +338,7 @@ final class AppState: ObservableObject {
             }
             .store(in: &subscriptions)
 
-        // The materials the project's page and Home show are read again when its files or language change.
+        // The materials the project's page and Home show are read again when its files or Cue's brief of them change.
         $activeProject
             .map { Self.knowledgeInputs(project: $0) }
             .removeDuplicates()
@@ -372,7 +377,7 @@ final class AppState: ObservableObject {
     }
 
     private static func knowledgeInputs(project: Project?) -> KnowledgeInputs {
-        KnowledgeInputs(materials: project?.materials ?? [], language: project?.language ?? Project.defaultLanguage)
+        KnowledgeInputs(materials: project?.materials ?? [], brief: project?.brief ?? ProjectBrief())
     }
 
     /// Reads what the account has of the active project's files, for its page.
@@ -384,13 +389,12 @@ final class AppState: ObservableObject {
         let project = activeProject?.name ?? "no project"
         readingMaterials = true
         Task {
-            let documents = await self.projects.documents(of: serverID)
+            let knowledge = await self.projects.knowledge(of: serverID)
             guard generation == self.knowledgeGeneration else { return }
-            guard let documents else {
+            guard let knowledge else {
                 self.readingMaterials = false
                 return
             }
-            let knowledge = KnowledgeBase(documents: documents)
             self.knowledge = knowledge
             self.readingMaterials = false
             let files = knowledge.documents.map { "\($0.name) — \($0.error ?? $0.summary)" }.joined(separator: "; ")
@@ -412,6 +416,7 @@ final class AppState: ObservableObject {
             return
         }
         callProjectID = serverID
+        heardLanguage = nil
         claude = ServiceStatus(ok: false, detail: "Warming up Claude…", working: true)
         speech = ServiceStatus(ok: false, detail: "Starting speech recognition…", working: true)
         Task {
@@ -645,6 +650,11 @@ final class AppState: ObservableObject {
             if let id = event.questionId, let text = event.text { appendDelta(id, text) }
         case "answer.done":
             if let id = event.questionId { finish(id, error: event.error) }
+        case "language":
+            guard let code = event.language, code != heardLanguage else { return }
+            heardLanguage = code
+            // The language the call starts out in is said at once, as not heard yet: only a heard one is news.
+            if event.heard != false { log.write("🌐 Language heard: \(event.name ?? code)") }
         case "error":
             if event.code == "limit_reached" {
                 reachedLimit(event.message ?? "You've reached your Cue plan's limit for this month.")
@@ -851,8 +861,8 @@ final class AppState: ObservableObject {
             var target = recordingProject.flatMap { projects.project($0.id) } ?? activeProject ?? projects.project(named: "Meetings")
             if target == nil { target = try? await projects.create(named: "Meetings") }
             guard let project = target else { return }
-            // The language live recognition used: the bound project's, which a meeting's project may not share.
-            let spoken = activeProject?.language ?? Project.defaultLanguage
+            // The language the call was held in, as live recognition heard it (the server hears it again in the recording).
+            let spoken = spokenLanguage
             let id = recordings.save(transcript, into: project, meeting: meeting, audio: audio, spokenIn: spoken, callID: liveCall?.id)
             if let id, !automatically { openRecordings(id) }
             saved(id)

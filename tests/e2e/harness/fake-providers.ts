@@ -8,7 +8,9 @@
 //
 //   /v1/messages   answers, verdicts, names and summaries; `max_tokens: 0` warms the cache (answer-system, judge-system), a question is `ask` or
 //                  `judge`, a transcript `summary-system` and `summary-input` (the notes Workflow's summary) or, when the system prompt starts "You find
-//                  the names", `names-system` and `names-input`; each request also as `anthropic-request`, with the headers it came with.
+//                  the names", `names-system` and `names-input`; a project's materials (the system prompt starts "You read the materials") `brief-system`
+//                  and `brief-input`, replied to with FAKE_CLAUDE_BRIEF (the JSON object the brief prompt asks for; by default one with nothing
+//                  in it), FAKE_ANTHROPIC_BRIEF_FAILS=N failing the first N; each request also as `anthropic-request`, with the headers it came with.
 //                  Replies carry `usage` and simulate the prompt cache (a system prompt seen before is a cache read). FAKE_CLAUDE_JUDGE_FAILS=1
 //                  fails every judge request with a 500, FAKE_ANTHROPIC_OVERLOADED=N the first N judge requests with a 529 (overloaded),
 //                  FAKE_ANTHROPIC_CUT=N breaks off the first N streamed answers after their first words (no `message_stop`), FAKE_CLAUDE_JUDGE_DELAY
@@ -18,16 +20,18 @@
 //   /v1/listen     WebSocket: a live stream, one per channel, of 16-bit PCM. Speech is told from silence by loudness (20 ms frames), and each
 //                  stretch of speech is an utterance: SpeechStarted, an interim result every 0.2 s, and the final once the silence has lasted
 //                  `endpointing` ms. Its text is the next line of FAKE_DEEPGRAM_LIVE (a JSON array, one entry per utterance in the order they start,
-//                  across both channels; an entry is a string, or {text, speaker} for the call side with `diarize`), or "Utterance N." (too short
+//                  across both channels; an entry is a string, or {text, speaker, language} (speaker: the call side's with `diarize`), or "Utterance N." (too short
 //                  to pass for an echo of the other side). FAKE_DEEPGRAM_DROP=N drops the connection of the Nth utterance as it starts, as a lost
-//                  connection would. A stream with no audio for 10 s is closed, as Deepgram does without KeepAlive. Noted as `deepgram-live`.
+//                  connection would. A stream with no audio for 10 s is closed, as Deepgram does without KeepAlive. With `language=multi` each
+//                  result says its language (`languages`, and each word's `language`): the entry's `language`, else `uk` for Cyrillic and
+//                  `en` for anything else. Noted as `deepgram-live`.
 //   /v1/listen     POST: a recorded file (the notes Workflow's second pass), a 16-bit WAV as the body, `tag` = the side (`me`, `others`). One
 //                  utterance per stretch of speech in it (20 ms frames above the silence threshold, pauses under half a second bridged), with
 //                  words spread over it, and with `diarize` each word and utterance has a `speaker`. Its text is the side's next entry of
-//                  FAKE_DEEPGRAM_FILE (a JSON object `{"me": […], "others": […]}`; an entry is a string, or {text, speaker} on the call side;
+//                  FAKE_DEEPGRAM_FILE (a JSON object `{"me": […], "others": […]}`; an entry is a string, or {text, speaker, language};
 //                  a side's array is complete: stretches past its end, and entries with no text, get no utterance), or "Second pass by Deepgram,
 //                  part N." for a side the object does not have. FAKE_DEEPGRAM_FILE_FAILS=N fails the first N recorded requests with a 500,
-//                  FAKE_DEEPGRAM_FILE_DELAY (seconds) slows each down. Noted as `deepgram-file`.
+//                  FAKE_DEEPGRAM_FILE_DELAY (seconds) slows each down. Languages as on a live stream. Noted as `deepgram-file`.
 //   /markdown      POST: Workers AI `toMarkdown`, for the Cue API (MARKDOWN_URL). A Word file's paragraphs or a PDF's text, one blank line
 //                  apart, as `{name, format: 'markdown', data, tokens}`; any other file as `{format: 'error'}`, the shape `toMarkdown` returns
 //                  per file. The file's name arrives in `x-file-name` (URL-encoded). Noted as `markdown-request`.
@@ -37,14 +41,14 @@ import type { AddressInfo, Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { unzip } from './documents.ts';
-import { answer, judgement, names, pieces, record, summary, type Env } from '../tools/fake-replies.ts';
+import { answer, brief, judgement, names, pieces, record, summary, type Env } from '../tools/fake-replies.ts';
 
 /** The only keys the stand-ins take. */
 export const FAKE_KEYS = { anthropic: 'sk-ant-e2e-fake-key', deepgram: 'dg-e2e-fake-key' } as const;
 
 /** What the Anthropic stand-in noted about a request. */
 export interface AnthropicRequest {
-    kind: 'answer' | 'judge' | 'summary' | 'names';
+    kind: 'answer' | 'judge' | 'summary' | 'names' | 'brief';
     key: string;
     version: string;
     model: string;
@@ -292,13 +296,24 @@ function frames(socket: Duplex, head: Buffer, onMessage: (opcode: number, payloa
     take();
 }
 
+/** What the multilingual model hears a line as when a case does not say: Ukrainian for Cyrillic, English for anything else. */
+const languageOf = (text: string) => (/[\u0400-\u04ff]/.test(text) ? 'uk' : 'en');
+
+/** A result's languages, most words first. */
+function languagesOf(words: { language?: string }[]): string[] {
+    const counts = new Map<string, number>();
+    for (const word of words) if (word.language) counts.set(word.language, (counts.get(word.language) ?? 0) + 1);
+    return [...counts.entries()].toSorted((a, b) => b[1] - a[1]).map(([language]) => language);
+}
+
 /** Starts the stand-ins; `log` is where they note requests, `env` the environment of the Cue running. */
 export async function startFakeProviders(log: string, env: () => Env): Promise<FakeProviders> {
     let utterances = 0,
         judged = 0,
         answered = 0,
         summaries = 0,
-        filed = 0;
+        filed = 0,
+        briefs = 0;
     /** The system prompts the prompt cache has seen. */
     const caches = new Set<string>();
     const sockets = new Set<Socket | Duplex>();
@@ -314,7 +329,9 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
                 : 'summary'
             : system.startsWith('You watch the live transcript')
               ? 'judge'
-              : 'answer';
+              : system.startsWith('You read the materials')
+                ? 'brief'
+                : 'answer';
         const key = String(request.headers['x-api-key'] ?? '');
         const noted: AnthropicRequest = {
             kind,
@@ -345,6 +362,9 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         if (kind === 'summary' && noted.maxTokens !== 0 && ++summaries <= Number(environment['FAKE_ANTHROPIC_SUMMARY_FAILS'] ?? 0)) {
             return json(response, 500, { type: 'error', error: { type: 'api_error', message: 'The summary failed' } });
         }
+        if (kind === 'brief' && ++briefs <= Number(environment['FAKE_ANTHROPIC_BRIEF_FAILS'] ?? 0)) {
+            return json(response, 500, { type: 'error', error: { type: 'api_error', message: 'The brief failed' } });
+        }
         // The prompt cache: a system prompt with a breakpoint is written the first time it is seen and read after that.
         const systemTokens = Math.ceil(system.length / 4);
         const cached = noted.systemCache !== undefined;
@@ -371,6 +391,10 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
             const delay = Number(environment['FAKE_CLAUDE_SUMMARY_DELAY']);
             if (delay > 0) await sleep(delay * 1000);
             text = summary(environment);
+        } else if (kind === 'brief') {
+            record(log, 'brief-system', system);
+            record(log, 'brief-input', content);
+            text = brief(environment);
         } else if (kind === 'names') {
             record(log, 'names-system', system);
             record(log, 'names-input', content);
@@ -455,9 +479,10 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         if (!decoded) return json(response, 400, { err_code: 'Bad Request', err_msg: 'Bad Request: failed to process audio' });
 
         const diarize = query['diarize'] === 'true';
+        const multi = query['language'] === 'multi';
         const scripts = JSON.parse(environment['FAKE_DEEPGRAM_FILE'] ?? '{}') as Record<
             string,
-            (string | { text: string; speaker?: number })[]
+            (string | { text: string; speaker?: number; language?: string })[]
         >;
         const script = scripts[side];
         const found = stretches(decoded.rate, decoded.samples);
@@ -466,6 +491,7 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
             const text = typeof entry === 'string' ? entry : (entry?.text ?? '');
             if (text === '') return [];
             const speaker = typeof entry === 'object' ? (entry.speaker ?? 0) : 0;
+            const language = (typeof entry === 'object' ? entry.language : undefined) ?? languageOf(text);
             const spoken = text.split(' ');
             const words = spoken.map((word, at) => ({
                 word: word.toLowerCase().replace(/[.,!?…]+$/, ''),
@@ -474,6 +500,7 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
                 end: start + ((end - start) * (at + 1)) / spoken.length,
                 confidence: 0.99,
                 ...(diarize ? { speaker } : {}),
+                ...(multi ? { language } : {}),
             }));
             return [{ start, end, confidence: 0.99, channel: 0, transcript: text, words, ...(diarize ? { speaker } : {}) }];
         });
@@ -487,6 +514,7 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
                                 transcript: utterances.map((item) => item.transcript).join(' '),
                                 confidence: 0.99,
                                 words: utterances.flatMap((item) => item.words),
+                                ...(multi ? { languages: languagesOf(utterances.flatMap((item) => item.words)) } : {}),
                             },
                         ],
                     },
@@ -530,6 +558,7 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         const endpointing = Number(query['endpointing'] ?? 700);
         const vadEvents = query['vad_events'] === 'true';
         const diarize = query['diarize'] === 'true';
+        const multi = query['language'] === 'multi';
         let bytes = 0,
             messages = 0,
             keepAlives = 0,
@@ -543,7 +572,7 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         let speaking = false,
             started = 0,
             counted = false,
-            said: { text: string; speaker: number } | undefined;
+            said: { text: string; speaker: number; language: string } | undefined;
         let idle: NodeJS.Timeout | undefined;
         const send = (value: object): void => void socket.write(frame(1, Buffer.from(JSON.stringify(value))));
         const finish = (dropped = false): void => {
@@ -563,19 +592,28 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
             }, 10_000);
         };
         touch();
-        const result = (text: string, final: boolean, speaker: number): void => {
-            const words = text.split(' ').map((word) => ({ word, speaker }));
+        const result = (text: string, final: boolean, speaker: number, language: string): void => {
+            const words = text.split(' ').map((word) => ({ word, ...(diarize ? { speaker } : {}), ...(multi ? { language } : {}) }));
             send({
                 type: 'Results',
                 is_final: final,
                 speech_final: final,
                 start: started,
                 duration: Math.max(0, bytes / 2 / rate - started),
-                channel: { alternatives: [{ transcript: text, confidence: 0.99, words: diarize ? words : [] }] },
+                channel: {
+                    alternatives: [
+                        {
+                            transcript: text,
+                            confidence: 0.99,
+                            words: diarize || multi ? words : [],
+                            ...(multi ? { languages: [language] } : {}),
+                        },
+                    ],
+                },
             });
         };
         const endUtterance = (): void => {
-            if (speaking && counted && said) result(said.text, true, said.speaker);
+            if (speaking && counted && said) result(said.text, true, said.speaker, said.language);
             speaking = false;
             counted = false;
             said = undefined;
@@ -612,23 +650,28 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
                 const number = ++utterances;
                 // Read now, so that a case can change what the stand-in says between utterances.
                 const environment = env();
-                const entries = JSON.parse(environment['FAKE_DEEPGRAM_LIVE'] ?? '[]') as (string | { text: string; speaker?: number })[];
+                const entries = JSON.parse(environment['FAKE_DEEPGRAM_LIVE'] ?? '[]') as (
+                    | string
+                    | { text: string; speaker?: number; language?: string }
+                )[];
                 if (number === Number(environment['FAKE_DEEPGRAM_DROP'] ?? 0)) {
                     finish(true);
                     socket.destroy();
                     return;
                 }
                 const entry = entries[number - 1];
+                const text = typeof entry === 'string' ? entry : (entry?.text ?? `Utterance ${number}.`);
                 said = {
-                    text: typeof entry === 'string' ? entry : (entry?.text ?? `Utterance ${number}.`),
+                    text,
                     speaker: typeof entry === 'object' ? (entry.speaker ?? 0) : 0,
+                    language: (typeof entry === 'object' ? entry.language : undefined) ?? languageOf(text),
                 };
             }
             if (counted && said && sinceInterim >= 10) {
                 sinceInterim = 0;
                 const words = said.text.split(' ');
                 const shown = Math.max(1, Math.min(words.length - 1, Math.ceil(speechFrames / 10)));
-                if (words.length > 1) result(words.slice(0, shown).join(' '), false, said.speaker);
+                if (words.length > 1) result(words.slice(0, shown).join(' '), false, said.speaker, said.language);
             }
             if (silentRun * 20 >= endpointing || speechFrames >= 1250) endUtterance();
         };

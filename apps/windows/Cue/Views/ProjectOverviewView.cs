@@ -10,33 +10,27 @@ using Windows.Storage.Pickers;
 namespace Cue;
 
 /// <summary>
-/// A project's overview: the talk (occasion, language, names and terms: edits go straight to `project.json` and to the account a moment later) and
-/// the materials (drop files on it or pick them; the account reads them). Made once for a project; <see cref="Update"/> brings it up to date.
+/// A project's overview: the materials first (drop files on it or pick them; the account reads them), then how Cue's reading of them went (the brief:
+/// what the talk is about, the names and terms, answers to the likely questions), and under Advanced the person's own occasion and names and terms
+/// (edits go straight to `project.json` and to the account a moment later; empty, Cue's are used). There is no language to choose: Cue hears it. Made
+/// once for a project; <see cref="Update"/> brings it up to date.
 /// </summary>
 public sealed class ProjectOverviewView : UserControl
 {
     private readonly AppState state;
     private readonly string projectId;
-    private readonly TextBox occasion = new()
-    {
-        Header = "Occasion",
-        PlaceholderText = "e.g. PhD pre-defense of my dissertation on …",
-        AcceptsReturn = true,
-        TextWrapping = TextWrapping.Wrap,
-        MinHeight = 68,
-    };
-
-    private readonly TextBox vocabulary = new()
-    {
-        Header = "Names and terms",
-        PlaceholderText = "People's names, jargon, product names…",
-        AcceptsReturn = true,
-        TextWrapping = TextWrapping.Wrap,
-        MinHeight = 68,
-    };
-
-    private readonly ComboBox language = new() { Header = "Language", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly TextBox occasion = new() { Header = "Occasion", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 68 };
+    private readonly TextBox vocabulary = new() { Header = "Names and terms", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 68 };
     private readonly Border materialsHost = new();
+    private readonly Border briefHost = new() { Margin = new Thickness(0, 8, 0, 0) };
+    private readonly Expander advanced = new()
+    {
+        Header = "Advanced",
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        HorizontalContentAlignment = HorizontalAlignment.Stretch,
+        Margin = new Thickness(0, 8, 0, 0),
+    };
+
     private readonly StackPanel root = new() { Spacing = 8, Background = new SolidColorBrush(Colors.Transparent), AllowDrop = true };
     private Project project;
     private KnowledgeBase? knowledge;
@@ -46,6 +40,9 @@ public sealed class ProjectOverviewView : UserControl
 
     /// <summary>What the materials' card was last made from.</summary>
     private string materialsShown = "";
+
+    /// <summary>What the brief's row was last made from.</summary>
+    private (ProjectBrief Brief, bool Files)? briefShown;
 
     /// <summary>Set while the fields are being filled from the project, so that is not taken for an edit.</summary>
     private bool updating;
@@ -58,20 +55,25 @@ public sealed class ProjectOverviewView : UserControl
 
         occasion.TextChanged += (_, _) => Edit(current => current.Occasion == occasion.Text ? current : current with { Occasion = occasion.Text });
         vocabulary.TextChanged += (_, _) => Edit(current => current.Vocabulary == vocabulary.Text ? current : current with { Vocabulary = vocabulary.Text });
-        language.SelectionChanged += (_, _) =>
+        AutomationProperties.SetName(advanced, "Advanced");
+        advanced.Content = new StackPanel
         {
-            if (language.SelectedItem is ComboBoxItem { Tag: string code }) Edit(current => current.Language == code ? current : current with { Language = code });
+            Spacing = 12,
+            Children =
+            {
+                occasion,
+                vocabulary,
+                Ui.Caption(
+                    "Cue writes these from your materials. Type to use your own words instead; clear a field to go back to Cue's. There is no language to choose: Cue hears what is spoken."),
+            },
         };
-        foreach (var spoken in SpokenLanguage.All) language.Items.Add(new ComboBoxItem { Content = spoken.Name, Tag = spoken.Code });
 
-        root.Children.Add(Ui.Header("About the Talk"));
-        root.Children.Add(Ui.Card(Ui.Padded(occasion), Ui.Padded(language), Ui.Padded(vocabulary)));
-        root.Children.Add(Ui.Caption(
-            "A sentence or two about the talk and who will be asking. Cue listens and answers in this language; names and terms help speech recognition spell what it hears."));
         root.Children.Add(Ui.Header("Materials"));
         root.Children.Add(materialsHost);
         root.Children.Add(Ui.Caption(
-            "PDF, PowerPoint, Word, Markdown or text, kept in your Cue account, which reads them. Prepared answers are picked up from lines like “Q: …” followed by “A: …”, and from questions followed by an “Answer:” line, including in speaker notes."));
+            "Slides, documents and notes: PDF, PowerPoint, Word, Markdown or text, kept in your Cue account. Cue reads them and prepares the rest: what the talk is about, the names and terms to listen for, and answers to the questions people are likely to ask."));
+        root.Children.Add(briefHost);
+        root.Children.Add(advanced);
         root.DragEnter += (_, _) => Targeted(true);
         root.DragLeave += (_, _) => Targeted(false);
         root.DragOver += OnDragOver;
@@ -91,19 +93,17 @@ public sealed class ProjectOverviewView : UserControl
         {
             Fill(occasion, next.Occasion);
             Fill(vocabulary, next.Vocabulary);
-            var index = language.Items.OfType<ComboBoxItem>().ToList().FindIndex(item => (string?)item.Tag == next.Language);
-            if (index < 0)
-            {
-                language.Items.Add(new ComboBoxItem { Content = SpokenLanguage.Named(next.Language).Name, Tag = next.Language });
-                index = language.Items.Count - 1;
-            }
-            if (language.SelectedIndex != index) language.SelectedIndex = index;
         }
         finally
         {
             updating = false;
         }
+        // Empty, a field shows what Cue wrote: that is what is used.
+        var terms = next.Brief.Terms;
+        occasion.PlaceholderText = next.Brief.Occasion.Length > 0 ? next.Brief.Occasion : "What the talk is about and who will ask, from your materials";
+        vocabulary.PlaceholderText = terms.Count > 0 ? string.Join(", ", terms) : "People's names, jargon, product names, from your materials";
         RenderMaterials();
+        RenderBrief();
     }
 
     /// <summary>A field takes what the project says, unless the person is typing in it.</summary>
@@ -116,6 +116,86 @@ public sealed class ProjectOverviewView : UserControl
     {
         if (updating || state.Projects.Find(projectId) is not { } current) return;
         state.Projects.Update(change(current));
+    }
+
+    // MARK: What Cue prepared
+
+    /// <summary>How Cue's reading of the materials went: under way, what it prepared, or why it couldn't. Only while the project has files.</summary>
+    private void RenderBrief()
+    {
+        var files = project.Materials.Count > 0;
+        if (briefShown == (project.Brief, files)) return;
+        briefShown = (project.Brief, files);
+        briefHost.Visibility = files ? Visibility.Visible : Visibility.Collapsed;
+        if (!files)
+        {
+            briefHost.Child = null;
+            return;
+        }
+        var brief = project.Brief;
+        FrameworkElement icon;
+        string text;
+        Button? action = null;
+        if (brief.Working)
+        {
+            text = "Reading your materials…";
+            icon = new ProgressRing { Width = 20, Height = 20, IsActive = true };
+            AutomationProperties.SetName(icon, text);
+        }
+        else if (brief.Ready)
+        {
+            text = $"Prepared {brief.AnswersText} and {brief.TermsText} from your materials";
+            icon = Ui.Glyph("", 16, "SystemFillColorSuccessBrush");
+            action = new Button { Content = "Show Answers" };
+            action.Click += (_, _) => state.Dashboard.OpenProject(projectId, ProjectTab.Answers);
+        }
+        else if (brief.Failed)
+        {
+            text = brief.Error ?? "Cue couldn't read your materials";
+            icon = Ui.Glyph("", 16, "SystemFillColorCautionBrush");
+            action = PrepareButton("Try Again");
+        }
+        else
+        {
+            text = "Cue hasn't read these files yet";
+            icon = Ui.Glyph("", 16, "TextFillColorTertiaryBrush");
+            action = PrepareButton("Prepare");
+        }
+
+        var row = new Grid { Padding = new Thickness(16, 12, 16, 12), ColumnSpacing = 12, MinHeight = 64 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        icon.HorizontalAlignment = HorizontalAlignment.Center;
+        icon.VerticalAlignment = VerticalAlignment.Center;
+        row.Children.Add(icon);
+        var label = new TextBlock
+        {
+            Text = text,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = Ui.Theme(brief.Working || brief.State == "none" ? "TextFillColorSecondaryBrush" : "TextFillColorPrimaryBrush"),
+        };
+        Grid.SetColumn(label, 1);
+        row.Children.Add(label);
+        if (action is not null)
+        {
+            action.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(action, 2);
+            row.Children.Add(action);
+        }
+        briefHost.Child = Ui.Card(row);
+    }
+
+    /// <summary>Asks the account to read the files again: after it failed, or for files added before Cue wrote briefs.</summary>
+    private Button PrepareButton(string label)
+    {
+        var button = new Button { Content = label };
+        button.Click += async (_, _) =>
+        {
+            if (state.Projects.Find(projectId) is { } current) await state.Projects.PrepareAgain(current);
+        };
+        return button;
     }
 
     // MARK: Materials
@@ -136,7 +216,6 @@ public sealed class ProjectOverviewView : UserControl
         dropIcon = null;
         if (project.Materials.Count == 0) rows.Add(DropHint());
         else rows.AddRange(project.Materials.Select(Row));
-
         var add = new Button { Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { Ui.Glyph("", 14, "TextFillColorPrimaryBrush"), new TextBlock { Text = "Add Files…" } } } };
         add.Click += OnAddFiles;
         var footer = new Grid { ColumnSpacing = 12 };
@@ -167,7 +246,7 @@ public sealed class ProjectOverviewView : UserControl
             Children =
             {
                 dropIcon,
-                new TextBlock { Text = "Drop slides, documents and prepared answers here", Foreground = Ui.Theme("TextFillColorSecondaryBrush") },
+                new TextBlock { Text = "Drop slides, documents and notes here", Foreground = Ui.Theme("TextFillColorSecondaryBrush") },
             },
         });
     }

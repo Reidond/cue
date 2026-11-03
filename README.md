@@ -11,11 +11,12 @@ key points, decisions, action items and the full timestamped transcript, and
 keeps the call's audio next to them.
 
 Everything is organised in **projects** — one per talk, course or series of
-calls. A project holds the occasion, the language, names and terms, your
-materials and the notes of its calls. Answers are grounded in the materials of
-the current project: drop in PDFs, PowerPoint decks, Word documents or
-Markdown notes; Cue reads them itself and also picks up any prepared questions
-and answers it finds in them.
+calls. A project holds your materials and the notes of its calls; everything
+else comes from them. Drop in PDFs, PowerPoint decks, Word documents or
+Markdown notes: Cue reads them itself, picks up any prepared questions and
+answers it finds in them, and prepares the rest — what the talk is about, the
+names and terms to listen for, and answers to the questions people are likely
+to ask. There is no language to pick: Cue hears what is spoken.
 
 ## How it works
 
@@ -34,8 +35,8 @@ for the live call. (`docs/backend.md` is the design.)
   followed by an `Answer:` line, also in speaker notes; a trailing `(Name)` after
   the question records who asked it.
 - **Speech recognition** is Deepgram's Nova-3, in the cloud, through the backend: while Cue listens (or records) the Mac streams the
-  microphone and the call audio to a live call on the backend, which keeps one Deepgram stream per side with the project's language and
-  names and terms, and sends the transcript back as it is said.
+  microphone and the call audio to a live call on the backend, which keeps one Deepgram stream per side (Nova-3's multilingual model: the language is heard, and
+  answers follow it) with the project's names and terms, and sends the transcript back as it is said.
 - **Who is speaking** comes from the source: the microphone is you, system
   audio is everyone else on the call. In a recording's notes, the people on
   the call are told apart by voice afterwards, on the backend, from Deepgram's
@@ -77,13 +78,15 @@ and Sign Out. Then, on **Home**:
 
 On the project's page:
 
-3. Describe the **occasion** (one or two sentences), pick the **language** and
-   add **names and terms** that recognition should spell right.
-4. Drop your **materials** onto the Materials section. They are uploaded to
+3. Drop your **materials** onto the Materials section. They are uploaded to
    your Cue account, which reads them (PDF, Word, PowerPoint with speaker
    notes, Markdown, text), so cleaning up Downloads later doesn't break anything.
-   **Prepared Answers** shows the questions and answers it found in them.
-5. Press **Start Cue** (⌘↩): the overlay appears and answers from this project.
+   A few seconds later Cue has prepared the rest from them: **Prepared Answers**
+   shows the questions and answers written in your files and the ones Cue
+   prepared for the questions people are likely to ask. The occasion and the
+   names and terms it wrote are under **Advanced**, to change if you like.
+4. Press **Start Cue** (⌘↩): the overlay appears and answers from this project,
+   in whatever language is spoken.
 
 Your name, text size, the library folder and what Cue does
 when a meeting starts are in **Settings** (⌘,). The overlay's top bar shows the current project; click it to
@@ -162,7 +165,7 @@ note in the dashboard, where a list shows the steps it goes through next:
 2. **Improving transcript** — the live transcript is written phrase by phrase
    and gets words wrong that the rest of the call makes obvious («дотатниці»
    for «до п'ятниці»). The backend's notes Workflow has Deepgram read each
-   side's whole recording again, with the project's language and names and
+   side's whole recording again, hearing its language and with the project's names and
    terms, and its transcript replaces the live one — each line still at the
    moment it was said.
 3. **Finding speakers** — everyone on the call shares the call's audio, so

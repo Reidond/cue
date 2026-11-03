@@ -27,8 +27,7 @@ e2eCase(
             ['talk.md'],
         );
         const ukrainian = await account.project('Семінар');
-        assertEq(ukrainian.language, 'uk');
-        assertEq((await account.answers(ukrainian))[0]?.answer, 'Сорок вісім.', "read in the project's language");
+        assertEq((await account.answers(ukrainian))[0]?.answer, 'Сорок вісім.', "read with every language's labels");
         assertContains(join(interviews, 'project.json'), /"serverID" : "/);
         assertDeepEq(
             (await account.notes(remote)).map((note) => note.title),

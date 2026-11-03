@@ -22,13 +22,13 @@ export const PRICING = {
         [JUDGE_MODEL]: { input: 100_000, output: 500_000, cacheWrite: 200_000, cacheRead: 10_000 },
     } satisfies Record<string, TokenPrices>,
     /**
-     * Deepgram Nova-3 (one language), per minute of audio: streaming 0.0077 USD (both sides of a live call are billed), a recorded file 0.0043 USD.
-     * Speakers (`diarize`, the call side's) cost 0.0020 USD more on a stream and nothing more on a file; keyterms (a project's names and terms)
-     * 0.0013 USD more on either.
+     * Deepgram Nova-3 multilingual (`language=multi`: the language is heard, never chosen), per minute of audio: streaming 0.0092 USD (both sides of
+     * a live call are billed), a recorded file 0.0052 USD. Speakers (`diarize`, the call side's) cost 0.0020 USD more on a stream and nothing more on a
+     * file; keyterms (a project's names and terms) 0.0013 USD more on either.
      */
     deepgram: {
-        live: { base: 7_700, diarize: 2_000, keyterms: 1_300 },
-        recorded: { base: 4_300, diarize: 0, keyterms: 1_300 },
+        live: { base: 9_200, diarize: 2_000, keyterms: 1_300 },
+        recorded: { base: 5_200, diarize: 0, keyterms: 1_300 },
     },
     /** Workers AI `toMarkdown`, per file: PDFs and Office files are free (images are not, and are not accepted). */
     toMarkdown: { microsPerFile: 0 },

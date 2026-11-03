@@ -20,7 +20,7 @@ e2eCase(
             const settings = cue.save('settings.txt', await cue.snapshotText(cue.path('cue-settings.png')));
             const overlay = cue.save('overlay.txt', await cue.snapshotText(cue.path('cue.png')));
             const shows = {
-                dashboard: /New Project|About the Talk/,
+                dashboard: /New Project/,
                 settings: /Answer questions automatically|Your name/,
                 overlay: /Ask anything/,
                 other: /Elsewhere/,

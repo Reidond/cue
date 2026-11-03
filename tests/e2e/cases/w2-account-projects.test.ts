@@ -7,6 +7,7 @@ import {
     assertTextNotContains,
     e2eCase,
     exec,
+    expand,
     fail,
     fixture,
     isDirectory,
@@ -22,13 +23,13 @@ e2eCase(
         await backend.invite(cue.email);
         const account = await backend.accountOf(cue.email);
         const create = async (name: string, body: Record<string, string> = {}): Promise<{ id: string }> =>
-            (await backend.call('POST', '/v1/projects', account.token, { body: { name, language: 'en', ...body } })).body as { id: string };
+            (await backend.call('POST', '/v1/projects', account.token, { body: { name, ...body } })).body as { id: string };
         const doomed = `Old talk ${process.pid}`;
         const bees = await create('Bee talk', { occasion: 'A talk at the city council' });
         await backend.call('POST', `/v1/projects/${bees.id}/materials`, account.token, { file: { path: fixture('materials', 'talk.md') } });
         await create('Talk 10');
         await create('Talk 2');
-        await create('Семінар', { language: 'uk' });
+        await create('Семінар');
         await create(doomed);
 
         await cue.launch();
@@ -48,7 +49,8 @@ e2eCase(
             assertContains(join(cue.projectPath(name), 'project.json'), /"serverID": "/);
         }
         assertContains(join(cue.projectPath('Bee talk'), 'project.json'), /"occasion": "A talk at the city council"/);
-        assertContains(join(cue.projectPath('Семінар'), 'project.json'), /"language": "uk"/);
+        // The language is the one Cue last heard in the project's calls: English until one is heard.
+        assertContains(join(cue.projectPath('Семінар'), 'project.json'), /"language": "en"/);
 
         // The pane: a name for each, numbers as Explorer sorts them (Talk 2 before Talk 10).
         await waitShows('the pane to list the projects', /^Семінар$/m);
@@ -64,9 +66,10 @@ e2eCase(
         // A project's page: its files and settings as the account has them.
         cue.control('page Bee talk');
         await waitShows('the project and its file', /^133 words · 3 prepared answers$/m);
-        const page = await windowText(cue.pid);
-        assertTextContains(page, /^A talk at the city council$/m);
-        assertTextContains(page, /^English · 1 file$/m);
+        assertTextContains(await windowText(cue.pid), /^1 file$/m);
+        // The person's own words about the talk are under Advanced.
+        await expand(cue.pid, 'Advanced');
+        await waitShows('the occasion under Advanced', /^A talk at the city council$/m);
         cue.control('page Bee talk/answers');
         await waitShows('its prepared answers', /^What were the winter losses\?$/m);
 

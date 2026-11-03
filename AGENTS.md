@@ -71,7 +71,8 @@ the only way to use the app. Work on it in a Boat sandbox like everything else (
 
 ## Projects and materials (`apps/api` `/v1/projects`, `apps/mac/Sources/Cue/Projects.swift`)
 
-A person's projects (name, occasion, language, names and terms) and their materials live in D1 and R2; `docs/backend.md` › Materials has the design.
+A person's projects and their materials live in D1 and R2; `docs/backend.md` › Materials has the design. The person adds files; everything else is written from them
+(the brief) or heard (the language).
 
 - **Routes**: `src/routes/projects.ts` (CRUD and `…/prepared-answers`) and `src/routes/materials.ts`, both behind the `authed` plugin (`src/routes/authed.ts`,
   which gives a route `userId`); `src/projects.ts` has the row types. Every query carries the user id: another person's project is `not_found`, never `forbidden`.
@@ -85,22 +86,35 @@ A person's projects (name, occasion, language, names and terms) and their materi
   `AI_BINDING=1` and `MARKDOWN_URL` points at a stand-in speaking `toMarkdown`'s shape: `harness/fake-providers.ts` serves it (`/markdown`, noted as
   `markdown-request`, reading Word and PDF files built by `harness/documents.ts`). A real `toMarkdown` run is not covered by any case. Each file it reads is a `usage` row
   (`material_text`, provider `cloudflare`, unit `files`, priced by `PRICING.toMarkdown` in `src/pricing.ts`, now 0: documents are free).
-- **Prepared answers** are found when asked for (`src/materials/prepared.ts`, the port of `Materials.extractQA`), in the project's language (`lexicon.ts` holds the question and
-  answer labels; English ones always count), so changing the language changes them.
+- **Prepared answers** written in the files are found when asked for (`src/materials/prepared.ts`, the port of `Materials.extractQA`), with every language's question and
+  answer labels (`lexicon.ts`): there is no language to choose. `GET …/prepared-answers` lists them first (`from: 'materials'`), then the brief's (`from: 'cue'`), with the brief's state.
+- **The brief** (`src/materials/{brief,workflow}.ts`, `prompts/brief.md`, migration `0009_project_brief.sql`): what Cue writes from a project's materials — the occasion, the names
+  and terms speech recognition listens for, and answers to the 10–25 questions people are most likely to ask (Sonnet reads the files' texts, up to `BRIEF_MAX_CHARS`, and is told
+  which questions the files answer already). Every file added or removed counts in `materials_version` and starts a `BriefWorkflow` (bound `BRIEF`) for it: it waits
+  `BRIEF_SETTLE_SECONDS` (3) so files dropped together are read once, and only the latest version's writes. Its states: `none` (no files), `working`, `ready`, `failed` (the
+  brief before stays in use, `error` says why; Claude's failure is retried). `POST /v1/projects/:id/brief` asks for it again. The project's `occasion` and `namesAndTerms`
+  are the person's own: empty means the brief's are used (`inUse` in `src/projects.ts`: the call's prompt and keyterms, the notes). Its tokens are `materials_brief` usage.
+- **The language** is never set: the project's `language` is the one Cue last heard in its calls (the Call DO writes it when a call ends; `en` before). A client sending one is
+  ignored.
 - **The Mac app**: `ProjectStore` is the account's projects plus a folder each in the library, for the notes until PR 6. `Project.id` stays the folder name (notes and calendar
   assignments point at it); `Project.serverID`, in `project.json`, is the account's project. After sign-in (`CueAPI.onSignedIn`, before `Signed in` is logged) `syncWithAccount` lists the
   account's projects, makes a folder for the ones this Mac hasn't seen, and uploads every folder without a `serverID` once (`📦 Imported N projects from this Mac`).
   Create, rename, delete and adding or removing a file wait for the server; field edits are saved here at once and to the account after 0.8 s (`☁️ Saved “NAME” to your account`).
   `CUE_CONTROL` commands run one after another, so `new` and `add` finish before the next line. `KnowledgeBase` builds Claude's prompt from the server's text.
+  After a file is added or removed (and at sync, for a brief still `working`) `followBrief` reads the project every 1.5 s until the brief is written: `✨ Prepared “NAME” from its
+  materials: N answers, M names and terms` or `⚠︎ Couldn't prepare “NAME” from its materials: WHY`. The Overview (`ProjectView`) is the materials first, then how Cue's reading
+  went (Show Answers, Try Again, Prepare), then **Advanced**, collapsed: Occasion and Names and terms, whose placeholders are the brief's. Prepared Answers has "From Your Files"
+  and "Prepared by Cue".
 - **AoT**: `E2E_BACKEND=preview node tests/e2e/run.ts --no-app 26 27` runs the same cases against the compiled Worker (`cf build --mode development`, `vp preview`), where Elysia compiles its routes ahead of time.
-- **In a case**: `backend.call(method, path, token, { body | file })`, `backend.accountOf(email)` (`Account`: `projects()`, `materials()`, `text()`, `answers()`) and
+- **In a case**: `backend.call(method, path, token, { body | file })`, `backend.accountOf(email)` (`Account`: `projects()`, `materials()`, `text()`, `answers()`, `briefed(name)`: waits for
+  the brief to be written or fail) and
   `backend.rows(sql)` and `backend.objects()` (R2 keys) check the account from outside the app; `makeDocx`/`makePdf`/`makePptx`/`writeFile` build the files.
 
 ## Limits and usage (`apps/api/src/{pricing,limits,usage}.ts`)
 
 What a person may spend, and what stops them. `docs/backend.md` › Limits has the design; the shapes are `Me` in `packages/contract/src/index.ts`.
 
-- **One price table**: `PRICING` in `src/pricing.ts` (per model input / output / cache write / cache read tokens per million, Deepgram live and recorded per minute,
+- **One price table**: `PRICING` in `src/pricing.ts` (per model input / output / cache write / cache read tokens per million, Deepgram's multilingual live and recorded per minute,
   `toMarkdown` per file; millionths of a dollar, list prices to check before the first deploy). Every `usage` row is built by `tokenUsage`, `speechUsage` or
   `markdownUsage` there: a new thing that costs money is a line in the table and one of those, nowhere else.
 - **A month's allowance**: `limitState(db, userId)` (`src/usage.ts`): the UTC month's `usage` against `user_limit`, else the admin's default. Over it (spend >= limit; a
@@ -115,6 +129,8 @@ What a person may spend, and what stops them. `docs/backend.md` › Limits has t
 - **In the notes Workflow**: before a step that spends money (the second pass, a speakers pass that must read the call side again, names, summary) a `… limit` step asks
   `limitState`; over it the step is `failed` with the reason `Cue plan limit reached` and the session-log line `⚠︎ Cue plan limit reached: the summary wasn't written — the transcript
   is kept` (the others: see `LIMITED` in `workflow.ts`). The note is ready with the live transcript.
+- **In the brief Workflow**: its `limit` step asks `limitState`; over it the brief is `failed` with `Cue plan limit reached` (the one before stays in use). `POST …/brief` asks
+  `mustBeWithinLimit`.
 - **Rate limits**: Cloudflare Rate Limiting bindings, per user id: `RATE_LIMIT` (600 a minute, every authenticated `/v1` request, in the `authed` plugin and the socket) and
   `RATE_LIMIT_COSTLY` (30 a minute, what `mayStartCostlyWork` guards: calls and questions). Over: `rate_limited` (429, retryable). A case lowers them with `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_PERIOD`
   (10 or 60) and `RATE_LIMIT_COSTLY_REQUESTS` in `cue.backend({ env })`; the limiter is eventually consistent per location in production.
@@ -162,11 +178,16 @@ what its events say. `docs/backend.md` has the design; the shapes are `packages/
   (`begin`, `ask`, `end`); its `fetch` is only the upgrade. `src/call/stub.ts` types the namespace (the generated types cannot follow a Worker's binding to itself).
 - **In**: binary frames (one byte channel, 0 `me` / 1 `others`, then PCM16 LE mono 16 kHz, contiguous: the server's clock is the samples) and JSON commands
   `config`, `ask`, `answerNow`, `prepare`. **Out**: `ready`, `status` (part `speech|claude|judge`), `speaking`, `transcript.partial|final`, `question`, `prepared`,
-  `answer.delta|done`, `error`, `ended`, each with a `seq`; the last 1000 are kept, and `after=SEQ` replays what a reconnecting client missed. A call with no client for
+  `answer.delta|done`, `error`, `language`, `ended`, each with a `seq`; the last 1000 are kept, and `after=SEQ` replays what a reconnecting client missed. A call with no client for
   `CALL_GRACE_SECONDS` (120) ends by itself. The reading rules (`show`, `newest`, holding the view) stay on the Mac: they are UI.
-- **The Durable Object** (`call.ts`) wires: `deepgram.ts` (a live stream per channel, Nova-3, `diarize` on `others`, endpointing 700 ms, KeepAlive, reopened when it
+- **The language is heard**: both streams are Nova-3's multilingual model (`language=multi`, `SPOKEN`), which says what each word is in. The call's language is the
+  one most words of the last 8 lines were in (it starts as the project's `language`, the last one heard); when it changes the `language` event says so (and is sent to a client
+  connecting afresh), the call row keeps it (`call.language`, for the notes) and the project gets it when the call ends. The system prompts name no language (so the cache
+  holds): each question's message says what to answer in and its two labels (`Numbers` / `Source`, `Цифри` / `Джерело`); the opener is that language's; matching and
+  echoes use every language's stop words. The Mac logs `🌐 Language heard: NAME` and follows it in the overlay's labels and the note it writes.
+- **The Durable Object** (`call.ts`) wires: `deepgram.ts` (a live stream per channel, Nova-3 multilingual, `diarize` on `others`, endpointing 700 ms, KeepAlive, reopened when it
   drops), `detector.ts` / `judge.ts` (ports of `QuestionDetector` / `QuestionJudge`: the waiting rules, Haiku with `prompts/judge.md`), `knowledge.ts` (the system
-  prompt from `prompts/prompt.md`, the project's prepared answers and materials; `Matcher` is `KnowledgeBase.match`), `session.ts` (a Claude conversation:
+  prompt from `prompts/prompt.md`, the project's prepared answers (the files' own and the brief's) and materials; `Matcher` is `KnowledgeBase.match`), `session.ts` (a Claude conversation:
   system prompt cached for an hour and written before the first question with `max_tokens: 0`, the conversation cached too, history kept; `anthropic.ts` the Messages
   client with the retries), `lexicon.ts` (language names, stop words, openers). Echo lines (the microphone hearing the call) are dropped before anyone sees them.
 - **Alarms** (`CACHE_TICK_SECONDS` 300): each tick warms a session quiet for `CACHE_REFRESH_SECONDS` (2700), records usage and ends an abandoned call.
@@ -186,8 +207,9 @@ After a call the recording goes up and the backend makes the notes. `docs/backen
   `PUT …&part=N` sends part N as the request body (`parse: () => true`; **5 MiB at least except the last, and local R2 enforces it**), `POST …/complete` finishes.
   The R2 binding cannot list parts, so each lands in `upload_part` (D1): that is the resume state. `take` is the recording's start in ms (a call can hold several recordings).
 - **Notes**: `POST /v1/calls/:id/notes` (the uploads are complete; the same `take` returns the same note) saves the live lines (the call row, or the Call DO's `lines()`
-  when the call goes on), makes the `note` row and starts **`NotesWorkflow`** (`src/notes/workflow.ts`, bound `NOTES`). Steps `transcript` (Deepgram recorded-file API, Nova-3,
-  `tag=me|others`, `diarize` on the call side, keyterms from the project; echo and `sideLost` rules ported from the app) → `speakers` (the port of `Speakers.label` on the words'
+  when the call goes on), makes the `note` row and starts **`NotesWorkflow`** (`src/notes/workflow.ts`, bound `NOTES`). The note is worded in the call's language (`call.language`,
+  else what the client heard, else the project's last). Steps `transcript` (Deepgram recorded-file API, Nova-3 multilingual: the language most of the recording's words are in
+  becomes the note's, `tag=me|others`, `diarize` on the call side, keyterms from the project; echo and `sideLost` rules ported from the app) → `speakers` (the port of `Speakers.label` on the words'
   voices) → `names` (Sonnet, `prompts/names.md`) → `summary` (Sonnet, `prompts/summary.md`; remarks about the transcript dropped, title taken) → `store`. Each step is retried
   three times (`NOTES_RETRY_SECONDS` apart); one that fails for good is marked failed and the next runs: the note keeps what it had. Only the note id goes between steps; the working
   transcript is in D1 (`note.lines`, `note.voices`, `note.transcript`).
@@ -263,7 +285,7 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   with `vmpal_screenshot` in both themes (`CUE_APPEARANCE=light|dark`). The VM snapshot `cue-toolchain` has the toolchain installed and the repository's packages in `C:\src\cue`.
   `w1-installer` installs per machine, so it needs an elevated process (`vmpal_exec_admin`; a CI runner is one) and skips without.
 - **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks), `w1-…` (the installer), `w2-…` (projects and materials: `w2-projects`, `w2-materials`, `w2-import-projects`,
-  `w2-account-projects`, `w2-active-project`; they read the window with `windowText`, the account with `backend.accountOf(cue.email)`), `w3-…` (the live call: see Live call on Windows), `w4-…` (recordings and notes: see Recordings and notes on Windows) and `w6-…` (meetings, the calendar and notifications: see Meetings, the calendar and notifications on Windows) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
+  `w2-account-projects`, `w2-active-project`, `w2-brief` (the Overview: Materials, how Cue read them, the Advanced `Expander`; Try Again); they read the window with `windowText`, open an `Expander` with `expand(pid, name)` (UI Automation's expand pattern: its header is no button to `press`), the account with `backend.accountOf(cue.email)`), `w3-…` (the live call: see Live call on Windows), `w4-…` (recordings and notes: see Recordings and notes on Windows) and `w6-…` (meetings, the calendar and notifications: see Meetings, the calendar and notifications on Windows) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
   them together with the cases that never launch the app (the source has no `.launch(`, `.cli(` or `.control(`: the backend's own, `9a-…` to `9e-…`, `95`–`99`). `9e-windows-sign-in` signs in as `cue-windows` end to end
   and runs anywhere with `--no-app`. Every later `wN-…` case is the app's too (CI runs all `w` cases but `w1-`; see CI and releases). A case reads what the window shows with `windowText(pid)` (`tools/uia.ps1`: the text of its UI Automation tree, exact (no recognition errors); a XAML `ScrollViewer`'s content scrolled out of view is not in it),
   and `windowsOf(pid)` is `tools/windows.ps1` (the foreground, the windows' sizes and styles: the twin of `appWindows`); `ocr` is `tools/ocr.ps1` (Windows' own `Windows.Media.Ocr`; it needs the English recognizer,
@@ -275,7 +297,7 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   (Settings is a page of the dashboard, so there is no `-settings.png`; `CUE_SNAPSHOT_METHOD` doesn't apply; `📸 Snapshots: window capture (PrintWindow), in the dark appearance`); `CUE_APPEARANCE`, `CUE_SHOW_SETTINGS`,
   `CUE_ME_TICK`, `CUE_API_URL`, `CUE_WEB_AUTH=headless`, `CUE_PROJECT=name` as on the Mac; `CUE_CONTROL` commands now: `signin [google|github]`, `signout`, `settings general|account|calendar`,
   `page home|upcoming|NAME|NAME/overview|NAME/answers|NAME/notes`, `size W H`, `quit`, and the projects': `new NAME`, `add PATH` (a file dropped on the open project's materials, else the active project's),
-  `set PROJECT | occasion|language|names | VALUE`, `remove PROJECT | FILE`, plus two the Mac has no command for, because it does them in a dialog no case drives: `rename-project NAME | NEW` and `delete-project NAME`
+  `set PROJECT | occasion|names | VALUE`, `remove PROJECT | FILE`, plus two the Mac has no command for, because it does them in a dialog no case drives: `rename-project NAME | NEW` and `delete-project NAME`
   (what the pane's context menu runs), and `update check|restart` as on the Mac. Commands run one after another, so `new` and `add` finish before the next line. `signin`, `signout`, `settings`, `page`, `size`, `update` and `quit` work signed out; any other command then
   logs `⚠︎ Sign in to Cue first (NAME ignored)`.
   The live call's `CUE_CONTROL` commands: `start NAME` (Start Cue for that project: shows the overlay and listens), `stop`, `project NAME` (the overlay's project menu), `ask TEXT`, `show TEXT`, `newest`, `prepare`; the project is found as `page NAME` finds it (by name, else by folder name), and none is no-op, as on the Mac.
@@ -324,7 +346,7 @@ are the Mac's, word for word.
   dashboard is the Mac's File › Start Cue (`LiveModel.ToggleCue(open)`: Stop Cue while it runs for the project open, or none; else Start Cue for the open project, else the active one; none at all, the dashboard). A call is made for the project's `ServerId`:
   one that has not reached the account yet shows "Waiting for the project to reach your account" and the call starts once it has, and another project (or its materials arriving) changes the status line and the call (`LiveModel.ProjectChanged`).
   `start NAME` / `project NAME` find the project as `page NAME` does (`ProjectStore.FindByName`: by name, else by folder name), and none is a no-op, as on the Mac.
-- **Cases** `w3-…`: `rehearsal` (transcript, question, prepared match, streamed answer on the overlay, and in the snapshot), `reconnect` (the socket lost with `CUE_LIVE_BREAK`: the same call goes on, nothing shown twice), `ask` (Prepare Answer, Ask, Answer now), `reading` and `reading-aloud` (show, newest, the
+- **Cases** `w3-…`: `rehearsal` (transcript, question, prepared match, streamed answer on the overlay, and in the snapshot), `reconnect` (the socket lost with `CUE_LIVE_BREAK`: the same call goes on, nothing shown twice), `ask` (Prepare Answer, Ask, Answer now), `language` (a Ukrainian rehearsal: `🌐 Language heard: Ukrainian`, the overlay taking that language's labels), `reading` and `reading-aloud` (show, newest, the
   New question button, the reading rules), `limit`, `deepgram-drops`, `overlay-bar` (at the default size, while recording: one middle line, nothing overlapping, the whole status in the snapshot), `overlay` (above another program's window, never the focus, a real click and real typing, hidden from `CopyFromScreen`, shown with `CUE_ALLOW_CAPTURE`),
   `hot-keys` (real key presses), `call-audio` (real loopback). They use `bursts` and the stand-ins' lines (`FAKE_DEEPGRAM_LIVE`), `accountProject(cue, name, { materials })` (a project in the case user's account, made
   through the API), `press(pid, name)` (UI Automation invoke: `tools/uia-click.ps1`), `click(pid, name)` (a real mouse click at the control), `typeText`, `pressKeys('win', 'alt', 'h')` (`tools/keys.ps1`, `SendInput`),
@@ -443,12 +465,14 @@ This rule is strict and has no exceptions.
     requests with a 529, `FAKE_ANTHROPIC_CUT=N` breaks off the first N answers partway), simulates the prompt cache and reports `usage`. The
     Deepgram one takes a continuous stream of PCM per channel, tells speech from silence by loudness, and answers each stretch of speech (an
     utterance, ended by 700 ms of quiet) with the next line of `FAKE_DEEPGRAM_LIVE` (a JSON array in the order utterances start across both
-    channels; an entry is a string, or `{text, speaker}` for the call side) or "Utterance N."; `FAKE_DEEPGRAM_DROP=N` drops the connection of
-    the Nth utterance as it starts. For the notes Workflow it also reads a recorded file (`POST /v1/listen`): one utterance per stretch of speech in it,
+    channels; an entry is a string, or `{text, speaker, language}`) or "Utterance N."; `FAKE_DEEPGRAM_DROP=N` drops the connection of
+    the Nth utterance as it starts. Asked for `language=multi` (always, now) each result says its language: the entry's `language`, else `uk` for Cyrillic and `en` otherwise. For the notes Workflow it also reads a recorded file (`POST /v1/listen`): one utterance per stretch of speech in it,
     worded by `FAKE_DEEPGRAM_FILE` (a JSON object `{"me": […], "others": […]}`, entries as above, in order; a side without an entry says "Second pass by Deepgram, part N."),
     with each word's `speaker` when the request has `diarize` (`FAKE_DEEPGRAM_FILE_FAILS=N` fails the first N such requests with a 500, `FAKE_DEEPGRAM_FILE_DELAY` slows them);
     the Anthropic one has a second system prompt kind, the names step ("You find the names…"), answered by `FAKE_CLAUDE_NAMES` (a JSON object label → name; by default the
-    `<!-- speaker: … -->` lines of the summary's fixture), and `FAKE_ANTHROPIC_SUMMARY_FAILS=N` fails the first N summaries. The variables are read from the environment the app was launched with (`cue.launch({…})`) or from
+    `<!-- speaker: … -->` lines of the summary's fixture), and `FAKE_ANTHROPIC_SUMMARY_FAILS=N` fails the first N summaries; a third, a project's brief ("You read the
+    materials…", noted as `brief-system` and `brief-input`), is answered by `FAKE_CLAUDE_BRIEF` (the JSON object `prompts/brief.md` asks for; by default an empty one) and
+    `FAKE_ANTHROPIC_BRIEF_FAILS=N` fails the first N. The variables are read from the environment the app was launched with (`cue.launch({…})`) or from
     `cue.standIns({…})` for a case with no app. `--real-deepgram` points the backend at the real Deepgram instead, with the key the runner
     reads from the login keychain (item `Cue e2e Deepgram API key`, added with `security add-generic-password -a "$USER" -s "…" -w`): never
     put a real key in a case, a fixture, the control file or the chat. A recording of a real call (someone's conversation) never goes into
@@ -508,7 +532,7 @@ local D1 and KV, started by the case.
   `getNote`; `account.notes(project?)` / `account.note(id)` read a person's notes from outside the app. Parts must be 5 MiB or more (R2's rule, enforced by the local R2 too):
   generate long audio (`bursts` writes it instantly) when a case needs several. `cue.backend({ env: { NOTES_RETRY_SECONDS, RETENTION_DAY_SECONDS, RETENTION_TICK_SECONDS } })` shortens
   a retry's wait and the retention's "day". `cue.serviceRequests('deepgram-file')` reports the recorded-file requests.
-- **Live calls without the app** (`9b-live-…`, also Linux-friendly): `startCall(backend, email, { materials, language, namesAndTerms, call })` signs in,
+- **Live calls without the app** (`9b-live-…`, also Linux-friendly): `startCall(backend, email, { materials, namesAndTerms, call })` signs in,
   makes a project with the files as materials and starts a call; `LiveClient.connect(backend, token, callId, after?)` is the app's socket
   (`play(channel, pcm)` streams audio in real time, `command({…})`, `next(type, check, seconds)` waits for an event, `of(type)`, `answerTo(questionId)`,
   `drop()`); `bursts(out, seconds, [[from, to]…])` writes loud sound where the Deepgram stand-in should hear speech and silence elsewhere (no
@@ -644,7 +668,7 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_SNAPSHOT_METHOD=m` | How `CUE_SNAPSHOT` takes them: `desktop` (the default: each window over the desktop picture alone, so its glass refracts real pixels yet no other window covers it or shows through), `window` (the window alone: the overlay's glass over nothing), `display` (what's on screen behind the window now, other apps included, minus whatever is in front of it) or `offscreen` (the fallback, forced). |
 | `CUE_APPEARANCE=light\|dark` | Use this appearance instead of the system's. |
 | `CUE_PROJECT=name` | Make this project active at launch, creating it if there is none by that name. |
-| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|account\|calendar` (Settings on that tab), `set PROJECT | occasion|language|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (a material's minus button), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes), `signin` (Sign In on Home), `signout` (Sign Out in Settings › Account) and `update check\|restart` (Check Now / Restart to Update in Settings › General). Until someone is signed in only `signin`, `signout`, `settings`, `page`, `size` and `update` do anything (the rest log `⚠︎ Sign in to Cue first (…)`). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
+| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|account\|calendar` (Settings on that tab), `set PROJECT | occasion|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (a material's minus button), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes), `signin` (Sign In on Home), `signout` (Sign Out in Settings › Account) and `update check\|restart` (Check Now / Restart to Update in Settings › General). Until someone is signed in only `signin`, `signout`, `settings`, `page`, `size` and `update` do anything (the rest log `⚠︎ Sign in to Cue first (…)`). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
 | `CUE_CALENDAR_EVENTS=file.json` | Read the calendar from this file instead of EventKit (no permission asked), again on every check: a JSON array of `{title, start, end}` (ISO 8601) with optional `id`, `series` (shared by a recurring event's occurrences), `calendar` (name), `url`, `location`, `notes`, `attendees` (names), `recurring`. |
 | `CUE_MIC_APPS=file` | The bundle IDs using the microphone right now, one per line, read on every check instead of Core Audio's process list. |
 | `CUE_MEETING_TICK=s` / `CUE_MIC_RELEASE=s` | Check for calls every `s` seconds instead of 5; stop a call's recording once the call app has been off the microphone for `s` seconds instead of 60. |
@@ -684,6 +708,7 @@ or `⚠︎ Couldn't improve the transcript: …`, `👥 Finding speakers…`,
 `🧽 Dropped a remark about the transcript from the summary: …`, `⚠︎ Summary failed: …`, `📦 Imported N notes from this Mac`, `☁️ Restored N notes from your account`,
 `🔑 Signed in to Cue as EMAIL`, `🔑 Signed out of Cue` (Sign Out, or after `⚠︎ Your Cue session ended: …`),
 `🔑 Cue access refreshed`, `📦 Imported N projects from this Mac (M files)`, `📎 Added FILE to PROJECT: SUMMARY`, `🗑 Removed FILE from PROJECT`,
+`✨ Prepared “PROJECT” from its materials: N answers, M names and terms`, `⚠︎ Couldn't prepare “PROJECT” from its materials: …`, `🌐 Language heard: NAME`,
 `☁️ Saved “PROJECT” to your account`, `⚠︎ Not invited: EMAIL`, `⚠︎ Couldn't sign in to Cue: …`, `⚠︎ Sign in to Cue first`,
 `📝 Notes ready: …`, `📅 Recording “Title” into Project`, `🔔 Record “Title”?`,
 `✅ Cue is up to date (VERSION)`, `🔄 Downloading Cue NEW (this is OLD)…`, `✅ Cue NEW is installed: it opens the next time Cue starts` (the Mac) or

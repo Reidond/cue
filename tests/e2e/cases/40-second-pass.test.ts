@@ -17,13 +17,12 @@ import {
 
 e2eCase(
     "After Stop, the recording of each side goes up and the backend's Workflow reads it again with Deepgram, with the " +
-        "project's language, occasion and names and terms and the call side's voices told apart; its transcript replaces " +
+        "language it hears (whatever it is), the project's occasion and names and terms and the call side's voices told apart; its transcript replaces " +
         'the live one in the note, both sides merged by time, before the summary is written.',
     async (cue) => {
         await cue.defaults('speakerName', 'Андрій Тест');
         await cue.defaults('autoAnswer', false);
         await cue.project('Звіт', {
-            language: 'uk',
             occasion: 'Щотижнева зустріч щодо звіту',
             namesAndTerms: 'Олена Мулеса, узгодженість даних, Київ',
         });
@@ -64,7 +63,7 @@ e2eCase(
         assertTurnsAt(notes, call.timeline, ['Учасник', 'Андрій Тест', 'Учасник', 'Андрій Тест', 'Учасник']);
         assertEq(countLines(notes, /^\*\*[0-9]{2}:[0-9]{2}:[0-9]{2} · /), 5, 'each line of the call should be its own turn');
 
-        // How the backend asked Deepgram: one request per side, the owner's key, Nova-3, the project's language, its terms, voices told apart on the call side only.
+        // How the backend asked Deepgram: one request per side, the owner's key, Nova-3, every language (Deepgram hears which), its terms, voices told apart on the call side only.
         const asked = cue.serviceRequests('deepgram-file');
         assertEq(asked.length, 2, 'the two sides should each be read once');
         const bySide = Object.fromEntries(asked.map((request) => [request.side, request]));
@@ -72,7 +71,7 @@ e2eCase(
             const request = bySide[side] ?? fail(`Deepgram should have been asked about the ${side} side`, JSON.stringify(asked));
             assertEq(request.key, FAKE_KEYS.deepgram, "the owner's key, not the user's token");
             assertEq(request.query['model'], 'nova-3');
-            assertEq(request.query['language'], 'uk', "the project's language");
+            assertEq(request.query['language'], 'multi', 'the language is heard, never chosen');
             assertEq(
                 request.keyterms.includes('Олена Мулеса') && request.keyterms.includes('узгодженість даних'),
                 true,

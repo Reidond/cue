@@ -1,18 +1,19 @@
 import Foundation
 
-/// A prepared question and its answer, found in a material by the Cue API.
+/// A prepared question and its answer: written in a material, or one of the likely questions Cue answered from the materials.
 struct PreparedAnswer: Hashable {
     let q: String
     let a: String
     let who: String?
     let source: String
+    /// Prepared by Cue from the materials, not written in them.
+    var byCue = false
 }
 
-/// One file of a project: the text the Cue API read from it, plus any prepared Q&A it found there.
+/// One file of a project: the text the Cue API read from it.
 struct MaterialDocument {
     let name: String
     var text = ""
-    var prepared: [PreparedAnswer] = []
     var summary = ""
     var error: String?
 
@@ -33,9 +34,9 @@ struct KnowledgeBase {
     /// Rough token count; Claude's tokenizer averages ~3.9 UTF-8 bytes per token on mixed text.
     var estimatedTokens: Int { bytes * 10 / 39 }
 
-    init(documents: [MaterialDocument]) {
+    init(documents: [MaterialDocument], prepared: [PreparedAnswer]) {
         self.documents = documents
-        prepared = documents.flatMap(\.prepared)
+        self.prepared = prepared
         bytes = documents.reduce(0) { $0 + $1.text.utf8.count }
     }
 }

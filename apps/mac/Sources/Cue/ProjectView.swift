@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// A project's page: its name and Start Cue on top, then the talk, its
+/// A project's page: its name and Start Cue on top, then its materials (and what Cue prepared from them), its
 /// prepared answers or its notes, picked in the toolbar.
 struct ProjectView: View {
     @ObservedObject var state: AppState
@@ -24,9 +24,11 @@ struct ProjectView: View {
                           start: { state.startCue(project) }, stop: state.stopCue)
             switch model.tab {
             case .overview:
-                ProjectOverview(projects: projects, project: project, knowledge: knowledge, reading: reading)
+                ProjectOverview(projects: projects, project: project, knowledge: knowledge, reading: reading,
+                                showAnswers: { model.tab = .answers })
             case .answers:
-                PreparedAnswersView(answers: knowledge?.prepared ?? [], reading: reading)
+                PreparedAnswersView(answers: knowledge?.prepared ?? [], reading: reading, brief: project.brief,
+                                    hasMaterials: !project.materials.isEmpty)
             case .notes:
                 ProjectNotesView(store: recordings, state: state, project: project, selection: $model.note)
             }
@@ -49,10 +51,10 @@ struct ProjectView: View {
     }
 
     private struct PreviewKey: Equatable {
-        let materials: [Material], language: String
+        let materials: [Material], brief: ProjectBrief
         init(project: Project) {
             materials = project.materials
-            language = project.language
+            brief = project.brief
         }
     }
 }
@@ -65,9 +67,9 @@ final class MaterialsPreview: ObservableObject {
 
     func read(_ project: Project, in store: ProjectStore) async {
         reading = true
-        let documents = await store.documents(of: project.serverID)
+        let read = await store.knowledge(of: project.serverID)
         guard !Task.isCancelled else { return }
-        if let documents { knowledge = KnowledgeBase(documents: documents) }
+        if let read { knowledge = read }
         reading = false
     }
 }
@@ -116,8 +118,7 @@ private struct ProjectHeader: View {
     }
 
     private var subtitle: String {
-        var parts = [SpokenLanguage.named(project.language).name]
-        parts.append(project.materials.count == 1 ? "1 file" : "\(project.materials.count) files")
+        var parts = [project.materials.count == 1 ? "1 file" : "\(project.materials.count) files"]
         parts.append(notes == 1 ? "1 note" : "\(notes) notes")
         if active { parts.append("Cue answers from this project") }
         return parts.joined(separator: " · ")
@@ -126,31 +127,18 @@ private struct ProjectHeader: View {
 
 // MARK: - Overview
 
+/// The materials first: everything else Cue writes from them (the brief), and keeps under Advanced for the person to change.
 private struct ProjectOverview: View {
     @ObservedObject var projects: ProjectStore
     let project: Project
     let knowledge: KnowledgeBase?
     let reading: Bool
+    let showAnswers: () -> Void
     @State private var dropTargeted = false
+    @State private var advanced = false
 
     var body: some View {
         Form {
-            Section {
-                TextField("Occasion", text: field(\.occasion),
-                          prompt: Text("e.g. PhD pre-defense of my dissertation on …"), axis: .vertical)
-                    .lineLimit(2...5)
-                Picker("Language", selection: field(\.language)) {
-                    ForEach(SpokenLanguage.all) { Text($0.name).tag($0.code) }
-                }
-                TextField("Names and terms", text: field(\.vocabulary),
-                          prompt: Text("People's names, jargon, product names…"), axis: .vertical)
-                    .lineLimit(2...5)
-            } header: {
-                Text("About the Talk")
-            } footer: {
-                Text("A sentence or two about the talk and who will be asking. Cue listens and answers in this language; names and terms help speech recognition spell what it hears.")
-            }
-
             Section {
                 if project.materials.isEmpty {
                     dropHint
@@ -173,14 +161,43 @@ private struct ProjectOverview: View {
             } header: {
                 Text("Materials")
             } footer: {
-                Text("PDF, PowerPoint, Word, Markdown or text, kept in your Cue account, which reads them. Prepared answers are picked up from lines like “Q: …” followed by “A: …”, and from questions followed by an “Answer:” line, including in speaker notes.")
+                Text("Slides, documents and notes: PDF, PowerPoint, Word, Markdown or text, kept in your Cue account. Cue reads them and prepares the rest: what the talk is about, the names and terms to listen for, and answers to the questions people are likely to ask.")
             }
             .dropDestination(for: URL.self) { urls, _ in
                 Task { await projects.addMaterials(urls, to: project) }
                 return true
             } isTargeted: { dropTargeted = $0 }
+
+            if !project.materials.isEmpty {
+                Section {
+                    BriefRow(brief: project.brief, showAnswers: showAnswers) {
+                        Task { await projects.prepareAgain(project) }
+                    }
+                }
+            }
+
+            Section {
+                DisclosureGroup("Advanced", isExpanded: $advanced) {
+                    TextField("Occasion", text: field(\.occasion), prompt: Text(occasionPrompt), axis: .vertical)
+                        .lineLimit(2...5)
+                    TextField("Names and terms", text: field(\.vocabulary), prompt: Text(termsPrompt), axis: .vertical)
+                        .lineLimit(2...5)
+                }
+            } footer: {
+                if advanced {
+                    Text("Cue writes these from your materials. Type to use your own words instead; clear a field to go back to Cue's. There is no language to choose: Cue hears what is spoken.")
+                }
+            }
         }
         .formStyle(.grouped)
+    }
+
+    private var occasionPrompt: String {
+        project.brief.occasion.isEmpty ? "What the talk is about and who will ask, from your materials" : project.brief.occasion
+    }
+
+    private var termsPrompt: String {
+        project.brief.terms.isEmpty ? "People's names, jargon, product names, from your materials" : project.brief.terms.joined(separator: ", ")
     }
 
     /// Edits go straight to `project.json`.
@@ -199,7 +216,7 @@ private struct ProjectOverview: View {
             Image(systemName: "arrow.down.doc")
                 .font(.system(size: 28, weight: .light))
                 .foregroundStyle(dropTargeted ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-            Text("Drop slides, documents and prepared answers here")
+            Text("Drop slides, documents and notes here")
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -222,6 +239,43 @@ private struct ProjectOverview: View {
             let urls = panel.urls
             Task { await projects.addMaterials(urls, to: project) }
         }
+    }
+}
+
+/// How Cue's reading of the materials went: under way, what it prepared, or why it couldn't.
+private struct BriefRow: View {
+    let brief: ProjectBrief
+    let showAnswers: () -> Void
+    let prepare: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            switch brief.state {
+            case .working:
+                ProgressView().controlSize(.small)
+                Text("Reading your materials…").foregroundStyle(.secondary)
+                Spacer()
+            case .ready:
+                Label(prepared, systemImage: "sparkles")
+                Spacer()
+                Button("Show Answers", action: showAnswers)
+            case .failed:
+                Label(brief.error ?? "Cue couldn't read your materials", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Spacer()
+                Button("Try Again", action: prepare)
+            case .none:
+                Text("Cue hasn't read these files yet").foregroundStyle(.secondary)
+                Spacer()
+                Button("Prepare", action: prepare)
+            }
+        }
+    }
+
+    private var prepared: String {
+        let answers = brief.answerCount == 1 ? "1 answer" : "\(brief.answerCount) answers"
+        let terms = brief.terms.count == 1 ? "1 name or term" : "\(brief.terms.count) names and terms"
+        return "Prepared \(answers) and \(terms) from your materials"
     }
 }
 

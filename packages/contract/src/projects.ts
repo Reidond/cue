@@ -1,20 +1,45 @@
 import { type Static, Type } from '@sinclair/typebox';
 
 // Projects and their materials (`/v1/projects`, docs/backend.md): one talk or series of calls, the files the person added to it (slides,
-// documents, prepared answers) and the settings everything else follows. Times are milliseconds since the epoch.
+// documents, prepared answers) and what Cue writes from them (the brief: the occasion, the names and terms, the likely questions with their
+// answers). The spoken language is never set: it is heard. Times are milliseconds since the epoch.
 
-const Language = Type.String({ pattern: '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$', description: 'The spoken language, as a code: en, uk, pl, …' });
 const Name = Type.String({ minLength: 1, maxLength: 200 });
+/** What clients before the language was heard send; taken and ignored. */
+const OldLanguage = Type.Optional(Type.String({ description: 'Ignored: the spoken language is heard, never set' }));
+
+export const BriefState = Type.Union([Type.Literal('none'), Type.Literal('working'), Type.Literal('ready'), Type.Literal('failed')], {
+    description: 'none: no materials (or none read yet); working: Cue is reading them; ready; failed: see `error`',
+});
+export type BriefState = Static<typeof BriefState>;
+
+/** What Cue wrote from a project's materials; made again (after a few seconds of quiet) whenever a file is added or removed. */
+export const Brief = Type.Object({
+    state: BriefState,
+    error: Type.Union([Type.String(), Type.Null()], { description: 'Why it could not be written, for people' }),
+    occasion: Type.String({ description: 'A sentence or two about the talk and who will be asking, from the materials' }),
+    namesAndTerms: Type.String({ description: 'The names and terms in the materials speech recognition could misspell, one per line' }),
+    answerCount: Type.Integer({ description: 'The questions Cue prepared answers to' }),
+    updatedAt: Type.Union([Type.Number(), Type.Null()]),
+});
+export type Brief = Static<typeof Brief>;
 
 export const Project = Type.Object({
     id: Type.String(),
     name: Name,
-    occasion: Type.String({ description: 'A sentence or two about the talk and who will be asking' }),
-    language: Language,
-    namesAndTerms: Type.String({
-        description: "People's names, jargon, product names, as typed: one per line or separated by commas or semicolons",
+    occasion: Type.String({ description: "The person's own words about the talk; empty: the brief's are used" }),
+    language: Type.String({
+        description:
+            "The language Cue last heard in this project's calls, as a code (en, uk, …): detected from the audio, never set; en until a call was heard",
     }),
-    terms: Type.Array(Type.String(), { description: 'namesAndTerms, one by one (the speech recognition keyterms); read-only' }),
+    namesAndTerms: Type.String({
+        description:
+            "The person's own names and terms, as typed (one per line or separated by commas or semicolons); empty: the brief's are used",
+    }),
+    terms: Type.Array(Type.String(), {
+        description: 'The names and terms in use, one by one (the speech recognition keyterms); read-only',
+    }),
+    brief: Brief,
     createdAt: Type.Number(),
     lastUsedAt: Type.Union([Type.Number(), Type.Null()]),
     materialCount: Type.Integer(),
@@ -28,19 +53,19 @@ export type Projects = Static<typeof Projects>;
 export const NewProject = Type.Object({
     name: Name,
     occasion: Type.Optional(Type.String({ maxLength: 4000 })),
-    language: Type.Optional(Language),
     namesAndTerms: Type.Optional(Type.String({ maxLength: 8000 })),
+    language: OldLanguage,
     createdAt: Type.Optional(Type.Number()),
     lastUsedAt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
 });
 export type NewProject = Static<typeof NewProject>;
 
-/** `PATCH /v1/projects/:id`: what is there changes, the rest stays. */
+/** `PATCH /v1/projects/:id`: what is there changes, the rest stays. An empty `occasion` or `namesAndTerms` goes back to the brief's. */
 export const ProjectPatch = Type.Object({
     name: Type.Optional(Name),
     occasion: Type.Optional(Type.String({ maxLength: 4000 })),
-    language: Type.Optional(Language),
     namesAndTerms: Type.Optional(Type.String({ maxLength: 8000 })),
+    language: OldLanguage,
     lastUsedAt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
 });
 export type ProjectPatch = Static<typeof ProjectPatch>;
@@ -88,15 +113,21 @@ export const UploadQuery = Type.Object({
     name: Type.String({ minLength: 1, maxLength: 255, description: 'The file name, with its extension' }),
 });
 
-/** A prepared question and answer found in a material (`Q: …` / `A: …`, or a question followed by an `Answer:` line, also in speaker notes). */
+/**
+ * A prepared question and answer: written in a material (`Q: …` / `A: …`, or a question followed by an `Answer:` line, also in speaker notes),
+ * or one of the likely questions Cue answered from the materials (the brief). The materials' own come first.
+ */
 export const PreparedAnswer = Type.Object({
     question: Type.String(),
     answer: Type.String(),
     who: Type.Union([Type.String(), Type.Null()], { description: 'Who is expected to ask it: "(Smith)" after the question' }),
-    source: Type.String({ description: 'The file, and the slide for speaker notes' }),
-    materialId: Type.String(),
+    source: Type.String({ description: 'The file, and the slide for speaker notes (or the page)' }),
+    materialId: Type.String({ description: 'The material it is from' }),
+    from: Type.Union([Type.Literal('materials'), Type.Literal('cue')], {
+        description: 'materials: written in the file; cue: prepared by Cue from the materials',
+    }),
 });
 export type PreparedAnswer = Static<typeof PreparedAnswer>;
 
-export const PreparedAnswers = Type.Object({ answers: Type.Array(PreparedAnswer) });
+export const PreparedAnswers = Type.Object({ answers: Type.Array(PreparedAnswer), brief: Brief });
 export type PreparedAnswers = Static<typeof PreparedAnswers>;

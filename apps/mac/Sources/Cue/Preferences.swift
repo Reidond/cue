@@ -1,28 +1,5 @@
 import Foundation
 
-/// Spoken languages Cue can listen to. Deepgram understands all of them; the transcript's
-/// labels come from Resources/lexicons/<code>.json when present.
-struct SpokenLanguage: Identifiable, Hashable {
-    let code: String
-    let name: String
-    var id: String { code }
-
-    static let all = [
-        SpokenLanguage(code: "en", name: "English"),
-        SpokenLanguage(code: "uk", name: "Ukrainian"),
-        SpokenLanguage(code: "pl", name: "Polish"),
-        SpokenLanguage(code: "de", name: "German"),
-        SpokenLanguage(code: "fr", name: "French"),
-        SpokenLanguage(code: "es", name: "Spanish"),
-        SpokenLanguage(code: "it", name: "Italian"),
-        SpokenLanguage(code: "pt", name: "Portuguese"),
-    ]
-
-    static func named(_ code: String) -> SpokenLanguage {
-        all.first { $0.code == code } ?? SpokenLanguage(code: code, name: code)
-    }
-}
-
 /// Global preferences, persisted in UserDefaults; everything about a talk lives in its `Project`.
 @MainActor
 final class Preferences: ObservableObject {
@@ -100,7 +77,8 @@ struct Lexicon: Decodable {
                                               questionLabels: ["q"], answerLabels: ["a"], thanksPrefix: "",
                                               defaultOpener: "", numbersLabel: "Numbers", sourceLabel: "Source")
         // Unknown languages still get the universal "?" cue and English labels.
-        var lexicon = decode(code) ?? Lexicon(name: SpokenLanguage.named(code).name, questionLabels: english.questionLabels,
+        let name = Locale(identifier: "en").localizedString(forLanguageCode: code) ?? code
+        var lexicon = decode(code) ?? Lexicon(name: name, questionLabels: english.questionLabels,
                                               answerLabels: english.answerLabels, thanksPrefix: "", defaultOpener: "",
                                               numbersLabel: english.numbersLabel, sourceLabel: english.sourceLabel)
         // Prepared materials are often in English even when the talk is not (and so can be an aside in a summary).

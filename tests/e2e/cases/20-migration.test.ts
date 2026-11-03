@@ -37,7 +37,6 @@ e2eCase(
         assertFile(json);
         assertContains(json, /"name" : "My project"/);
         assertContains(json, /"occasion" : "Rooftop beekeeping talk at the city council"/);
-        assertContains(json, /"language" : "uk"/);
         assertContains(json, /"namesAndTerms" : "Varroa, Kyiv, linden"/);
         assertContains(json, /"created" : "20[0-9]{2}-/);
         assertContains(json, /"serverID" : "/);
@@ -52,7 +51,7 @@ e2eCase(
         const account = await (await cue.backend()).accountOf(cue.email);
         const remote = await account.project('My project');
         assertEq(remote.occasion, 'Rooftop beekeeping talk at the city council');
-        assertEq(remote.language, 'uk');
+        assertEq(remote.language, 'en', 'the old language setting is not carried over: the language is heard');
         assertDeepEq(remote.terms, ['Varroa', 'Kyiv', 'linden']);
         assertDeepEq(
             (await account.materials(remote)).map((material) => material.name),

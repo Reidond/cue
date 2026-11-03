@@ -5,9 +5,9 @@ using Microsoft.UI.Xaml.Navigation;
 namespace Cue;
 
 /// <summary>
-/// A project's page: its name on top, then the talk and its materials, its prepared answers or its notes, picked in the bar under the name. Which
-/// project and which page is the dashboard's (<see cref="DashboardModel.ProjectId"/>, <see cref="DashboardModel.Section"/>): the page follows it,
-/// and the store, so a project picked in the pane, `page NAME` and an edit from another place all land here.
+/// A project's page: its name on top, then its materials (and what Cue prepared from them), its prepared answers or its notes, picked in the bar
+/// under the name. Which project and which page is the dashboard's (<see cref="DashboardModel.ProjectId"/>, <see cref="DashboardModel.Section"/>):
+/// the page follows it, and the store, so a project picked in the pane, `page NAME` and an edit from another place all land here.
 /// </summary>
 public sealed partial class ProjectPage : Page
 {
@@ -78,7 +78,7 @@ public sealed partial class ProjectPage : Page
         StartCueButton.Visibility = Visibility.Visible;
         StartCueButton.Content = state.Live.CueRunning && state.Live.ActiveProject?.Id == project.Id ? "Stop Cue" : "Start Cue";
         NameText.Text = project.Name;
-        SubtitleText.Text = string.Join(" · ", SpokenLanguage.Named(project.Language).Name, project.Materials.Count == 1 ? "1 file" : $"{project.Materials.Count} files");
+        SubtitleText.Text = project.Materials.Count == 1 ? "1 file" : $"{project.Materials.Count} files";
 
         if (shown != project.Id)
         {
@@ -91,7 +91,7 @@ public sealed partial class ProjectPage : Page
         }
         _ = ReadMaterials(project);
         overview!.Update(project, knowledge, reading);
-        answers!.Update(knowledge, reading);
+        answers!.Update(knowledge, reading, project.Brief, project.Materials.Count > 0);
 
         var section = state.Dashboard.Section;
         // Another page of the project, or another project: from the top.
@@ -127,21 +127,23 @@ public sealed partial class ProjectPage : Page
         if (!ReferenceEquals(host.Child, child)) host.Child = child;
     }
 
-    /// <summary>Asks the account what it read from the project's files, when its files or language changed.</summary>
+    /// <summary>Asks the account what it read from the project's files, when its files or Cue's brief of them changed.</summary>
     private async Task ReadMaterials(Project project)
     {
-        var key = $"{project.ServerId}|{project.Language}|{string.Join(',', project.Materials.Select(material => $"{material.Id}:{material.Summary}"))}";
+        var brief = $"{project.Brief.State}:{project.Brief.UpdatedAt}";
+        var key = $"{project.ServerId}|{brief}|{string.Join(',', project.Materials.Select(material => $"{material.Id}:{material.Summary}"))}";
         if (key == readKey) return;
         readKey = key;
         var read = ++reads;
         reading = true;
-        var documents = await state.Projects.Documents(project.ServerId);
+        var known = await state.Projects.Knowledge(project.ServerId);
         // A newer read replaced this one, or the page moved to another project.
         if (read != reads || shown != project.Id) return;
-        if (documents is not null) knowledge = documents;
+        if (known is not null) knowledge = known;
         else readKey = "";
         reading = false;
-        overview?.Update(state.Projects.Find(project.Id) ?? project, knowledge, reading);
-        answers?.Update(knowledge, reading);
+        var current = state.Projects.Find(project.Id) ?? project;
+        overview?.Update(current, knowledge, reading);
+        answers?.Update(knowledge, reading, current.Brief, current.Materials.Count > 0);
     }
 }

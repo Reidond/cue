@@ -13,11 +13,18 @@ namespace Cue;
 public sealed record Project
 {
     public string Name { get; init; } = "";
-    public string Occasion { get; init; } = "";
-    public string Language { get; init; } = SpokenLanguage.Default;
 
-    /// <summary>Names and terms that speech recognition should spell right.</summary>
+    /// <summary>The person's own words about the talk; empty: the brief's.</summary>
+    public string Occasion { get; init; } = "";
+
+    /// <summary>The language Cue last heard in the project's calls: never chosen, the account says.</summary>
+    public string Language { get; init; } = DefaultLanguage;
+
+    /// <summary>The person's own names and terms that speech recognition should spell right; empty: the brief's.</summary>
     public string Vocabulary { get; init; } = "";
+
+    /// <summary>What Cue wrote from the materials (the account's; not kept in `project.json`).</summary>
+    public ProjectBrief Brief { get; init; } = ProjectBrief.None;
 
     public DateTimeOffset Created { get; init; } = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
     public DateTimeOffset? LastUsed { get; init; }
@@ -37,38 +44,22 @@ public sealed record Project
     public string MaterialsFolder => Path.Combine(Folder, "Materials");
 
     public string NotesFolder => Path.Combine(Folder, "Notes");
-}
 
-/// <summary>Spoken languages Cue can listen to. Deepgram understands all of them.</summary>
-public sealed record SpokenLanguage(string Code, string Name)
-{
-    public static readonly IReadOnlyList<SpokenLanguage> All =
-    [
-        new("en", "English"),
-        new("uk", "Ukrainian"),
-        new("pl", "Polish"),
-        new("de", "German"),
-        new("fr", "French"),
-        new("es", "Spanish"),
-        new("it", "Italian"),
-        new("pt", "Portuguese"),
-    ];
-
-    /// <summary>The language of the PC, as a code the API takes (two or three letters); English when it is not one.</summary>
-    public static string Default { get; } =
+    /// <summary>The language of the PC, as a code (two or three letters), until the account says what Cue heard; English when it is not one.</summary>
+    public static string DefaultLanguage { get; } =
         Regex.IsMatch(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, "^[a-z]{2,3}$") ? CultureInfo.CurrentUICulture.TwoLetterISOLanguageName : "en";
-
-    public static SpokenLanguage Named(string code) => All.FirstOrDefault(language => language.Code == code) ?? new SpokenLanguage(code, code);
 }
 
-/// <summary>A prepared question and its answer, found in a material by the Cue API.</summary>
-public sealed record PreparedAnswer(string Q, string A, string? Who, string Source);
+/// <summary>A prepared question and its answer: written in a material, or one of the likely questions Cue answered from the materials.</summary>
+/// <param name="ByCue">Prepared by Cue from the materials, not written in them.</param>
+public sealed record PreparedAnswer(string Q, string A, string? Who, string Source, bool ByCue = false);
 
-/// <summary>One file of a project: the text the Cue API read from it, plus any prepared Q&amp;A it found there.</summary>
-public sealed record MaterialDocument(string Name, string Summary, string? Error, string Text, IReadOnlyList<PreparedAnswer> Prepared);
+/// <summary>One file of a project: the text the Cue API read from it.</summary>
+public sealed record MaterialDocument(string Name, string Summary, string? Error, string Text);
 
 /// <summary>
-/// What the account read from a project's files, for the project's page: its prepared answers and how much Claude is given to read.
+/// What the account read from a project's files, for the project's page: its prepared answers (the files' own first, then the ones Cue wrote from
+/// them) and how much Claude is given to read.
 /// (The Call Durable Object builds the prompt and matches questions to the prepared answers on the server.)
 /// </summary>
 public sealed class KnowledgeBase
@@ -81,10 +72,10 @@ public sealed class KnowledgeBase
     /// <summary>Rough token count; Claude's tokenizer averages ~3.9 UTF-8 bytes per token on mixed text.</summary>
     public int EstimatedTokens => bytes * 10 / 39;
 
-    public KnowledgeBase(IReadOnlyList<MaterialDocument> documents)
+    public KnowledgeBase(IReadOnlyList<MaterialDocument> documents, IReadOnlyList<PreparedAnswer> prepared)
     {
         Documents = documents;
-        Prepared = [.. documents.SelectMany(document => document.Prepared)];
+        Prepared = prepared;
         bytes = documents.Sum(document => Encoding.UTF8.GetByteCount(document.Text));
     }
 
@@ -147,7 +138,7 @@ internal sealed class ProjectFile
         {
             Name = name,
             Occasion = file?.Occasion ?? "",
-            Language = file?.Language ?? SpokenLanguage.Default,
+            Language = file?.Language ?? Project.DefaultLanguage,
             Vocabulary = file?.NamesAndTerms ?? "",
             LastUsed = Date(file?.LastUsed),
             ServerId = file?.ServerId,

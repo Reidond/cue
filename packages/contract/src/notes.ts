@@ -125,7 +125,11 @@ export const NewNotes = Type.Object({
     meeting: Type.Optional(MeetingDetails),
     keepAudio: Type.Boolean({ description: 'Off: the audio is deleted from storage once the notes are ready' }),
     summarize: Type.Boolean(),
-    language: Type.Optional(Type.String({ description: 'What the live recognition heard when it isn’t the project’s language' })),
+    language: Type.Optional(
+        Type.String({
+            description: 'What the live recognition heard (the call’s `language` events), when the server has not heard the call itself',
+        }),
+    ),
     projectId: Type.Optional(Type.String({ description: 'The project the note belongs to; the call’s by default' })),
 });
 export type NewNotes = Static<typeof NewNotes>;

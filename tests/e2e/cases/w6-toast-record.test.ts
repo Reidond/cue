@@ -17,7 +17,7 @@ e2eCase(
         'and the notes are written when the call app lets go of the microphone.',
     async (cue) => {
         await needWindowsOcr();
-        await accountProject(cue, 'Research', { language: 'en', materials: [fixture('materials', 'talk.md')] });
+        await accountProject(cue, 'Research', { materials: [fixture('materials', 'talk.md')] });
         cue.calendar([
             {
                 id: 'sync-today',

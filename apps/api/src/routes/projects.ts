@@ -1,9 +1,21 @@
-import { ApiError as ApiErrorBody, Deleted, NewProject, PreparedAnswers, Project, ProjectId, ProjectPatch, Projects } from '@cue/contract';
+import {
+    ApiError as ApiErrorBody,
+    Brief,
+    Deleted,
+    NewProject,
+    PreparedAnswers,
+    Project,
+    ProjectId,
+    ProjectPatch,
+    Projects,
+} from '@cue/contract';
 import { env } from 'cloudflare:workers';
 import { Elysia } from 'elysia';
 import { ApiError } from '../errors.ts';
+import { mustBeWithinLimit } from '../limits.ts';
 import { preparedIn } from '../materials/read.ts';
-import { findProject, PROJECT_COLUMNS, type ProjectRow, projectOf, projectPrefix } from '../projects.ts';
+import { briefAgain } from '../materials/workflow.ts';
+import { briefAnswersOf, findProject, PROJECT_COLUMNS, type ProjectRow, projectOf, projectPrefix } from '../projects.ts';
 import { authed } from './authed.ts';
 
 const errors = { 401: ApiErrorBody, 404: ApiErrorBody };
@@ -20,7 +32,7 @@ const cleanName = (name: string) => {
     return trimmed;
 };
 
-/** A person's projects and every setting of one: its name, the occasion, the spoken language and the names and terms to listen for. */
+/** A person's projects and every setting of one: its name, and their own occasion and names and terms where Cue's brief should not be used. */
 export const projects = new Elysia({ name: 'projects', prefix: '/projects' })
     .use(authed)
     .get(
@@ -41,18 +53,9 @@ export const projects = new Elysia({ name: 'projects', prefix: '/projects' })
             const id = crypto.randomUUID();
             const createdAt = body.createdAt ?? Date.now();
             await env.DB.prepare(
-                `INSERT INTO project (id, user_id, name, occasion, language, names_and_terms, created_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO project (id, user_id, name, occasion, names_and_terms, created_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
             )
-                .bind(
-                    id,
-                    userId,
-                    cleanName(body.name),
-                    body.occasion ?? '',
-                    body.language ?? 'en',
-                    body.namesAndTerms ?? '',
-                    createdAt,
-                    body.lastUsedAt ?? null,
-                )
+                .bind(id, userId, cleanName(body.name), body.occasion ?? '', body.namesAndTerms ?? '', createdAt, body.lastUsedAt ?? null)
                 .run();
             return status(201, projectOf(await mustFind(userId, id)));
         },
@@ -74,7 +77,6 @@ export const projects = new Elysia({ name: 'projects', prefix: '/projects' })
             const columns: Record<string, string | number | null | undefined> = {
                 name: body.name === undefined ? undefined : cleanName(body.name),
                 occasion: body.occasion,
-                language: body.language,
                 names_and_terms: body.namesAndTerms,
                 last_used_at: body.lastUsedAt,
             };
@@ -125,21 +127,49 @@ export const projects = new Elysia({ name: 'projects', prefix: '/projects' })
             )
                 .bind(params.id, userId)
                 .all<{ id: string; name: string; text: string; qa: string | null }>();
-            return {
-                answers: results.flatMap((material) =>
-                    preparedIn(material, project.language).map((found) => ({
-                        question: found.q,
-                        answer: found.a,
-                        who: found.who,
-                        source: found.source,
-                        materialId: material.id,
-                    })),
-                ),
-            };
+            const found = results.flatMap((material) =>
+                preparedIn(material).map((item) => ({
+                    question: item.q,
+                    answer: item.a,
+                    who: item.who,
+                    source: item.source,
+                    materialId: material.id,
+                    from: 'materials' as const,
+                })),
+            );
+            const prepared = briefAnswersOf(project).map((item) => ({
+                question: item.q,
+                answer: item.a,
+                who: item.who,
+                source: item.source,
+                materialId: item.materialId,
+                from: 'cue' as const,
+            }));
+            return { answers: [...found, ...prepared], brief: projectOf(project).brief };
         },
         {
             params: ProjectId,
             response: { 200: PreparedAnswers, ...errors },
-            detail: { summary: "The questions and answers found in the project's materials, in the project's language" },
+            detail: {
+                summary:
+                    "The questions and answers written in the project's materials, then the ones Cue prepared from them (and how that is going)",
+            },
+        },
+    )
+    .post(
+        '/:id/brief',
+        async ({ userId, params, status }) => {
+            await mustBeWithinLimit(userId);
+            await mustFind(userId, params.id);
+            await briefAgain(env.DB, userId, params.id);
+            return status(202, projectOf(await mustFind(userId, params.id)).brief);
+        },
+        {
+            params: ProjectId,
+            response: { 202: Brief, ...errors, 402: ApiErrorBody },
+            detail: {
+                summary:
+                    "Writes the project's brief from its materials again (it is written by itself whenever a file is added or removed)",
+            },
         },
     );

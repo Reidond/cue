@@ -28,6 +28,7 @@ public sealed partial class LiveModel : Observable
     private bool callConnected;
     private int callRestarts;
     private string? callProjectId;
+    private string? heardLanguage;
     private JudgeState judgeState = JudgeState.Starting;
     private bool speechUnavailable;
     private bool capturing;
@@ -114,6 +115,16 @@ public sealed partial class LiveModel : Observable
 
     /// <summary>The project Cue answers from (and, with the recordings slice, records into): the projects' store holds it, as the person chose it or sign-in did.</summary>
     public Project? ActiveProject => state.Projects.Active;
+
+    /// <summary>The language the live call is held in, as the server heard it (`language` events); null until it said, and again for a new call.</summary>
+    public string? HeardLanguage
+    {
+        get => heardLanguage;
+        private set => Set(ref heardLanguage, value);
+    }
+
+    /// <summary>The language of what is spoken: the live call's, else the one the project's last call was held in.</summary>
+    public string SpokenLanguage => heardLanguage ?? ActiveProject?.Language ?? Project.DefaultLanguage;
 
     /// <summary>Between Start Cue and Stop Cue: the overlay is up and Cue listens for questions.</summary>
     public bool CueRunning
@@ -526,6 +537,7 @@ public sealed partial class LiveModel : Observable
             return;
         }
         callProjectId = serverId;
+        HeardLanguage = null;
         Claude = new ServiceStatus(false, "Warming up Claude…", true);
         Speech = new ServiceStatus(false, "Starting speech recognition…", true);
         _ = MakeCall(serverId, generation);
@@ -692,6 +704,14 @@ public sealed partial class LiveModel : Observable
                 break;
             case "answer.done":
                 if (e.QuestionId is { } doneId) Finish(doneId, e.Error);
+                break;
+            case "language":
+                if (e.Language is { } code && code != heardLanguage)
+                {
+                    HeardLanguage = code;
+                    // The language the call starts out in is said at once, as not heard yet: only a heard one is news.
+                    if (e.Heard != false) Log.Write($"🌐 Language heard: {e.Name ?? code}");
+                }
                 break;
             case "error":
                 if (e.Code == "limit_reached") state.ReachedLimit(e.Message ?? "You've reached your Cue plan's limit for this month.");

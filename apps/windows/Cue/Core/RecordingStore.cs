@@ -98,7 +98,7 @@ public sealed class RecordingStore
     /// <summary>
     /// Writes the transcript into the project's notes right away so nothing is lost, puts the call's audio next to it (with Keep audio on), then has the
     /// account make the notes (see <see cref="Process"/>). A call recorded for a calendar event is named after the event and lists its attendees.
-    /// `spokenIn` is what the call was recognized in live, when it isn't the project's language; `callId` the live call that heard it, if there is one.
+    /// `spokenIn` is what the call was recognized in live (the server hears it again in the recording); `callId` the live call that heard it, if there is one.
     /// </summary>
     public string? Save(CallTranscript transcript, Project project, MeetingDetails? meeting = null, AudioRecording? audio = null, string? spokenIn = null, string? callId = null)
     {
@@ -314,7 +314,7 @@ public sealed class RecordingStore
                         meeting is null ? null : new RemoteMeeting(meeting.Title, [.. meeting.Attendees]),
                         Prefs.KeepAudio,
                         Has(NoteStep.WritingSummary, id),
-                        language == project.Language ? null : language,
+                        language,
                         serverId));
             }
             catch (CueApiException e)

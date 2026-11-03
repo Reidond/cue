@@ -26,6 +26,7 @@ interface Answer {
     who: string | null;
     source: string;
     materialId: string;
+    from: 'materials' | 'cue';
 }
 
 e2eCase('Files added to a project are stored, read on the server, and their prepared answers found there.', async (cue) => {
@@ -33,7 +34,7 @@ e2eCase('Files added to a project are stored, read on the server, and their prep
     const email = 'ann@cue.test';
     await backend.invite(email);
     const token = (await backend.tokensFor(email)).access_token;
-    const project = (await backend.call('POST', '/v1/projects', token, { body: { name: 'Bee talk', language: 'en' } })).body as {
+    const project = (await backend.call('POST', '/v1/projects', token, { body: { name: 'Bee talk' } })).body as {
         id: string;
     };
     const base = `/v1/projects/${project.id}`;
@@ -155,20 +156,19 @@ e2eCase('Files added to a project are stored, read on the server, and their prep
     assertEq(String(usage[0]?.provider), 'cloudflare');
     assertEq(String(usage[0]?.unit), 'files');
 
-    // Prepared answers follow the project's language: Ukrainian labels count once the project is Ukrainian... and English ones still do.
+    // The language is never set: every language's labels count, Ukrainian ones beside the English.
     await upload(writeFile(cue.path('files', 'uk.md'), 'Питання: Скільки було вуликів?\nВідповідь: Сорок вісім.\n'));
-    assertEq(
-        (await answers()).some((item) => item.answer === 'Сорок вісім.'),
-        false,
-        'Ukrainian labels are not read in an English project',
-    );
-    await backend.call('PATCH', base, token, { body: { language: 'uk' } });
     assertEq(
         (await answers()).find((item) => item.answer === 'Сорок вісім.')?.question,
         'Скільки було вуликів?',
-        'they are once the project is Ukrainian',
+        'Ukrainian labels are read',
     );
     assertEq((await answers()).length, 4 + 2 + 1 + 1, 'and the English ones still are');
+    assertEq(
+        (await answers()).every((item) => item.from === 'materials'),
+        true,
+        'all of them written in the files (the stand-in prepared none of its own)',
+    );
 
     // Removing a file.
     assertEq(backend.objects().length, 7, 'the originals are in R2');
