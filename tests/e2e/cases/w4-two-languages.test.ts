@@ -189,7 +189,9 @@ e2eCase(
         // Switch between them (the default): the note's own language first.
         cue.control('size 1100 1400');
         cue.control('page Bee talk/notes');
-        await shows('the note in English', together('Rooftop bees in Kyiv'));
+        // The switch is the note page's alone (Home lists the note's title too, under Recent Notes).
+        await shows('the note in English', together('English', 'Українська'));
+        assertEq(together('Rooftop bees in Kyiv').test(text), true, 'the note is open');
         cue.save('page-english.txt', text);
         assertEq(together('English', 'Українська').test(text), true, 'the switch, the note’s language first');
         assertTextContains(text, /^Andrii presented the rooftop bee study/, 'the summary');
