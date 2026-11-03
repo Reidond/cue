@@ -11,7 +11,9 @@ e2eCase(
         const as = (method: string, path: string, options: { body?: unknown; file?: { path: string } } = {}) =>
             backend.call(method, path, call.token, options);
 
-        // The default limit is 20 USD; ann has spent all of it.
+        // The default limit is 20 USD; ann has spent all of it. Reading the material for the project's brief cost a little first: it is let finish.
+        await (await backend.accountOf('ann@cue.test')).briefed('Bee talk');
+        const before = ((await as('GET', '/v1/me')).body as { usage: { usd: number } }).usage.usd;
         await backend.seedUsage('ann@cue.test', [{ feature: 'answer', usd: 20 }]);
 
         const started = await as('POST', '/v1/calls', { body: { projectId: call.projectId } });
@@ -39,7 +41,7 @@ e2eCase(
         assertEq((await as('GET', '/v1/projects')).status, 200);
         const me = (await as('GET', '/v1/me')).body;
         assertEq(me.usage.limitReached, true);
-        assertEq(me.usage.usd, 20);
+        assertEq((me.usage.usd - before).toFixed(4), '20.0000', `the 20 USD on top of the ${before} the brief cost`);
         assertEq(me.limits.monthlyUsd, 20);
 
         // The owner gives ann more: everything starts again.
