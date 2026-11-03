@@ -199,7 +199,8 @@ export class Backend {
             });
             if (ran.code === 0) return;
             // `cf d1 raw` asks Cloudflare's API even for the local database, which now and then answers 500 (see #d1): tried again.
-            if (attempt >= 5 || !/session commit token|500 Internal Server Error/i.test(ran.output)) fail(`invite ${args.join(' ')} failed`, ran.output);
+            if (attempt >= 5 || !/session commit token|500 Internal Server Error/i.test(ran.output))
+                fail(`invite ${args.join(' ')} failed`, ran.output);
             await sleep(2 * (attempt + 1));
         }
     }
