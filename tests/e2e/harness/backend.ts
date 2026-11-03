@@ -3,7 +3,7 @@
 // backend rather than sharing one with the run, so that what the backend calls upstream is exactly what that case's stand-ins answer,
 // and cases stay independent and safe to run from several checkouts at once (see AGENTS.md › Testing).
 import { type ChildProcess, spawn } from 'node:child_process';
-import { closeSync, existsSync, openSync, readdirSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { basename, extname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
@@ -131,21 +131,32 @@ export class Backend {
                 const built = await exec(CF[0], [CF[1], 'build', '--mode', 'development'], { env, cwd: API, timeout: 300 });
                 if (built.code !== 0) fail('building the backend failed', built.output);
             }
-            const out = openSync(log, 'a');
-            // Its own process group: `cf dev` leaves `cf-vite` and `workerd` behind when only it is killed.
-            const child = preview
-                ? spawn(VP[0], [VP[1], 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
-                      cwd: API,
-                      env,
-                      stdio: ['ignore', out, out],
-                      detached: true,
-                      windowsHide: true,
-                  })
-                : spawn(CF[0], [CF[1], 'dev'], { cwd: API, env, stdio: ['ignore', out, out], detached: true, windowsHide: true });
-            closeSync(out);
-            backend = new Backend(url, idp, log, state, child);
-            await backend.#waitUntilReady();
-            return backend;
+            for (let attempt = 1; ; attempt++) {
+                const before = statSync(log, { throwIfNoEntry: false })?.size ?? 0;
+                const out = openSync(log, 'a');
+                // Its own process group: `cf dev` leaves `cf-vite` and `workerd` behind when only it is killed.
+                const child = preview
+                    ? spawn(VP[0], [VP[1], 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
+                          cwd: API,
+                          env,
+                          stdio: ['ignore', out, out],
+                          detached: true,
+                          windowsHide: true,
+                      })
+                    : spawn(CF[0], [CF[1], 'dev'], { cwd: API, env, stdio: ['ignore', out, out], detached: true, windowsHide: true });
+                closeSync(out);
+                backend = new Backend(url, idp, log, state, child);
+                try {
+                    await backend.#waitUntilReady();
+                    return backend;
+                } catch (error) {
+                    // Vite+ now and then panics as it starts ("entered unreachable code", a bug of its own, seen on CI's Windows runners): it is
+                    // started again, twice at most.
+                    const panicked = child.exitCode !== null && /Vite\+ panicked/.test(readFileSync(log, 'utf8').slice(before));
+                    if (!panicked || attempt >= 3) throw error;
+                    backend = undefined;
+                }
+            }
         } catch (error) {
             if (backend) await backend.stop();
             else await idp.close();
@@ -181,11 +192,16 @@ export class Backend {
     // MARK: The owner's script
 
     async #invite(...args: string[]): Promise<void> {
-        const ran = await exec(process.execPath, [join(API, 'scripts', 'invite.ts'), ...args], {
-            env: { ...process.env, CI: '1', CUE_STATE_DIR: this.state },
-            timeout: 60,
-        });
-        if (ran.code !== 0) fail(`invite ${args.join(' ')} failed`, ran.output);
+        for (let attempt = 0; ; attempt++) {
+            const ran = await exec(process.execPath, [join(API, 'scripts', 'invite.ts'), ...args], {
+                env: { ...process.env, CI: '1', CUE_STATE_DIR: this.state },
+                timeout: 60,
+            });
+            if (ran.code === 0) return;
+            // `cf d1 raw` asks Cloudflare's API even for the local database, which now and then answers 500 (see #d1): tried again.
+            if (attempt >= 5 || !/session commit token|500 Internal Server Error/i.test(ran.output)) fail(`invite ${args.join(' ')} failed`, ran.output);
+            await sleep(2 * (attempt + 1));
+        }
     }
 
     /** Invites `email` (`pnpm --filter api invite EMAIL`). */
