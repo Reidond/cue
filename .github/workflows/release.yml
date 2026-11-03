@@ -3,6 +3,9 @@
 # 2.0.0, 2.0.1, … for both platforms. It does not deploy the backend: deploy.yml does, when main changes it.
 #
 # Run by hand (Actions › Release › Run workflow) it is a dry run: it builds the two Windows installers and keeps them as artifacts, and publishes nothing.
+#
+# The builds are release builds (CUE_UPDATES): both apps update themselves from this repository's latest release, so a release's file names
+# (Cue-VERSION.zip, Cue-VERSION-ARCH.msi) and their GitHub digests are what Cue looks for.
 name: Release
 
 on:
@@ -58,6 +61,7 @@ jobs:
         env:
           CUE_VERSION: ${{ needs.version.outputs.version }}
           CUE_BUILD: ${{ github.run_number }}
+          CUE_UPDATES: ${{ github.repository }}
         working-directory: apps/mac
         run: ./scripts/build.sh
 
@@ -92,6 +96,7 @@ jobs:
       - name: Build the installers
         env:
           CUE_VERSION: ${{ needs.version.outputs.version }}
+          CUE_UPDATES: ${{ github.repository }}
         shell: pwsh
         run: |
           foreach ($arch in 'x64', 'arm64') {
@@ -135,6 +140,9 @@ jobs:
              microphone and screen-audio permissions again after each update.
           3. Cue is invite-only: sign in with the Google or GitHub account that was invited. The app talks to the Cue backend; see the README.
 
+          From then on Cue updates itself: it looks for a new release when it opens and every few hours, and puts it in place of Cue.app
+          (it opens the next time Cue starts, or at once with **Restart to Update**; Settings › General can turn this off).
+
           Requires macOS 26 or later on Apple silicon.
 
           ## Install on Windows
@@ -145,6 +153,9 @@ jobs:
           2. The installer is not signed yet, so Windows SmartScreen says **Windows protected your PC** (and a browser may ask to confirm the download first): choose
              **More info › Run anyway**. Nothing else is needed: the .NET and Windows App SDK runtimes are part of Cue.
           3. Cue is invite-only: **Sign In** opens your browser; use the Google or GitHub account that was invited.
+
+          From then on Cue updates itself: it downloads a new release when it finds one, and installs it when Cue restarts (**Restart to Update**),
+          quits or next opens; Windows asks for permission each time (Settings › General can turn this off).
 
           Requires Windows 11, or Windows 10 version 22H2.
           NOTES

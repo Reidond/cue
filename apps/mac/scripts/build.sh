@@ -15,6 +15,8 @@ API_URL=$(tr -d '[:space:]' < ../api/production-url.txt)
 # Release builds stamp their version and build number (the release workflow sets these).
 if [[ -n ${CUE_VERSION:-} ]]; then /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CUE_VERSION" "$APP/Contents/Info.plist"; fi
 if [[ -n ${CUE_BUILD:-} ]]; then /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CUE_BUILD" "$APP/Contents/Info.plist"; fi
+# A release build also stamps the repository whose GitHub releases it updates itself from (OWNER/NAME): without it Cue doesn't look for updates.
+if [[ -n ${CUE_UPDATES:-} ]]; then /usr/libexec/PlistBuddy -c "Add :CueUpdates string $CUE_UPDATES" "$APP/Contents/Info.plist"; fi
 cp -R Resources/lexicons Resources/AppIcon.icns "$APP/Contents/Resources/"
 # Signing with a real certificate keeps the microphone / screen-audio permissions
 # across rebuilds; an ad-hoc signature works too but asks again after every build.

@@ -324,6 +324,23 @@ Every change merged into `main` is built and published on the
 for the Mac and the two Windows installers. The Mac builds are signed ad hoc, not
 notarized: the first time, right-click Cue.app › **Open**.
 
+From then on Cue keeps itself up to date from the latest release: it looks when it
+opens and every 6 hours (Settings › General has the switch, the version and **Check Now**;
+the Mac's Cue menu has **Check for Updates…**). Only what the release describes is
+installed: the download must have the size and SHA-256 GitHub gives for it, and on the
+Mac the app in it must be Cue, that version, validly signed, for this macOS.
+
+- **Mac**: the new Cue.app takes the place of the old one at once (where it is, usually
+  Applications); the running Cue goes on, and the new one opens the next time Cue starts
+  or with **Restart to Update** (Settings, the menu bar icon). macOS asks for the
+  microphone and call audio again afterwards, as the builds are signed ad hoc.
+- **Windows**: the new MSI is downloaded, and installs when Cue restarts (**Restart to
+  Update** in Settings or the notification area), quits, or next opens: Windows asks for
+  permission, as Cue is installed for everyone on the PC.
+
+A local build doesn't update itself: only the release workflow's builds know where to
+look (`CUE_UPDATES`, the repository, stamped by `build.sh` and `build.ps1`).
+
 ## Testing
 
 Cue is tested end to end only — no unit tests (see `AGENTS.md`). The cases in
@@ -397,7 +414,7 @@ more except for the last), `CUE_UPLOAD_BREAK=n` cuts the upload's connection onc
 `ask TEXT`, `timestamp 00:00:12`, `assign EVENT | PROJECT`,
 `notification record|dismiss`, `rename NAME | NEW`, `apply LABEL`,
 `show TEXT`, `newest`, `prepare`, `record`, `settings account`, `signin`, `signout`,
-`size 820 700`; see `AGENTS.md`) and keeps notifications in the
+`size 820 700`, `update check|restart`; see `AGENTS.md`) and keeps notifications in the
 session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` reads the
 calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs (on Windows the
 programs' file names or package family names) using the
@@ -406,4 +423,7 @@ microphone from a text file, both again on every check; `CUE_MEETING_TICK` and
 go of the microphone. On Windows `CUE_SYSTEM_NOTIFICATIONS=1` shows the real notifications even under `CUE_CONTROL`. `CUE_ALLOW_CAPTURE=1` lets screenshots see the overlay
 (snapshots always can). On Windows `CUE_SURFACES=1` gives a test run the overlay on top of other windows, the
 tray icon and the shortcuts that `CUE_BACKGROUND` otherwise leaves out (`AGENTS.md › Live call on Windows`).
+`CUE_UPDATE_URL=url` is where Cue reads the latest release (a stand-in for GitHub's
+`/repos/OWNER/NAME/releases/latest`; under `CUE_HOME` Cue never asks GitHub itself) and
+`CUE_UPDATE_TICK` how often (seconds) it looks again.
 `cd apps/mac && swift scripts/make_icon.swift` regenerates the app icon.
