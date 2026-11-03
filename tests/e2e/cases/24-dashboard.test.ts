@@ -54,7 +54,8 @@ e2eCase(
         assertContains(text, /Prepared 1 answer and 2 names and terms from your materials/);
         const lines = readFileSync(text, 'utf8').split('\n');
         const materials = lines.findIndex((line) => /^Materials$/.test(line.trim()));
-        const advanced = lines.findIndex((line) => /^Advanced$/.test(line.trim()));
+        // The disclosure triangle reads as "> " or "› " when it is read at all.
+        const advanced = lines.findIndex((line) => /^([>›]\s*)?Advanced$/.test(line.trim()));
         assertEq(materials >= 0 && advanced > materials, true, `the materials come first, Advanced after them: ${JSON.stringify(lines)}`);
         assertNotContains(
             text,
