@@ -13,7 +13,7 @@ import { janitor } from './janitor.ts';
 import { noteLexicon } from './lexicon.ts';
 import { addEvent, type AudioKeys, linesOf, loadNote, type NoteRow, parse, setStep, type StepId, voicesOf } from './store.ts';
 import { type Meeting, namesPrompt, type PromptContext, summaryPrompt } from './summary.ts';
-import { linesMessage, linesOf as translatedLines, summaryMessage, summaryOf, TRANSLATE_BATCH, translatePrompt } from './translate.ts';
+import { batchesOf, linesMessage, linesOf as translatedLines, summaryMessage, summaryOf, translatePrompt } from './translate.ts';
 import {
     droppingTranscriptRemarks,
     labelsOf,
@@ -375,7 +375,7 @@ async function translateNotes(db: D1Database, note: NoteRow): Promise<string | n
     const system = translatePrompt(language, parse<string[]>(note.participants, []));
     const ask = async (content: string) => {
         try {
-            const { text, tokens } = await send({
+            const { text, tokens, stopReason } = await send({
                 model: JUDGE_MODEL,
                 max_tokens: 16000,
                 thinking: noThinking(JUDGE_MODEL),
@@ -383,21 +383,27 @@ async function translateNotes(db: D1Database, note: NoteRow): Promise<string | n
                 messages: [{ role: 'user', content }],
             });
             await usage(note, db, tokenUsage('note_translation', JUDGE_MODEL, tokens));
+            // A reply cut off is not a translation (the step tries again).
+            if (stopReason === 'max_tokens') throw new Error("Claude's translation was cut off");
             return text;
         } catch (error) {
-            throw new Error(describe(error));
+            throw new Error(
+                error instanceof Error && error.message === "Claude's translation was cut off" ? error.message : describe(error),
+            );
         }
     };
-    const translated =
-        note.summary.trim() === ''
-            ? { title: note.title, summary: '' }
-            : summaryOf(await ask(summaryMessage(note.title, note.summary)), note.title, note.summary);
+    // The title always (a calendar event's is words too), with the summary when there is one.
+    const translated = summaryOf(await ask(summaryMessage(note.title, note.summary)), note.title, note.summary);
     const turns = parse<{ text: string }[]>(note.transcript, []);
-    const lines: string[] = [];
-    for (let at = 0; at < turns.length; at += TRANSLATE_BATCH) {
-        const batch = turns.slice(at, at + TRANSLATE_BATCH).map((turn) => turn.text);
-        lines.push(...translatedLines(await ask(linesMessage(batch)), batch.length));
+    const lines = turns.map(() => [] as string[]);
+    for (const batch of batchesOf(turns.map((turn) => turn.text))) {
+        const replies = translatedLines(await ask(linesMessage(batch.map((piece) => piece.text))), batch.length);
+        // Most of a batch missing means the reply was not what was asked for: tried again rather than kept.
+        if (replies.filter((reply) => reply === '').length > Math.max(1, batch.length / 10))
+            throw new Error('the translation left out lines');
+        batch.forEach((piece, index) => lines[piece.turn]!.push(replies[index]!));
     }
+    const transcript = lines.map((pieces) => pieces.filter((piece) => piece !== '').join(' '));
     await db
         .prepare('UPDATE note SET translation = ? WHERE id = ?')
         .bind(
@@ -406,7 +412,7 @@ async function translateNotes(db: D1Database, note: NoteRow): Promise<string | n
                 name: language,
                 title: translated.title,
                 summary: translated.summary,
-                transcript: lines,
+                transcript,
             }),
             note.id,
         )
@@ -415,7 +421,7 @@ async function translateNotes(db: D1Database, note: NoteRow): Promise<string | n
         kind: 'step',
         step: 'translate',
         state: 'running',
-        line: `✅ Notes translated into ${language}: ${lines.length} lines`,
+        line: `✅ Notes translated into ${language}: ${transcript.length} lines`,
     });
     return `Into ${language}`;
 }

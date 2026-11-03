@@ -82,15 +82,20 @@ function addUsage(into: Tokens, usage: RawUsage | undefined): void {
 const sleep = (seconds: number) => new Promise((resolve) => setTimeout(resolve, seconds * 1000));
 
 /** Sends a request and waits for the whole reply (no streaming). What is transient is tried twice more. */
-export async function send(body: object): Promise<{ text: string; tokens: Tokens }> {
+/** A reply in one piece: its text, the tokens it took, and why it stopped (`max_tokens`: cut off). */
+export async function send(body: object): Promise<{ text: string; tokens: Tokens; stopReason: string | null }> {
     for (let attempt = 0; ; attempt++) {
         try {
             const response = await request({ ...body, stream: false });
             if (!response.ok) throw await failure(response);
-            const reply = (await response.json()) as { content?: { type: string; text?: string }[]; usage?: RawUsage };
+            const reply = (await response.json()) as {
+                content?: { type: string; text?: string }[];
+                usage?: RawUsage;
+                stop_reason?: string | null;
+            };
             const tokens = noTokens();
             addUsage(tokens, reply.usage);
-            return { text: (reply.content ?? []).map((block) => block.text ?? '').join(''), tokens };
+            return { text: (reply.content ?? []).map((block) => block.text ?? '').join(''), tokens, stopReason: reply.stop_reason ?? null };
         } catch (error) {
             if (!transient(error) || attempt >= 2) throw error;
             await sleep(attempt + 1);

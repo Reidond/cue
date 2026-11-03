@@ -226,7 +226,8 @@ After a call the recording goes up and the backend makes the notes. `docs/backen
   `Last-Event-ID`/`?after`, `ping` heartbeats, ends after the `note` event) and `steps` on `GET /v1/notes/:id` is the page's list. A Workflow that dies is noticed by the stream and the note is
   made ready with a `note: failed` event.
 - **Translation**: with two languages chosen the last step, `translate` (`src/notes/translate.ts`, `prompts/translate.md`, Haiku), writes `note.translation`
-  `{language, name, title, summary, transcript}`: the title and summary in one request, the transcript in batches of `TRANSLATE_BATCH` numbered lines (one string per turn).
+  `{language, name, title, summary, transcript}`: the title (always) and the summary in one request, the transcript in batches of numbered lines bounded by `TRANSLATE_BATCH` lines and
+  `TRANSLATE_BATCH_CHARS` characters, a long turn in pieces cut between sentences (one string per turn); a reply cut off (`max_tokens`) or missing lines is tried again.
   Lines `🌐 Translating notes…`, `✅ Notes translated into NAME: N lines`, `⚠︎ Couldn't translate the notes: WHY`; its tokens are `note_translation`. A rename reaches it.
 - **Editing**: `PATCH` renames a speaker throughout the note (whole words: transcript, summary, title, participants), applies or dismisses a suggestion; `DELETE` trashes (audio deleted at once);
   `GET …/audio/:side` serves R2 with range requests. `POST /v1/notes/import` and `PUT /v1/notes/:id/audio/mixed` bring in a note the Mac had before it had an account.

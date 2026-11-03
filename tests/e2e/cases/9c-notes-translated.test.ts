@@ -47,6 +47,28 @@ e2eCase(
         });
         assertTextContains(renamed.body.translation.summary, /^\(Ukrainian\) Petro opened the call/);
 
+        // A summary turned off still gets its title translated, and a speaker who talks for minutes goes in pieces that come back as one line.
+        const long = Array.from({ length: 60 }, (_, index) => `Sentence number ${index + 1} about the rooftop hives.`).join(' ');
+        cue.standIns({
+            FAKE_DEEPGRAM_FILE: JSON.stringify({
+                me: ['I will send the report by Friday.'],
+                others: [
+                    { text: long, speaker: 0 },
+                    { text: 'Thank you.', speaker: 1 },
+                ],
+            }),
+        });
+        const asked = cue.claudeRequests('translate-input').length;
+        const third = await recordCall(cue, backend, 'ann@cue.test');
+        const untitled = await waitForNote(cue, backend, third.token, (await makeNotes(backend, third, { summarize: false })).id);
+        const pieces = cue.claudeRequests('translate-input').slice(asked);
+        assertEq(pieces[0], `Title: ${untitled.title}`, 'the title alone, with no summary');
+        assertEq(untitled.translation?.title, `(Ukrainian) ${untitled.title}`);
+        const said = untitled.transcript.findIndex((turn) => turn.text === long);
+        const translated = untitled.translation?.transcript[said] ?? '';
+        assertEq((translated.match(/\(Ukrainian\)/g) ?? []).length >= 2, true, `the long turn went in pieces: ${translated}`);
+        assertTextContains(translated, /Sentence number 60 about the rooftop hives\.$/, 'and all of it came back, in order');
+
         // One language: no translation step.
         await backend.call('PUT', '/v1/me/languages', recorded.token, { body: { languages: ['uk'] } });
         const second = await recordCall(cue, backend, 'ann@cue.test');
