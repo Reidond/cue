@@ -74,9 +74,10 @@ struct GeneralSettings: View {
                 Text("One folder per project, with its materials and notes. Choosing another folder doesn’t move the projects already there.")
             }
 
-            Section {
-                LabeledContent("Version", value: updater.version)
-                if updater.feed != nil {
+            // Only in a Cue that updates itself (a release build): a local or test build's General pane stays as it was.
+            if updater.feed != nil {
+                Section {
+                    LabeledContent("Version", value: updater.version)
                     Toggle("Update Cue automatically", isOn: $preferences.automaticUpdates)
                     LabeledContent {
                         if case .installed = updater.phase {
@@ -88,11 +89,9 @@ struct GeneralSettings: View {
                     } label: {
                         Text(updater.status)
                     }
-                }
-            } header: {
-                Text("Updates")
-            } footer: {
-                if updater.feed != nil {
+                } header: {
+                    Text("Updates")
+                } footer: {
                     Text("Cue looks for a new version when it opens and every few hours, and puts it in place of this one. macOS asks again for the microphone and call audio afterwards.")
                 }
             }
