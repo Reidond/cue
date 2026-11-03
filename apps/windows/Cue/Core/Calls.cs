@@ -67,6 +67,9 @@ public sealed class CallEvent
 
     public string? Name { get; init; }
 
+    /// <summary>`language`: heard in this call; false for the one it starts out in.</summary>
+    public bool? Heard { get; init; }
+
     /// <summary>The audio source the event is about.</summary>
     public Side? Lane => Sides.Parse(Channel);
 

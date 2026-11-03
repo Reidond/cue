@@ -5,6 +5,7 @@ import {
     assertEq,
     assertTextContains,
     assertTextNotContains,
+    clearOfMidnight,
     e2eCase,
     fixture,
     minutesFromNow,
@@ -17,6 +18,8 @@ e2eCase(
     'Cue for Windows: Upcoming lists today’s and tomorrow’s calls with a Meet / Zoom / Teams link from the watched calendars, each with the project its notes ' +
         'go to; Settings › Calendar shows what Cue does when a call starts and the calendars it looks in, and a switch brings a calendar’s calls in.',
     async (cue) => {
+        // Tomorrow's call must still be tomorrow's when the page is read (a run at 23:59 once read it after midnight, as today's).
+        await clearOfMidnight(10);
         cue.calendar([
             {
                 title: 'Design review',

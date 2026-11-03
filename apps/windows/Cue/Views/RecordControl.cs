@@ -40,13 +40,16 @@ internal sealed class RecordControl : ContentControl
         ticker.Interval = TimeSpan.FromSeconds(1);
         ticker.IsRepeating = true;
         ticker.Tick += (_, _) => Tick();
+        // Taken out and put back at once, it is told Loaded before the Unloaded it had: subscribed once, and that late Unloaded is ignored.
         Loaded += (_, _) =>
         {
+            state.Live.Recorder.PropertyChanged -= OnChanged;
             state.Live.Recorder.PropertyChanged += OnChanged;
             Update();
         };
         Unloaded += (_, _) =>
         {
+            if (IsLoaded) return;
             state.Live.Recorder.PropertyChanged -= OnChanged;
             ticker.Stop();
             mode = null;

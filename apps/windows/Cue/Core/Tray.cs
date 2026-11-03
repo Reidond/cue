@@ -4,8 +4,8 @@ using System.Runtime.InteropServices;
 namespace Cue;
 
 /// <summary>
-/// The icon in the notification area (the Mac's menu bar item): Start or Stop Cue, Show or Hide, Answer Now, Restart Live Call, the dashboard, Settings and
-/// Quit, in a native menu. It turns red while a call is recorded (<see cref="Recording"/>).
+/// The icon in the notification area (the Mac's menu bar item): Start or Stop Cue, Show or Hide, Answer Now, Restart Live Call, the dashboard, Settings,
+/// Restart to Update (when an update is ready) and Quit, in a native menu. It turns red while a call is recorded (<see cref="Recording"/>).
 /// </summary>
 internal sealed class Tray : IDisposable
 {
@@ -58,6 +58,7 @@ internal sealed class Tray : IDisposable
         Dashboard,
         Settings,
         Record,
+        Update,
         Quit,
     }
 
@@ -146,6 +147,7 @@ internal sealed class Tray : IDisposable
             AppendMenuW(menu, 0, (UIntPtr)(uint)Item.Settings, "Settings");
             AppendMenuW(menu, 0, (UIntPtr)(uint)Item.Restart, "Restart Live Call");
             AppendMenuW(menu, 0x800, UIntPtr.Zero, null);
+            if (state.Updates.Phase == UpdatePhase.Ready) AppendMenuW(menu, 0, (UIntPtr)(uint)Item.Update, "Restart to Update Cue");
             AppendMenuW(menu, 0, (UIntPtr)(uint)Item.Quit, "Quit Cue");
             GetCursorPos(out var at);
             // The menu closes when the click goes elsewhere only if its owner is the foreground window.
@@ -175,6 +177,9 @@ internal sealed class Tray : IDisposable
                 case Item.Settings:
                     state.Dashboard.ShowSettings();
                     state.OpenDashboard();
+                    break;
+                case Item.Update:
+                    state.Updates.Restart();
                     break;
                 case Item.Quit:
                     state.Quit();

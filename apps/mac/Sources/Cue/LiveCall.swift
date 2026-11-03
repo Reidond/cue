@@ -50,6 +50,7 @@ struct CallEvent: Decodable {
     var lines: Int?
     var language: String?
     var name: String?
+    var heard: Bool?
 
     var side: Channel? { channel.flatMap(Channel.init(rawValue:)) }
 }
