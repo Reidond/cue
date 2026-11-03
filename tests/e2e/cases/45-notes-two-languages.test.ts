@@ -21,20 +21,14 @@ call | Daniel   | And how many were lost in winter?
 me   | Samantha | Nine percent, below the national average.
 `;
 
-/** What the summary step writes (Claude's stand-in), and its translation. */
+/** What the summary step writes (Claude's stand-in), and its translation: short, so the transcript under them is on screen on a small display too. */
 const SUMMARY = `# Rooftop bees in Kyiv
 
 ## Summary
 Participant asked about the rooftop hives. Andrii Test said the study covered 48 hives on six rooftops and lost nine percent in winter.
-
-## Action items
-- [ ] Andrii Test: send the winter figures (Friday)
 `;
 const SUMMARY_UK = `## Підсумок
 Participant запитав про вулики на дахах. Andrii Test сказав, що дослідження охопило 48 вуликів на шести дахах, а взимку загинуло дев’ять відсотків.
-
-## Завдання
-- [ ] Andrii Test: надіслати зимові показники (п’ятниця)
 `;
 
 /** The title and each line of the transcript in Ukrainian. */
