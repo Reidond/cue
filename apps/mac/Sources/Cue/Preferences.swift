@@ -29,6 +29,8 @@ final class Preferences: ObservableObject {
     @Published var noteLayout: NoteLayout { didSet { defaults.set(noteLayout.rawValue, forKey: "noteLayout") } }
     /// A translated note's transcript shows each line's translation under it (the Translations switch by its heading).
     @Published var noteTranslations: Bool { didSet { defaults.set(noteTranslations, forKey: "noteTranslations") } }
+    /// Look for a new Cue when it opens and every few hours, and install it (`Updater`).
+    @Published var automaticUpdates: Bool { didSet { defaults.set(automaticUpdates, forKey: "automaticUpdates") } }
 
     init() {
         speakerName = defaults.string(forKey: "speakerName") ?? NSFullUserName()
@@ -47,6 +49,7 @@ final class Preferences: ObservableObject {
         answerLayout = AnswerLayout(rawValue: defaults.string(forKey: "answerLayout") ?? "") ?? .subtitles
         noteLayout = NoteLayout(rawValue: defaults.string(forKey: "noteLayout") ?? "") ?? .switching
         noteTranslations = defaults.object(forKey: "noteTranslations") as? Bool ?? true
+        automaticUpdates = defaults.object(forKey: "automaticUpdates") as? Bool ?? true
     }
 }
 

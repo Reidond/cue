@@ -709,7 +709,8 @@ public sealed partial class LiveModel : Observable
                 if (e.Language is { } code && code != heardLanguage)
                 {
                     HeardLanguage = code;
-                    Log.Write($"🌐 Language heard: {e.Name ?? code}");
+                    // The language the call starts out in is said at once, as not heard yet: only a heard one is news.
+                    if (e.Heard != false) Log.Write($"🌐 Language heard: {e.Name ?? code}");
                 }
                 break;
             case "error":

@@ -40,6 +40,11 @@
       <_Parameter1>CueApiUrl</_Parameter1>
       <_Parameter2>$(CueApiUrl)</_Parameter2>
     </AssemblyAttribute>
+    <!-- The repository whose GitHub releases a release build updates itself from (OWNER/NAME, scripts/build.ps1 stamps CUE_UPDATES): without it Cue doesn't look for updates. -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute" Condition="'$(CueUpdates)' != ''">
+      <_Parameter1>CueUpdates</_Parameter1>
+      <_Parameter2>$(CueUpdates)</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>

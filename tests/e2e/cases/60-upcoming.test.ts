@@ -1,9 +1,20 @@
-import { assertContains, assertEq, assertNotContains, countLines, e2eCase, minutesFromNow, tomorrowAt } from '../harness/index.ts';
+import {
+    assertContains,
+    assertEq,
+    assertNotContains,
+    clearOfMidnight,
+    countLines,
+    e2eCase,
+    minutesFromNow,
+    tomorrowAt,
+} from '../harness/index.ts';
 
 e2eCase(
     "Upcoming lists today's and tomorrow's calls with a Meet / Zoom / Teams link from the watched calendars, each " +
         'with the project its notes go to; Settings shows the calendar choices.',
     async (cue) => {
+        // Tomorrow's call must still be tomorrow's when the page is read.
+        await clearOfMidnight(10);
         cue.calendar([
             {
                 title: 'Design review',

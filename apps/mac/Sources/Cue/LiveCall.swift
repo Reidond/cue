@@ -52,6 +52,7 @@ struct CallEvent: Decodable {
     var name: String?
     /// A question's, with two languages: the other one, and the question in it.
     var translation: QuestionTranslation?
+    var heard: Bool?
 
     var side: Channel? { channel.flatMap(Channel.init(rawValue:)) }
 }

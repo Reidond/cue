@@ -42,11 +42,19 @@ e2eCase(
         assertTextContains(system, /^The conversation can be in any language\./, 'the prompt holds no language');
         assertTextNotContains(system, /Ukrainian/);
 
+        // On connecting the client was told the language the call starts out in: the project's, not heard yet.
+        const start = live.of('language')[0];
+        assertEq(start?.language, 'en');
+        assertEq(start?.heard, false);
         await live.play('others', others);
-        const heard = await live.next('language', () => true, 30);
+        const heard = await live.next('language', (event) => event.heard, 30);
         assertEq(heard.language, 'uk');
         assertEq(heard.name, 'Ukrainian');
-        assertEq(live.of('language').length, 1, 'the English start was the language the call already assumed: no event for it');
+        assertEq(
+            live.of('language').filter((event) => event.heard).length,
+            1,
+            'the English start was the language the call already assumed: no event for it',
+        );
         const asked = await live.next('question', () => true, 30);
         assertEq(asked.text, 'Скільки років тривало ваше дослідження?');
         assertEq(asked.opener ?? undefined, 'Дякую за запитання. Дозвольте коротко пояснити.', "no prepared answer: Ukrainian's opener");
@@ -74,6 +82,8 @@ e2eCase(
         const next = await backend.call('POST', '/v1/calls', call.token, { body: { projectId: call.projectId, speaker: 'Andrii' } });
         const second = await LiveClient.connect(backend, call.token, (next.body as { callId: string }).callId);
         await second.next('status', (status) => status.part === 'claude' && status.state === 'ready', 30);
+        const starts = await second.next('language', () => true, 10);
+        assertEq(`${starts.language} ${String(starts.heard)}`, 'uk false', 'it is told so at once, before anything is heard');
         second.command({ type: 'ask', text: 'How long did it take?' });
         const typed = await second.next('question', () => true, 30);
         await second.next('answer.done', (event) => event.questionId === typed.id, 30);

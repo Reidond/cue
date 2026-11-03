@@ -8,6 +8,7 @@ import { basename, join } from 'node:path';
 import { Backend, type BackendOptions } from './backend.ts';
 import { closeBrowser } from './browser.ts';
 import { CUE_BIN, DEEPGRAM, E2E_WORK, IS_WINDOWS, KEEP } from './config.ts';
+import { startFakeReleases, type FakeReleases } from './fake-github.ts';
 import {
     FAKE_KEYS,
     startFakeProviders,
@@ -88,6 +89,28 @@ function existsJson(file: string): Record<string, string> {
     }
 }
 
+/** The ID of a process running the program at `bin`, if one is. */
+async function processOf(bin: string): Promise<number | undefined> {
+    if (IS_WINDOWS) {
+        const ran = await exec('powershell.exe', [
+            '-NoProfile',
+            '-Command',
+            "Get-Process -Name Cue -ErrorAction SilentlyContinue | ForEach-Object { '{0}|{1}' -f $_.Id, $_.Path }",
+        ]);
+        for (const line of linesOf(ran.stdout)) {
+            const [pid, path] = line.trim().split('|');
+            if (path?.toLowerCase() === bin.toLowerCase()) return Number(pid);
+        }
+        return undefined;
+    }
+    const ran = await exec('ps', ['-axo', 'pid=,command=']);
+    for (const line of linesOf(ran.stdout)) {
+        const [pid, ...command] = line.trim().split(/\s+/);
+        if (command.join(' ').startsWith(bin)) return Number(pid);
+    }
+    return undefined;
+}
+
 export class Cue {
     /** The case's sandbox folder; everything the case makes goes here. */
     readonly dir: string;
@@ -108,6 +131,8 @@ export class Cue {
     /** Where Cue keeps its refresh token under CUE_HOME, instead of the keychain. */
     readonly keysFile: string;
     #app: ChildProcess | undefined;
+    /** A Cue the launched one opened as it quit (Restart to Update: `followRestart`): not a child of the case, so known by its process ID. */
+    #adopted: number | undefined;
     /** When the running Cue was launched (ms), to tell its crash report from older ones. */
     #launchedAt = 0;
     /** The environment of the Cue running, for the services' stand-ins to reply by. */
@@ -116,6 +141,7 @@ export class Cue {
     #standIns: NodeJS.ProcessEnv = {};
     #providers: FakeProviders | undefined;
     #backend: Promise<Backend> | undefined;
+    #releases: Promise<FakeReleases> | undefined;
     #closing: Promise<void> | undefined;
     /** The name of the case, for the email of its user. */
     readonly #name: string;
@@ -163,6 +189,7 @@ export class Cue {
             await closeBrowser(succeeded);
             await (await this.#backend?.catch(() => undefined))?.stop();
             await this.#providers?.close();
+            await (await this.#releases?.catch(() => undefined))?.close();
             // The refresh token never stays behind, not even in a kept sandbox.
             await rm(this.keysFile, { force: true });
             if (!IS_WINDOWS) {
@@ -265,6 +292,12 @@ export class Cue {
         this.#standIns = { ...this.#standIns, ...env };
     }
 
+    /** GitHub's releases, as Cue's updater reads them (harness/fake-github.ts): pass its `url` as CUE_UPDATE_URL. Started on the first call. */
+    releases(): Promise<FakeReleases> {
+        this.#releases ??= startFakeReleases();
+        return this.#releases;
+    }
+
     /** The email of the case's user: invited at the first signed-in `launch`, and the one the stand-in sign-in approves. */
     get email(): string {
         return `${this.#name}-${process.pid}@cue.test`.toLowerCase().replace(/[^a-z0-9@.-]/g, '-');
@@ -337,6 +370,7 @@ export class Cue {
 
     /** Quits the app the way Ctrl-C does (a clean shutdown), then makes sure. */
     async stop(): Promise<void> {
+        await this.#stopAdopted();
         const app = this.#app;
         if (!app) return;
         const exited = new Promise<void>((resolve) => {
@@ -358,6 +392,58 @@ export class Cue {
             }
         }
         this.#app = undefined;
+    }
+
+    /**
+     * After Restart to Update: waits for the launched Cue to quit and the one it opened from `bin` to start (a new session log), which is the
+     * running Cue from then on (`pid`, `alive`, `stop`). On Windows the update is installed in between, so that takes a while.
+     */
+    async followRestart(bin: string, seconds: number): Promise<void> {
+        const app = this.#app ?? fail('Cue is not running');
+        const previous = this.#newestSessionLog();
+        const exited = new Promise<void>((resolve) => {
+            if (app.exitCode !== null || app.signalCode !== null) resolve();
+            else app.once('exit', () => resolve());
+        });
+        if (!(await within(exited, 30))) fail('Cue did not quit to restart', '--- cue.out', tail(this.path('cue.out'), 40));
+        this.#app = undefined;
+        const deadline = Date.now() + seconds * 1000;
+        while (this.#adopted === undefined || this.#newestSessionLog() === previous) {
+            if (Date.now() >= deadline) {
+                const log = this.#newestSessionLog();
+                fail(
+                    `no Cue started from ${bin} within ${seconds}s of the restart`,
+                    '--- cue.out',
+                    tail(this.path('cue.out'), 40),
+                    ...(log ? ['--- session log', tail(log, 40)] : []),
+                );
+            }
+            await sleep(0.5);
+            this.#adopted ??= await processOf(bin);
+        }
+    }
+
+    async #stopAdopted(): Promise<void> {
+        const pid = this.#adopted;
+        if (pid === undefined) return;
+        this.#adopted = undefined;
+        if (IS_WINDOWS) {
+            // It reads no control file (the restart left CUE_CONTROL out), so it can't be asked to quit.
+            await exec('taskkill', ['/PID', String(pid), '/T', '/F']);
+            return;
+        }
+        const running = (): boolean => {
+            try {
+                process.kill(pid, 0);
+                return true;
+            } catch {
+                return false;
+            }
+        };
+        if (!running()) return;
+        process.kill(pid, 'SIGTERM');
+        for (let waited = 0; waited < 20 && running(); waited++) await sleep(0.5);
+        if (running()) process.kill(pid, 'SIGKILL');
     }
 
     /**
@@ -409,11 +495,19 @@ export class Cue {
 
     /** The launched app's process ID. */
     get pid(): number {
-        return this.#app?.pid ?? fail('Cue is not running');
+        return this.#app?.pid ?? this.#adopted ?? fail('Cue is not running');
     }
 
     /** Whether the launched app is still running. */
     alive(): boolean {
+        if (!this.#app && this.#adopted !== undefined) {
+            try {
+                process.kill(this.#adopted, 0);
+                return true;
+            } catch {
+                return false;
+            }
+        }
         const app = this.#app;
         return app !== undefined && app.pid !== undefined && app.exitCode === null && app.signalCode === null;
     }
