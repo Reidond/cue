@@ -6,14 +6,52 @@ namespace Cue;
 // The Cue API's projects and materials (packages/contract: projects.ts). The shapes follow it by hand, as the Mac's ProjectsAPI.swift does.
 
 /// <summary>A project as the account holds it. Times are milliseconds since the epoch.</summary>
+/// <param name="Occasion">The person's own words about the talk; empty: the brief's are used.</param>
+/// <param name="Language">The language Cue last heard in the project's calls (detected, never set).</param>
+/// <param name="NamesAndTerms">The person's own names and terms; empty: the brief's are used.</param>
+/// <param name="Brief">What Cue wrote from the materials (null from a server before briefs).</param>
 public sealed record RemoteProject(
     string Id,
     string Name,
     string Occasion,
     string Language,
     string NamesAndTerms,
+    ProjectBrief? Brief,
     double CreatedAt,
     double? LastUsedAt);
+
+/// <summary>
+/// What Cue wrote from a project's materials: the occasion, the names and terms, answers to the likely questions. Written again (after a few seconds of
+/// quiet) whenever a file is added or removed.
+/// </summary>
+/// <param name="State">`none` (no materials, or none read yet), `working` (Cue is reading them), `ready` or `failed` (see <paramref name="Error"/>).</param>
+/// <param name="Error">Why it couldn't be written, for people.</param>
+/// <param name="NamesAndTerms">One per line.</param>
+/// <param name="AnswerCount">The questions Cue prepared answers to.</param>
+/// <param name="UpdatedAt">Milliseconds since the epoch.</param>
+public sealed record ProjectBrief(
+    string State = "none",
+    string? Error = null,
+    string Occasion = "",
+    string NamesAndTerms = "",
+    int AnswerCount = 0,
+    double? UpdatedAt = null)
+{
+    public static readonly ProjectBrief None = new();
+
+    public bool Working => State == "working";
+    public bool Ready => State == "ready";
+    public bool Failed => State == "failed";
+
+    /// <summary>The names and terms, one by one.</summary>
+    public IReadOnlyList<string> Terms => NamesAndTerms.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+    /// <summary>"1 answer", "3 answers": how the session log and the overview count them.</summary>
+    public string AnswersText => AnswerCount == 1 ? "1 answer" : $"{AnswerCount} answers";
+
+    /// <summary>"1 name or term", "2 names and terms".</summary>
+    public string TermsText => Terms.Count == 1 ? "1 name or term" : $"{Terms.Count} names and terms";
+}
 
 /// <summary>A file in a project, and what the server read from it.</summary>
 /// <param name="Error">Why its text couldn't be read; null when it was.</param>
@@ -33,13 +71,13 @@ public sealed record Material(string Id, string Name, long Size, string? Error, 
 /// <summary>A material with the text the server extracted from it.</summary>
 public sealed record RemoteMaterialText(string Name, string? Error, string Summary, string Text);
 
-public sealed record RemotePreparedAnswer(string Question, string Answer, string? Who, string Source, string MaterialId);
+/// <param name="From">`materials`: written in the file; `cue`: prepared by Cue from the materials.</param>
+public sealed record RemotePreparedAnswer(string Question, string Answer, string? Who, string Source, string MaterialId, string? From);
 
 /// <summary>Fields of a new project; the times are for a project moved in from this PC.</summary>
 public sealed record ProjectFields(
     string Name,
     string? Occasion = null,
-    string? Language = null,
     string? NamesAndTerms = null,
     double? CreatedAt = null,
     double? LastUsedAt = null);
@@ -48,7 +86,6 @@ public sealed record ProjectFields(
 public sealed record ProjectChanges(
     string? Name = null,
     string? Occasion = null,
-    string? Language = null,
     string? NamesAndTerms = null,
     double? LastUsedAt = null);
 
@@ -77,6 +114,8 @@ public static class ProjectsApi
     public static async Task<List<RemoteProject>> ListProjects(this CueApi api) =>
         Decode<ProjectList>(await api.Get("v1/projects")).Projects;
 
+    public static async Task<RemoteProject> Project(this CueApi api, string id) => Decode<RemoteProject>(await api.Get($"v1/projects/{id}"));
+
     public static async Task<RemoteProject> CreateProject(this CueApi api, ProjectFields fields) =>
         Decode<RemoteProject>(await api.Request("POST", "v1/projects", json: JsonSerializer.SerializeToUtf8Bytes(fields, Json)));
 
@@ -93,6 +132,10 @@ public static class ProjectsApi
 
     public static async Task<List<RemotePreparedAnswer>> PreparedAnswers(this CueApi api, string project) =>
         Decode<AnswerList>(await api.Get($"v1/projects/{project}/prepared-answers")).Answers;
+
+    /// <summary>Asks the account to write the project's brief again (it does by itself when a file is added or removed): the brief, now working.</summary>
+    public static async Task<ProjectBrief> BriefAgain(this CueApi api, string project) =>
+        Decode<ProjectBrief>(await api.Request("POST", $"v1/projects/{project}/brief"));
 
     /// <summary>Sends a file to a project; the server stores it and reads its text before it answers.</summary>
     public static async Task<Material> UploadMaterial(this CueApi api, string file, string project)

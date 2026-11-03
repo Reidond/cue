@@ -62,6 +62,11 @@ public sealed class CallEvent
     public bool? Fatal { get; init; }
     public int? Lines { get; init; }
 
+    /// <summary>A `language` event's: the code (en, uk, …) and its name in English ("Ukrainian").</summary>
+    public string? Language { get; init; }
+
+    public string? Name { get; init; }
+
     /// <summary>The audio source the event is about.</summary>
     public Side? Lane => Sides.Parse(Channel);
 

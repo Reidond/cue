@@ -15,10 +15,17 @@ e2eCase(
     "A note's progress is followed over server-sent events, one per line of the session log, in order, ending with the note " +
         'being ready; a client that reconnects asks for what came after the last event it saw.',
     async (cue) => {
-        cue.standIns({ FAKE_DEEPGRAM_FILE: RECORDED_SCRIPT, FAKE_CLAUDE_SUMMARY: fixture('summaries', 'transcript-remarks.md') });
+        // Heard as Ukrainian, so that the note is worded in it and the remarks about the transcript in the summary are the ones its lexicon knows.
+        const script = JSON.parse(RECORDED_SCRIPT) as Record<string, (string | { text: string; speaker?: number })[]>;
+        const ukrainian = Object.fromEntries(
+            Object.entries(script).map(([side, entries]) => [
+                side,
+                entries.map((entry) => ({ ...(typeof entry === 'string' ? { text: entry } : entry), language: 'uk' })),
+            ]),
+        );
+        cue.standIns({ FAKE_DEEPGRAM_FILE: JSON.stringify(ukrainian), FAKE_CLAUDE_SUMMARY: fixture('summaries', 'transcript-remarks.md') });
         const backend = await cue.backend();
-        // In Ukrainian, so that the remarks about the transcript in the summary are the ones the lexicon knows.
-        const recorded = await recordCall(cue, backend, 'ann@cue.test', { language: 'uk' });
+        const recorded = await recordCall(cue, backend, 'ann@cue.test');
         const started = await makeNotes(backend, recorded);
 
         // Followed from the start: the stream runs until the note is ready, then ends.

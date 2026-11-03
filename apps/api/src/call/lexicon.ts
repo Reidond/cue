@@ -1,5 +1,6 @@
 // Per-language data of the live path (from the Mac app's Resources/lexicons, which keeps the rest for the notes until PR 6): the language's
-// name for the prompts, the stop words that keep prepared-answer matching about the point, and the spoken openers.
+// name for the prompts, the stop words that keep prepared-answer matching about the point, and the spoken openers. The call's language is
+// heard as it goes (call.ts), so the matching leaves out every language's stop words.
 
 export interface CallLexicon {
     name: string;
@@ -38,6 +39,9 @@ const LEXICONS: Record<string, CallLexicon> = {
         sourceLabel: 'Джерело',
     },
 };
+
+/** Every language's stop words: prepared answers and questions can each be in any of them. */
+export const STOP_WORDS = new Set(Object.values(LEXICONS).flatMap((lexicon) => [...lexicon.stopWords]));
 
 /** The lexicon for a language code (`uk`, `pt-BR`); a language without one still gets English labels and no stop words. */
 export function lexiconFor(code: string): CallLexicon {

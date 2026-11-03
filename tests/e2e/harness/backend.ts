@@ -381,9 +381,19 @@ export interface AccountProject {
     id: string;
     name: string;
     occasion: string;
+    /** The language Cue last heard in the project's calls. */
     language: string;
     namesAndTerms: string;
     terms: string[];
+    /** What Cue wrote from the materials. */
+    brief: {
+        state: 'none' | 'working' | 'ready' | 'failed';
+        error: string | null;
+        occasion: string;
+        namesAndTerms: string;
+        answerCount: number;
+        updatedAt: number | null;
+    };
     createdAt: number;
     lastUsedAt: number | null;
     materialCount: number;
@@ -440,7 +450,21 @@ export class Account {
         return read.status === 200 ? (read.body as Note) : fail(`the account has no note ${id}`, JSON.stringify(read));
     }
 
-    async answers(project: AccountProject): Promise<{ question: string; answer: string; who: string | null; source: string }[]> {
+    /** The prepared answers: the ones written in the materials first (`from` materials), then the ones Cue wrote from them (`cue`). */
+    async answers(
+        project: AccountProject,
+    ): Promise<{ question: string; answer: string; who: string | null; source: string; materialId: string; from: 'materials' | 'cue' }[]> {
         return (await this.#backend.call('GET', `/v1/projects/${project.id}/prepared-answers`, this.token)).body.answers;
+    }
+
+    /** Waits until Cue has written the project's brief from its materials (or failed to), and returns the project then. */
+    async briefed(name: string, seconds = 60): Promise<AccountProject> {
+        const deadline = Date.now() + seconds * 1000;
+        for (;;) {
+            const project = await this.project(name);
+            if (project.brief.state === 'ready' || project.brief.state === 'failed') return project;
+            if (Date.now() > deadline) return fail(`the brief of "${name}" was not written in ${seconds} s`, JSON.stringify(project));
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
     }
 }

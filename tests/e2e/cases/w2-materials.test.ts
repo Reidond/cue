@@ -74,7 +74,7 @@ e2eCase(
         assertEq((await account.answers(project)).length, 3 + 2 + 1);
 
         // The overview: every file with what the account said about it, and why the scan is empty.
-        await waitShows('the five files', /^English · 5 files$/m);
+        await waitShows('the five files', /^5 files$/m);
         await waitShows('what the account read', /^~\d+ tokens · 6 prepared answers$/m);
         const overview = await windowText(cue.pid);
         for (const text of [
@@ -119,7 +119,7 @@ e2eCase(
         );
         await cue.waitFor('the page to lose the file', 30, async () => !(await shows(/^How many hives did you study\?$/m)));
         cue.control('page Bee talk');
-        await waitShows('the four files', /^English · 4 files$/m);
+        await waitShows('the four files', /^4 files$/m);
         assertTextNotContains(await windowText(cue.pid), /^talk\.md$/m);
     },
 );

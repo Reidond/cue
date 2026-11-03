@@ -48,6 +48,8 @@ struct CallEvent: Decodable {
     var message: String?
     var fatal: Bool?
     var lines: Int?
+    var language: String?
+    var name: String?
 
     var side: Channel? { channel.flatMap(Channel.init(rawValue:)) }
 }

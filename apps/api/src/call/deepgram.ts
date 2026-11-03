@@ -4,7 +4,11 @@ import { SPEECH_MODEL } from './models.ts';
 
 // One live Deepgram stream (Nova-3) for one channel of a call, over a WebSocket the Call Durable Object opens with the owner's key. The client's
 // audio goes in as it comes; Deepgram's endpointing cuts it into utterances, which come out as partials and finals. A stream that drops is
-// opened again at once (its audio meanwhile is lost) and the call is told speech recognition came back.
+// opened again at once (its audio meanwhile is lost) and the call is told speech recognition came back. The model is the multilingual one
+// (`language=multi`): nobody says what the call is held in, it is heard, and Deepgram says which language each word was in.
+
+/** Nova-3's multilingual mode: some fifty languages, switching between them mid-sentence too. */
+export const SPOKEN = 'multi';
 
 /** Keyterm prompting takes up to 500 tokens of terms; Deepgram suggests the 20–50 that matter most. */
 const MAX_TERMS = 50;
@@ -20,14 +24,16 @@ export interface SpeechEvents {
     onSpeaking(active: boolean): void;
     /** The words so far of the utterance being said. Times are seconds since the call began. */
     onPartial(text: string, speaker: number | null, start: number, end: number): void;
-    /** A finished utterance; empty text when nothing could be made of the sound (so that the call knows they stopped). */
-    onFinal(text: string, speaker: number | null, start: number, end: number): void;
+    /**
+     * A finished utterance; empty text when nothing could be made of the sound (so that the call knows they stopped). `language` is what most
+     * of its words were in (`uk`, `en`), null when Deepgram did not say.
+     */
+    onFinal(text: string, speaker: number | null, start: number, end: number, language: string | null, words: number): void;
     /** The stream works (true), or does not, with a reason for people. */
     onState(ok: boolean, detail: string): void;
 }
 
 export interface SpeechParams {
-    language: string;
     terms: string[];
     /** Tell the voices apart (the call's side). */
     diarize: boolean;
@@ -35,6 +41,7 @@ export interface SpeechParams {
 
 interface Word {
     speaker?: number;
+    language?: string;
 }
 
 interface Results {
@@ -43,7 +50,7 @@ interface Results {
     speech_final?: boolean;
     start?: number;
     duration?: number;
-    channel?: { alternatives?: { transcript?: string; words?: Word[] }[] };
+    channel?: { alternatives?: { transcript?: string; words?: Word[]; languages?: string[] }[] };
 }
 
 /** The reason a handshake failed, for people. */
@@ -58,7 +65,7 @@ export function listenUrl(params: SpeechParams): string {
     const base = new URL('/v1/listen', env.DEEPGRAM_URL);
     const query = new URLSearchParams({
         model: SPEECH_MODEL,
-        language: params.language,
+        language: SPOKEN,
         smart_format: 'true',
         punctuate: 'true',
         encoding: 'linear16',
@@ -93,7 +100,7 @@ export class SpeechStream {
     /** The call's clock when this connection's first audio went out: Deepgram's times start at 0 there. */
     #origin: number | undefined;
     #speaking = false;
-    #finals: { text: string; speakers: number[]; start: number; end: number }[] = [];
+    #finals: { text: string; speakers: number[]; languages: string[]; start: number; end: number }[] = [];
     #interim = '';
     #interimSpeakers: number[] = [];
     /** Where the utterance being said began, on the call's clock. */
@@ -228,7 +235,7 @@ export class SpeechStream {
         const speakers = (alternative?.words ?? []).flatMap((word) => (word.speaker === undefined ? [] : [word.speaker]));
         if (text !== '') this.#utteranceStart ??= start;
         if (message.is_final) {
-            if (text !== '') this.#finals.push({ text, speakers, start, end });
+            if (text !== '') this.#finals.push({ text, speakers, languages: languagesOf(alternative), start, end });
             this.#interim = '';
             this.#interimSpeakers = [];
         } else {
@@ -266,14 +273,16 @@ export class SpeechStream {
     /** The utterance is over: what Deepgram made final is the line. */
     #flush(): void {
         const line = this.#finals.length > 0 ? this.#sofar() : undefined;
+        const finals = this.#finals;
         const stamp = line ?? { text: '', speaker: null, start: this.#clock(), end: this.#clock() };
         this.#finals = [];
         this.#interim = '';
         this.#interimSpeakers = [];
         this.#utteranceStart = undefined;
+        const languages = finals.flatMap((item) => item.languages);
         if (!this.#speaking && !line) return;
         this.#speak(false);
-        this.#events.onFinal(stamp.text, stamp.speaker, stamp.start, stamp.end);
+        this.#events.onFinal(stamp.text, stamp.speaker, stamp.start, stamp.end, mostOf(languages), languages.length);
     }
 
     #speak(active: boolean): void {
@@ -281,4 +290,25 @@ export class SpeechStream {
         this.#speaking = active;
         this.#events.onSpeaking(active);
     }
+}
+
+/** The language of each word of a result (Deepgram's `words[].language`), else the result's own language once per word. */
+function languagesOf(alternative: { words?: Word[]; languages?: string[] } | undefined): string[] {
+    const words = alternative?.words ?? [];
+    const tagged = words.flatMap((word) => (word.language ? [word.language] : []));
+    if (tagged.length > 0) return tagged;
+    const language = alternative?.languages?.[0];
+    return language ? words.map(() => language) : [];
+}
+
+/** The language most of these words are in (the first of them on a tie), as a plain code: `uk`, `en`. */
+export function mostOf(languages: string[]): string | null {
+    const counts = new Map<string, number>();
+    for (const language of languages) {
+        const code = language.split('-')[0]!.toLowerCase();
+        counts.set(code, (counts.get(code) ?? 0) + 1);
+    }
+    let best: string | null = null;
+    for (const [code, count] of counts) if (best === null || count > counts.get(best)!) best = code;
+    return best;
 }

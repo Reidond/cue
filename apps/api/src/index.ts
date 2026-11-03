@@ -45,3 +45,6 @@ export { Call } from './call/call.ts';
 // The Durable Object of the audio retention and the Workflow that makes the notes, bound as `JANITOR` and `NOTES` (cloudflare.config.ts).
 export { Janitor } from './notes/janitor.ts';
 export { NotesWorkflow } from './notes/workflow.ts';
+
+// The Workflow that writes a project's brief from its materials, bound as `BRIEF`.
+export { BriefWorkflow } from './materials/workflow.ts';

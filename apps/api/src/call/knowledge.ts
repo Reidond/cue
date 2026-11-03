@@ -1,6 +1,5 @@
 import judgeTemplate from '../../prompts/judge.md?raw';
 import promptTemplate from '../../prompts/prompt.md?raw';
-import type { CallLexicon } from './lexicon.ts';
 
 // What Claude knows during a call: its system prompt (the speaker, the occasion, the project's prepared answers and materials), and the
 // match of a question against the prepared answers. The port of the Mac app's `KnowledgeBase`.
@@ -20,14 +19,12 @@ export interface Speaker {
 const speakerOf = (speaker: string) => (speaker.trim() === '' ? 'the speaker' : speaker.trim());
 const occasionOf = (occasion: string) => (occasion.trim() === '' ? 'a talk followed by questions.' : occasion.trim());
 
-/** Claude's system prompt: prompt.md filled in, then the prepared answers, then the materials' texts. */
-export function answerPrompt(who: Speaker, lexicon: CallLexicon, prepared: PreparedAnswer[], texts: string[]): string {
-    let prompt = promptTemplate
-        .replaceAll('{{speaker}}', speakerOf(who.speaker))
-        .replaceAll('{{occasion}}', occasionOf(who.occasion))
-        .replaceAll('{{language}}', lexicon.name)
-        .replaceAll('{{numbersLabel}}', lexicon.numbersLabel)
-        .replaceAll('{{sourceLabel}}', lexicon.sourceLabel);
+/**
+ * Claude's system prompt: prompt.md filled in, then the prepared answers, then the materials' texts. It holds no language: the call's is heard
+ * while it goes, and each question says what to answer in (call.ts), so the prompt stays one the cache keeps.
+ */
+export function answerPrompt(who: Speaker, prepared: PreparedAnswer[], texts: string[]): string {
+    let prompt = promptTemplate.replaceAll('{{speaker}}', speakerOf(who.speaker)).replaceAll('{{occasion}}', occasionOf(who.occasion));
     if (prepared.length > 0) {
         prompt += '\n\n# PREPARED ANSWERS\n';
         for (const item of prepared) prompt += `\nQuestion${item.who ? ` (${item.who})` : ''}: ${item.q}\nAnswer: ${item.a}\n`;
@@ -41,11 +38,8 @@ export function answerPrompt(who: Speaker, lexicon: CallLexicon, prepared: Prepa
 }
 
 /** The judge's system prompt: judge.md filled in. */
-export function judgePrompt(who: Speaker, lexicon: CallLexicon): string {
-    return judgeTemplate
-        .replaceAll('{{speaker}}', speakerOf(who.speaker))
-        .replaceAll('{{occasion}}', occasionOf(who.occasion))
-        .replaceAll('{{language}}', lexicon.name);
+export function judgePrompt(who: Speaker): string {
+    return judgeTemplate.replaceAll('{{speaker}}', speakerOf(who.speaker)).replaceAll('{{occasion}}', occasionOf(who.occasion));
 }
 
 /** Crude stemming that works well enough across European languages: lowercase, words of 4+ letters that are not stop words, cut to 6 letters. */

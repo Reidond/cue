@@ -178,14 +178,13 @@ export interface StartedCall {
 export async function startCall(
     backend: Backend,
     email: string,
-    options: { language?: string; namesAndTerms?: string; materials?: string[]; call?: Record<string, unknown> } = {},
+    options: { namesAndTerms?: string; materials?: string[]; call?: Record<string, unknown> } = {},
 ): Promise<StartedCall> {
     await backend.invite(email);
     const token = (await backend.tokensFor(email)).access_token;
     const created = await backend.call('POST', '/v1/projects', token, {
         body: {
             name: 'Bee talk',
-            language: options.language ?? 'en',
             occasion: 'A talk about rooftop bees',
             namesAndTerms: options.namesAndTerms ?? '',
         },
@@ -209,7 +208,7 @@ export async function startCall(
 export async function accountProject(
     cue: Cue,
     name: string,
-    options: { language?: string; namesAndTerms?: string; materials?: string[] } = {},
+    options: { namesAndTerms?: string; materials?: string[] } = {},
 ): Promise<{ id: string; token: string }> {
     const backend = await cue.backend();
     await backend.invite(cue.email);
@@ -217,7 +216,6 @@ export async function accountProject(
     const created = await backend.call('POST', '/v1/projects', token, {
         body: {
             name,
-            language: options.language ?? 'en',
             occasion: 'A talk about rooftop bees',
             namesAndTerms: options.namesAndTerms ?? '',
         },

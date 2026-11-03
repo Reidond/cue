@@ -447,7 +447,7 @@ final class RecordingStore: ObservableObject {
                 title: title, take: take, endedAt: Int64((live.endedAt.timeIntervalSince1970 * 1000).rounded(.down)), sides: sides,
                 speaker: speaker, meeting: meeting.map { RemoteMeeting(title: $0.title, attendees: $0.attendees) },
                 keepAudio: preferences.keepAudio, summarize: has(.writingSummary, id),
-                language: language == project.language ? nil : language, projectId: serverID))
+                language: language, projectId: serverID))
         } catch {
             if temporary { await api.endCall(call) }
             abandon(id, error.localizedDescription)

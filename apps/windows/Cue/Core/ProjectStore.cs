@@ -23,6 +23,9 @@ public sealed class ProjectStore : Observable
     private bool syncing;
     private bool syncAgain;
 
+    /// <summary>The projects whose brief is being followed while the account writes it (by the account's id).</summary>
+    private readonly HashSet<string> following = [];
+
     /// <summary>Changes in flight (create, rename, delete, adding files), and how many have finished: a re-read of the account that
     /// overlapped one is out of date and is thrown away.</summary>
     private int changing;
@@ -135,8 +138,8 @@ public sealed class ProjectStore : Observable
             foreach (var item in remote)
             {
                 var project = folders.TryGetValue(item.Id, out var found) ? found : MakeFolder(item);
-                // A change waiting to be saved is newer than the account's.
-                if (!saves.ContainsKey(item.Id)) project = Apply(item, project);
+                // A change waiting to be saved is newer than the account's; what Cue wrote and heard is the account's alone.
+                project = saves.ContainsKey(item.Id) ? project with { Brief = item.Brief ?? ProjectBrief.None, Language = item.Language } : Apply(item, project);
                 try
                 {
                     project = project with { Materials = await api.Materials(item.Id) };
@@ -154,6 +157,7 @@ public sealed class ProjectStore : Observable
                 return;
             }
             Projects = Sorted(synced);
+            foreach (var project in projects.Where(project => project.Brief.Working)) FollowBrief(project);
         }
         catch (Exception e) when (e is CueApiException or IOException or UnauthorizedAccessException)
         {
@@ -170,15 +174,16 @@ public sealed class ProjectStore : Observable
             Occasion = remote.Occasion,
             Language = remote.Language,
             Vocabulary = remote.NamesAndTerms,
+            Brief = remote.Brief ?? ProjectBrief.None,
             Created = DateTimeOffset.FromUnixTimeMilliseconds((long)remote.CreatedAt),
             LastUsed = remote.LastUsedAt is { } used ? DateTimeOffset.FromUnixTimeMilliseconds((long)used) : null,
         };
 
     private static ProjectFields Fields(Project project) =>
-        new(project.Name, project.Occasion, project.Language, project.Vocabulary, project.Created.ToUnixTimeMilliseconds(), project.LastUsed?.ToUnixTimeMilliseconds());
+        new(project.Name, project.Occasion, project.Vocabulary, project.Created.ToUnixTimeMilliseconds(), project.LastUsed?.ToUnixTimeMilliseconds());
 
     private static ProjectChanges Changes(Project project) =>
-        new(project.Name, project.Occasion, project.Language, project.Vocabulary, project.LastUsed?.ToUnixTimeMilliseconds());
+        new(project.Name, project.Occasion, project.Vocabulary, project.LastUsed?.ToUnixTimeMilliseconds());
 
     /// <summary>Sends a project found in the library to the account, with the files it kept in `Materials\`: how many files went up, or null when it couldn't be made.</summary>
     private async Task<int?> ImportProject(Project project)
@@ -217,12 +222,12 @@ public sealed class ProjectStore : Observable
     // MARK: Changes
 
     /// <summary>A new project in the account, and its folder here.</summary>
-    public async Task<Project> Create(string name, string? language = null)
+    public async Task<Project> Create(string name)
     {
         changing++;
         try
         {
-            var remote = await api.CreateProject(new ProjectFields(name.Trim(), Language: language ?? SpokenLanguage.Default));
+            var remote = await api.CreateProject(new ProjectFields(name.Trim()));
             var project = Apply(remote, MakeFolder(remote));
             Write(project);
             Projects = Sorted([.. projects, project]);
@@ -235,7 +240,7 @@ public sealed class ProjectStore : Observable
         }
     }
 
-    /// <summary>Saves the fields (name, occasion, language, names and terms, dates): at once here, and to the account a moment after the last edit.</summary>
+    /// <summary>Saves the fields (name, occasion, names and terms, dates): at once here, and to the account a moment after the last edit.</summary>
     public void Update(Project project)
     {
         var list = projects.ToList();
@@ -360,6 +365,8 @@ public sealed class ProjectStore : Observable
             changes++;
             Uploading = new HashSet<string>(uploading.Where(id => id != project.Id));
         }
+        // The account reads them again for the brief.
+        if (added > 0 && Find(project.Id) is { } current) FollowBrief(current);
         return added;
     }
 
@@ -382,6 +389,75 @@ public sealed class ProjectStore : Observable
             changes++;
         }
         await RefreshMaterials(project.Id);
+        if (Find(project.Id) is { } current) FollowBrief(current);
+    }
+
+    /// <summary>Asks the account to write the brief again: after it failed, or for files added before Cue wrote briefs.</summary>
+    public async Task PrepareAgain(Project project)
+    {
+        if (project.ServerId is not { } serverId) return;
+        try
+        {
+            var brief = await api.BriefAgain(serverId);
+            SetBrief(serverId, brief, null);
+            if (Find(project.Id) is { } current) FollowBrief(current);
+        }
+        catch (CueApiException e)
+        {
+            log.Write($"{SessionLog.Warning} Couldn't prepare “{project.Name}” from its materials: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Follows the brief while the account writes it: the project is read again until it is written (or failed), and the session log says how it went.
+    /// Its page then reads the prepared answers again (the brief changed).
+    /// </summary>
+    private void FollowBrief(Project project)
+    {
+        if (project.ServerId is not { } serverId || !following.Add(serverId)) return;
+        _ = Follow(serverId);
+    }
+
+    private async Task Follow(string serverId)
+    {
+        try
+        {
+            var started = DateTime.UtcNow;
+            while (DateTime.UtcNow - started < TimeSpan.FromMinutes(10))
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(1500));
+                // Deleted meanwhile, or signed out.
+                if (!projects.Any(project => project.ServerId == serverId)) return;
+                RemoteProject remote;
+                try
+                {
+                    remote = await api.Project(serverId);
+                }
+                catch (CueApiException)
+                {
+                    continue;
+                }
+                var brief = remote.Brief ?? ProjectBrief.None;
+                if (SetBrief(serverId, brief, remote.Language) is not { } name) return;
+                if (brief.Working) continue;
+                if (brief.Ready) log.Write($"✨ Prepared “{name}” from its materials: {brief.AnswersText}, {brief.TermsText}");
+                else if (brief.Failed) log.Write($"{SessionLog.Warning} Couldn't prepare “{name}” from its materials: {brief.Error ?? "something went wrong"}");
+                return;
+            }
+        }
+        finally
+        {
+            following.Remove(serverId);
+        }
+    }
+
+    /// <summary>The account's brief (and the language it heard) on the project here: its name, or null when it is gone.</summary>
+    private string? SetBrief(string serverId, ProjectBrief brief, string? language)
+    {
+        if (projects.FirstOrDefault(project => project.ServerId == serverId) is not { } found) return null;
+        var updated = found with { Brief = brief, Language = language ?? found.Language };
+        if (updated != found) Projects = projects.Select(project => project.ServerId == serverId ? updated : project).ToList();
+        return found.Name;
     }
 
     private async Task RefreshMaterials(string id)
@@ -401,10 +477,13 @@ public sealed class ProjectStore : Observable
         Projects = projects.Select(item => item.Id == id ? project with { Materials = materials } : item).ToList();
     }
 
-    /// <summary>What the account read from the project's files, for the project's page. Null when it couldn't be asked.</summary>
-    public async Task<KnowledgeBase?> Documents(string? serverId)
+    /// <summary>
+    /// What the account read from the project's files, for the project's page: their texts, and the prepared answers (the files' own first, then the ones
+    /// Cue wrote from them). Null when it couldn't be asked.
+    /// </summary>
+    public async Task<KnowledgeBase?> Knowledge(string? serverId)
     {
-        if (serverId is null) return new KnowledgeBase([]);
+        if (serverId is null) return new KnowledgeBase([], []);
         try
         {
             var materials = await api.Materials(serverId);
@@ -413,10 +492,9 @@ public sealed class ProjectStore : Observable
             foreach (var material in materials)
             {
                 var text = material.Error is null ? (await api.MaterialText(material.Id, serverId)).Text : "";
-                var prepared = answers.Where(answer => answer.MaterialId == material.Id).Select(answer => new PreparedAnswer(answer.Question, answer.Answer, answer.Who, answer.Source));
-                documents.Add(new MaterialDocument(material.Name, material.Summary, material.Error, text, [.. prepared]));
+                documents.Add(new MaterialDocument(material.Name, material.Summary, material.Error, text));
             }
-            return new KnowledgeBase(documents);
+            return new KnowledgeBase(documents, [.. answers.Select(answer => new PreparedAnswer(answer.Question, answer.Answer, answer.Who, answer.Source, answer.From == "cue"))]);
         }
         catch (CueApiException e)
         {
@@ -455,7 +533,7 @@ public sealed class ProjectStore : Observable
         if (Active is { } active) log.Write($"📁 Project: {active.Name}");
     }
 
-    /// <summary>Binds Cue to a project: its materials, language and names and terms. It was used just now.</summary>
+    /// <summary>Binds Cue to a project: its materials and what Cue wrote from them. It was used just now.</summary>
     public void Activate(Project project)
     {
         var current = Find(project.Id) ?? project;

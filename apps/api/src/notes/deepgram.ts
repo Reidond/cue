@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import { mostOf, SPOKEN } from '../call/deepgram.ts';
 import { SPEECH_MODEL } from '../call/models.ts';
 import { termsOf } from '../projects.ts';
 import type { Channel, Line, Voice } from './transcript.ts';
@@ -15,19 +16,22 @@ export interface Transcribed {
     voices: Voice[];
     /** The length of the audio Deepgram heard (what it bills). */
     seconds: number;
+    /** What each word was in (`uk`, `en`), as the multilingual model heard it: the note's language comes from them. */
+    languages: string[];
 }
 
 interface Word {
     start: number;
     end: number;
     speaker?: number;
+    language?: string;
 }
 
 interface Reply {
     metadata?: { duration?: number };
     results?: {
         utterances?: { start: number; end: number; transcript: string; speaker?: number }[];
-        channels?: { alternatives?: { words?: Word[] }[] }[];
+        channels?: { alternatives?: { words?: Word[]; languages?: string[] }[] }[];
     };
 }
 
@@ -51,15 +55,11 @@ export function voicesOf(words: Word[]): Voice[] {
     return voices;
 }
 
-/** Reads one side's recording (an R2 object) with Nova-3: the project's language and its names and terms. */
-export async function transcribe(
-    audio: R2ObjectBody,
-    side: Channel,
-    options: { language: string; namesAndTerms: string },
-): Promise<Transcribed> {
+/** Reads one side's recording (an R2 object) with Nova-3, multilingual (the language is heard), and the project's names and terms. */
+export async function transcribe(audio: R2ObjectBody, side: Channel, options: { namesAndTerms: string }): Promise<Transcribed> {
     const query = new URLSearchParams({
         model: SPEECH_MODEL,
-        language: options.language,
+        language: SPOKEN,
         smart_format: 'true',
         punctuate: 'true',
         utterances: 'true',
@@ -89,6 +89,14 @@ export async function transcribe(
             end: Math.max(utterance.start, utterance.end),
         }))
         .filter((line) => line.text !== '');
-    const words = reply.results?.channels?.[0]?.alternatives?.[0]?.words ?? [];
-    return { lines, voices: side === 'others' ? voicesOf(words) : [], seconds: reply.metadata?.duration ?? 0 };
+    const alternative = reply.results?.channels?.[0]?.alternatives?.[0];
+    const words = alternative?.words ?? [];
+    const languages = words.flatMap((word) => {
+        const language = word.language ?? alternative?.languages?.[0];
+        return language ? [language] : [];
+    });
+    return { lines, voices: side === 'others' ? voicesOf(words) : [], seconds: reply.metadata?.duration ?? 0, languages };
 }
+
+/** The language most of the words of a recording are in, if Deepgram said. */
+export const languageOf = (...read: Transcribed[]) => mostOf(read.flatMap((side) => side.languages));

@@ -722,7 +722,8 @@ public sealed class OverlayWindow : Window
     private UIElement ExchangeCard(Exchange exchange, double size)
     {
         var card = new StackPanel { Spacing = 16 };
-        var lexicon = Lexicon.Load(state.Live.ActiveProject?.Language);
+        // Answers are written in the language the call is held in, with its labels.
+        var lexicon = Lexicon.Load(state.Live.SpokenLanguage);
         for (var index = 0; index < exchange.Answers.Count; index++)
         {
             if (index > 0) card.Children.Add(new Border { Height = 1, Background = Theme("DividerStrokeColorDefaultBrush") });

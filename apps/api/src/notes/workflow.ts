@@ -1,13 +1,13 @@
 import { env, WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
 import { describe, send, stream } from '../call/anthropic.ts';
-import { lexiconFor } from '../call/lexicon.ts';
+import { lexiconFor, STOP_WORDS } from '../call/lexicon.ts';
 import { ANSWER_MODEL, noThinking, type Tokens, type UsageRow } from '../call/models.ts';
 import { speechUsage, tokenUsage } from '../pricing.ts';
-import { termsOf } from '../projects.ts';
+import { inUse, termsOf } from '../projects.ts';
 import { limitState, recordUsage } from '../usage.ts';
 import { participantsOf, turnsFor, userLabel } from './compose.ts';
-import { transcribe } from './deepgram.ts';
+import { languageOf, transcribe } from './deepgram.ts';
 import { janitor } from './janitor.ts';
 import { noteLexicon } from './lexicon.ts';
 import { addEvent, type AudioKeys, linesOf, loadNote, type NoteRow, parse, setStep, type StepId, voicesOf } from './store.ts';
@@ -152,14 +152,15 @@ export class NotesWorkflow extends WorkflowEntrypoint<Env, NotesParams> {
     }
 }
 
+/** The project's occasion and names and terms: the person's own, else the brief's. */
 async function project(db: D1Database, note: NoteRow) {
     const row = note.project_id
         ? await db
-              .prepare('SELECT occasion, names_and_terms FROM project WHERE id = ?')
+              .prepare('SELECT occasion, names_and_terms, brief_occasion, brief_terms FROM project WHERE id = ?')
               .bind(note.project_id)
-              .first<{ occasion: string; names_and_terms: string }>()
+              .first<{ occasion: string; names_and_terms: string; brief_occasion: string; brief_terms: string }>()
         : null;
-    return { occasion: row?.occasion ?? '', namesAndTerms: row?.names_and_terms ?? '' };
+    return row ? inUse(row) : { occasion: '', namesAndTerms: '' };
 }
 
 const usage = (note: NoteRow, db: D1Database, rows: UsageRow[]) => recordUsage(db, note.user_id, rows);
@@ -186,8 +187,7 @@ async function audioOf(note: NoteRow, side: 'me' | 'others'): Promise<R2ObjectBo
 async function improveTranscript(db: D1Database, note: NoteRow): Promise<string | null> {
     const started = Date.now();
     const { namesAndTerms } = await project(db, note);
-    const language = note.spoken_language ?? note.language;
-    const options = { language, namesAndTerms };
+    const options = { namesAndTerms };
     // Each side's audio is billed as soon as Deepgram has read it, so one side failing does not lose the other's usage.
     const side = async (which: 'me' | 'others') => {
         const read = await transcribe(await audioOf(note, which), which, options);
@@ -195,19 +195,25 @@ async function improveTranscript(db: D1Database, note: NoteRow): Promise<string 
         return read;
     };
     const [me, others] = await Promise.all([side('me'), side('others')]);
-    const lines = withoutEchoes([...me.lines, ...others.lines], lexiconFor(language).stopWords).toSorted((a, b) => a.start - b.start);
+    const lines = withoutEchoes([...me.lines, ...others.lines], STOP_WORDS).toSorted((a, b) => a.start - b.start);
     if (lines.length === 0) throw new NonRetryableError('Deepgram found no speech in the call’s audio');
     const lost = sideLost(linesOf(note), lines);
     if (lost) throw new NonRetryableError(`it heard much less than live recognition on ${lost}`);
 
-    const lexicon = noteLexicon(note.language);
+    // The language the recording is in, heard from all of it: the note is worded in it from here on.
+    const language = languageOf(me, others) ?? note.language;
+    const lexicon = noteLexicon(language);
     await db
-        .prepare('UPDATE note SET lines = ?, voices = ?, transcript = ?, participants = ? WHERE id = ?')
+        .prepare(
+            'UPDATE note SET lines = ?, voices = ?, transcript = ?, participants = ?, language = ?, transcript_heading = ? WHERE id = ?',
+        )
         .bind(
             JSON.stringify(lines),
             JSON.stringify(others.voices),
             JSON.stringify(turnsFor(lexicon, note.speaker, lines)),
             JSON.stringify(participantsOf(lexicon, note.speaker, lines)),
+            language,
+            lexicon.transcriptHeading,
             note.id,
         )
         .run();
@@ -238,10 +244,7 @@ async function findSpeakers(db: D1Database, note: NoteRow): Promise<string | nul
     if (voices === null) {
         // The second pass did not run: the call side is read again, only for who spoke when.
         const { namesAndTerms } = await project(db, note);
-        const read = await transcribe(await audioOf(note, 'others'), 'others', {
-            language: note.spoken_language ?? note.language,
-            namesAndTerms,
-        });
+        const read = await transcribe(await audioOf(note, 'others'), 'others', { namesAndTerms });
         await usage(note, db, speechRows('others', read.seconds, namesAndTerms));
         voices = read.voices;
     }

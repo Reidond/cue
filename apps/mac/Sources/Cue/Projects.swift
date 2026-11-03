@@ -5,10 +5,14 @@ import Foundation
 /// this Mac until the notes move too: `project.json`, which ties the folder to the account's project, and the notes.
 struct Project: Codable, Identifiable, Hashable {
     var name: String
+    /// The person's own words about the talk; empty: the brief's.
     var occasion = ""
+    /// The language Cue last heard in the project's calls: never chosen, the account says.
     var language: String
-    /// Names and terms that speech recognition should spell right.
+    /// The person's own names and terms that speech recognition should spell right; empty: the brief's.
     var vocabulary = ""
+    /// What Cue wrote from the materials (the account's; not kept in `project.json`).
+    var brief = ProjectBrief()
     var created = Date()
     var lastUsed: Date?
     /// The project in the account (the Cue API); nil for one that is only on this Mac so far.
@@ -63,6 +67,8 @@ final class ProjectStore: ObservableObject {
     /// Settings changes waiting to be saved to the account, by project.
     private var saves: [String: Task<Void, Never>] = [:]
     private var syncing = false
+    /// Projects whose brief is being followed (by account id).
+    private var following: Set<String> = []
     /// Changes in flight (create, rename, delete, adding files), and how many have finished: a re-read of the account that
     /// overlapped one is out of date and is thrown away.
     private var changing = 0
@@ -129,8 +135,13 @@ final class ProjectStore: ObservableObject {
             var synced: [Project] = []
             for item in remote {
                 var project = folders[item.id] ?? makeFolder(for: item)
-                // A change waiting to be saved is newer than the account's.
-                if saves[item.id] == nil { Self.apply(item, to: &project) }
+                // A change waiting to be saved is newer than the account's; what Cue wrote and heard is the account's alone.
+                if saves[item.id] == nil {
+                    Self.apply(item, to: &project)
+                } else {
+                    project.brief = item.brief
+                    project.language = item.language
+                }
                 if let materials = try? await api.materials(of: item.id) { project.materials = materials }
                 try? write(project)
                 synced.append(project)
@@ -140,6 +151,7 @@ final class ProjectStore: ObservableObject {
                 return
             }
             projects = synced.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            for project in projects where project.brief.state == .working { followBrief(of: project) }
         } catch {
             log.write("⚠︎ Couldn't load your projects: \(error.localizedDescription)")
             if projects.isEmpty { projects = local.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } }
@@ -152,18 +164,19 @@ final class ProjectStore: ObservableObject {
         project.occasion = remote.occasion
         project.language = remote.language
         project.vocabulary = remote.namesAndTerms
+        project.brief = remote.brief
         project.created = Date(timeIntervalSince1970: remote.createdAt / 1000)
         project.lastUsed = remote.lastUsedAt.map { Date(timeIntervalSince1970: $0 / 1000) }
     }
 
     private func fields(of project: Project) -> ProjectFields {
-        ProjectFields(name: project.name, occasion: project.occasion, language: project.language, namesAndTerms: project.vocabulary,
+        ProjectFields(name: project.name, occasion: project.occasion, namesAndTerms: project.vocabulary,
                       createdAt: project.created.timeIntervalSince1970 * 1000,
                       lastUsedAt: project.lastUsed.map { $0.timeIntervalSince1970 * 1000 })
     }
 
     private func changes(of project: Project) -> ProjectChanges {
-        ProjectChanges(name: project.name, occasion: project.occasion, language: project.language, namesAndTerms: project.vocabulary,
+        ProjectChanges(name: project.name, occasion: project.occasion, namesAndTerms: project.vocabulary,
                        lastUsedAt: project.lastUsed.map { $0.timeIntervalSince1970 * 1000 })
     }
 
@@ -195,14 +208,14 @@ final class ProjectStore: ObservableObject {
 
     /// A new project in the account, and its folder here.
     @discardableResult
-    func create(named name: String, language: String = Project.defaultLanguage) async throws -> Project {
+    func create(named name: String) async throws -> Project {
         changing += 1
         defer {
             changing -= 1
             changes += 1
         }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let remote = try await api.createProject(ProjectFields(name: name, language: language))
+        let remote = try await api.createProject(ProjectFields(name: name))
         var project = makeFolder(for: remote)
         Self.apply(remote, to: &project)
         try write(project)
@@ -210,7 +223,7 @@ final class ProjectStore: ObservableObject {
         return project
     }
 
-    /// Saves the fields (name, occasion, language, names and terms, dates): at once here, and to the account a moment after the last edit.
+    /// Saves the fields (name, occasion, names and terms, dates): at once here, and to the account a moment after the last edit.
     func update(_ project: Project) {
         guard let index = projects.firstIndex(where: { $0.id == project.id }), projects[index] != project else { return }
         projects[index] = project
@@ -295,6 +308,8 @@ final class ProjectStore: ObservableObject {
             }
         }
         await refreshMaterials(of: project.id)
+        // The account reads them again for the brief.
+        if added > 0, let current = self.project(project.id) { followBrief(of: current) }
         return added
     }
 
@@ -312,6 +327,53 @@ final class ProjectStore: ObservableObject {
             log.write("⚠︎ Couldn't remove \(material.name): \(error.localizedDescription)")
         }
         await refreshMaterials(of: project.id)
+        if let current = self.project(project.id) { followBrief(of: current) }
+    }
+
+    /// Asks the account to write the brief again: after it failed, or for files added before Cue wrote briefs.
+    func prepareAgain(_ project: Project) async {
+        guard let serverID = project.serverID else { return }
+        do {
+            try await api.briefAgain(serverID)
+            followBrief(of: project)
+        } catch {
+            log.write("⚠︎ Couldn't prepare “\(project.name)” from its materials: \(error.localizedDescription)")
+        }
+    }
+
+    /// Follows the brief while the account writes it: the project is read again until it is written (or failed), and the session log says how
+    /// it went. Its page then reads the prepared answers again (the brief changed).
+    private func followBrief(of project: Project) {
+        guard let serverID = project.serverID, !following.contains(serverID) else { return }
+        following.insert(serverID)
+        Task { [weak self] in
+            await self?.follow(serverID)
+            self?.following.remove(serverID)
+        }
+    }
+
+    private func follow(_ serverID: String) async {
+        let started = Date()
+        while Date().timeIntervalSince(started) < 600 {
+            try? await Task.sleep(for: .milliseconds(1500))
+            guard let remote = try? await api.project(serverID) else { continue }
+            guard let index = projects.firstIndex(where: { $0.serverID == serverID }) else { return }
+            projects[index].brief = remote.brief
+            projects[index].language = remote.language
+            guard remote.brief.state != .working else { continue }
+            let name = projects[index].name, brief = remote.brief
+            switch brief.state {
+            case .ready:
+                let answers = brief.answerCount == 1 ? "1 answer" : "\(brief.answerCount) answers"
+                let terms = brief.terms.count == 1 ? "1 name or term" : "\(brief.terms.count) names and terms"
+                log.write("✨ Prepared “\(name)” from its materials: \(answers), \(terms)")
+            case .failed:
+                log.write("⚠︎ Couldn't prepare “\(name)” from its materials: \(brief.error ?? "something went wrong")")
+            default:
+                break
+            }
+            return
+        }
     }
 
     private func refreshMaterials(of id: String) async {
@@ -320,9 +382,10 @@ final class ProjectStore: ObservableObject {
         projects[index].materials = materials
     }
 
-    /// What the account read from the project's files, for the project's page. Nil when it couldn't be asked.
-    func documents(of serverID: String?) async -> [MaterialDocument]? {
-        guard let serverID else { return [] }
+    /// What the account read from the project's files, for the project's page: their texts, and the prepared answers (the files' own first,
+    /// then the ones Cue wrote from them). Nil when it couldn't be asked.
+    func knowledge(of serverID: String?) async -> KnowledgeBase? {
+        guard let serverID else { return KnowledgeBase(documents: [], prepared: []) }
         do {
             let materials = try await api.materials(of: serverID)
             let answers = try await api.preparedAnswers(of: serverID)
@@ -330,12 +393,11 @@ final class ProjectStore: ObservableObject {
             for material in materials {
                 var document = MaterialDocument(name: material.name, summary: material.summary, error: material.error)
                 if material.error == nil { document.text = try await api.materialText(material.id, in: serverID).text }
-                document.prepared = answers.filter { $0.materialId == material.id }.map {
-                    PreparedAnswer(q: $0.question, a: $0.answer, who: $0.who, source: $0.source)
-                }
                 documents.append(document)
             }
-            return documents
+            return KnowledgeBase(documents: documents, prepared: answers.map {
+                PreparedAnswer(q: $0.question, a: $0.answer, who: $0.who, source: $0.source, byCue: $0.from == "cue")
+            })
         } catch {
             // A page that was left, or a newer read that replaced this one, cancels it: nothing went wrong.
             if !Task.isCancelled { log.write("⚠︎ Couldn't read your materials: \(error.localizedDescription)") }

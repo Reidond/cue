@@ -6,8 +6,8 @@ using Microsoft.UI.Xaml.Controls;
 namespace Cue;
 
 /// <summary>
-/// The question-and-answer pairs Cue found in a project's materials, so the person can check what it picked up before the talk. Searchable;
-/// <see cref="Update"/> hands it what the account has read.
+/// The prepared answers of a project, so the person can check them before the talk: the ones written in their files, then the ones Cue prepared from
+/// the materials for the questions people are likely to ask. Searchable; <see cref="Update"/> hands it what the account has read.
 /// </summary>
 public sealed class PreparedAnswersView : UserControl
 {
@@ -21,6 +21,8 @@ public sealed class PreparedAnswersView : UserControl
     private readonly Border results = new();
     private KnowledgeBase? knowledge;
     private bool reading;
+    private ProjectBrief brief = ProjectBrief.None;
+    private bool hasMaterials;
 
     public PreparedAnswersView()
     {
@@ -32,10 +34,13 @@ public sealed class PreparedAnswersView : UserControl
         Render();
     }
 
-    public void Update(KnowledgeBase? read, bool nowReading)
+    /// <summary>What the account has read (null while it is being read), how Cue's own answers are coming along, and whether there are files at all.</summary>
+    public void Update(KnowledgeBase? read, bool nowReading, ProjectBrief projectBrief, bool files)
     {
         knowledge = read;
         reading = nowReading;
+        brief = projectBrief;
+        hasMaterials = files;
         Render();
     }
 
@@ -48,15 +53,47 @@ public sealed class PreparedAnswersView : UserControl
             : [.. answers.Where(answer => Contains(answer.Q, text) || Contains(answer.A, text) || (answer.Who is { } who && Contains(who, text)))];
         if (answers.Count == 0)
         {
-            results.Child = reading ? Reading() : Empty("No Prepared Answers", "Add a document with lines like “Q: …” followed by “A: …”, or questions followed by an “Answer:” line, and they show up here.");
+            if (reading || brief.Working) results.Child = Preparing();
+            else if (brief.Failed) results.Child = Empty("", "Couldn't Prepare Answers", brief.Error ?? "Cue couldn't read your materials.");
+            else
+            {
+                results.Child = Empty(
+                    "",
+                    "No Prepared Answers",
+                    hasMaterials
+                        ? "Cue found no questions to prepare for in these files."
+                        : "Add your slides, documents or notes on the Overview, and Cue prepares answers to the questions people are likely to ask.");
+            }
         }
         else if (shown.Count == 0)
         {
-            results.Child = Empty($"No Results for “{text}”", "Check the spelling or try a new search.");
+            results.Child = Empty("", $"No Results for “{text}”", "Check the spelling or try a new search.");
         }
         else
         {
-            results.Child = Ui.Card([.. shown.Select(Row)]);
+            // The ones written in the files first, then Cue's (with a ring while it is still writing them).
+            var groups = new StackPanel { Spacing = 8 };
+            var own = shown.Where(answer => !answer.ByCue).ToList();
+            var prepared = shown.Where(answer => answer.ByCue).ToList();
+            if (own.Count > 0)
+            {
+                groups.Children.Add(Ui.Header("From Your Files"));
+                groups.Children.Add(Ui.Card([.. own.Select(Row)]));
+            }
+            if (prepared.Count > 0 || brief.Working)
+            {
+                var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, own.Count > 0 ? 16 : 8, 0, 0) };
+                header.Children.Add(new TextBlock { Text = "Prepared by Cue", Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"] });
+                if (brief.Working)
+                {
+                    var ring = new ProgressRing { Width = 14, Height = 14, IsActive = true, VerticalAlignment = VerticalAlignment.Center };
+                    AutomationProperties.SetName(ring, "Preparing answers…");
+                    header.Children.Add(ring);
+                }
+                groups.Children.Add(header);
+                if (prepared.Count > 0) groups.Children.Add(Ui.Card([.. prepared.Select(Row)]));
+            }
+            results.Child = groups;
         }
     }
 
@@ -85,17 +122,17 @@ public sealed class PreparedAnswersView : UserControl
         });
     }
 
-    private static UIElement Reading() =>
+    private static UIElement Preparing() =>
         new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 12,
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 36, 0, 0),
-            Children = { new ProgressRing { Width = 20, Height = 20, IsActive = true }, new TextBlock { Text = "Reading materials…", VerticalAlignment = VerticalAlignment.Center } },
+            Children = { new ProgressRing { Width = 20, Height = 20, IsActive = true }, new TextBlock { Text = "Preparing answers…", VerticalAlignment = VerticalAlignment.Center } },
         };
 
-    private static UIElement Empty(string title, string description) =>
+    private static UIElement Empty(string glyph, string title, string description) =>
         new StackPanel
         {
             Spacing = 6,
@@ -104,7 +141,7 @@ public sealed class PreparedAnswersView : UserControl
             MaxWidth = 440,
             Children =
             {
-                new FontIcon { Glyph = "", FontSize = 36, Foreground = Ui.Theme("TextFillColorSecondaryBrush"), HorizontalAlignment = HorizontalAlignment.Center },
+                new FontIcon { Glyph = glyph, FontSize = 36, Foreground = Ui.Theme("TextFillColorSecondaryBrush"), HorizontalAlignment = HorizontalAlignment.Center },
                 new TextBlock { Text = title, Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"], HorizontalAlignment = HorizontalAlignment.Center, TextAlignment = TextAlignment.Center },
                 new TextBlock { Text = description, Foreground = Ui.Theme("TextFillColorSecondaryBrush"), TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center },
             },

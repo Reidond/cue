@@ -15,7 +15,7 @@ e2eCase(
     'Cue for Windows: answering Record records the meeting into its project, named after the event with its attendees; once the call app has let go of the ' +
         'microphone for the release window, Cue stops and writes the notes, and says they are ready.',
     async (cue) => {
-        await accountProject(cue, 'Research', { language: 'en', materials: [fixture('materials', 'talk.md')] });
+        await accountProject(cue, 'Research', { materials: [fixture('materials', 'talk.md')] });
         cue.calendar([
             {
                 id: 'sync-today',

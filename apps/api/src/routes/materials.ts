@@ -14,6 +14,7 @@ import { env } from 'cloudflare:workers';
 import { Elysia } from 'elysia';
 import { ApiError } from '../errors.ts';
 import { extensionOf, extract, isSupported, preparedIn, summaryOf } from '../materials/read.ts';
+import { briefAgain } from '../materials/workflow.ts';
 import { findProject, type ProjectRow, projectPrefix } from '../projects.ts';
 import { mustBeWithinLimit } from '../limits.ts';
 import { markdownUsage } from '../pricing.ts';
@@ -43,9 +44,9 @@ async function mustFindProject(userId: string, id: string): Promise<ProjectRow> 
     return row;
 }
 
-/** A material as the API says it; the prepared answers depend on the project's language. */
-function materialOf(row: MaterialRow, language: string): Material {
-    const prepared = row.error === null ? preparedIn(row, language).length : 0;
+/** A material as the API says it, with the prepared answers written in it. */
+function materialOf(row: MaterialRow): Material {
+    const prepared = row.error === null ? preparedIn(row).length : 0;
     return {
         id: row.id,
         name: row.name,
@@ -76,7 +77,7 @@ export const materials = new Elysia({ name: 'materials' })
         async ({ userId, params, query, request, status }) => {
             // Only the allowance: a library of files is uploaded in one go at the first sign-in, which the stricter rate must not stop.
             await mustBeWithinLimit(userId);
-            const project = await mustFindProject(userId, params.id);
+            await mustFindProject(userId, params.id);
             const name = query.name.split(/[/\\]/).at(-1)!.trim();
             if (name === '' || !isSupported(name)) {
                 throw new ApiError(
@@ -103,7 +104,7 @@ export const materials = new Elysia({ name: 'materials' })
             const same = others.find((other) => other.name === name && other.etag === stored.etag);
             if (same) {
                 await env.MATERIALS.delete(key);
-                return status(200, materialOf(same, project.language));
+                return status(200, materialOf(same));
             }
 
             let read: Awaited<ReturnType<typeof extract>> | undefined;
@@ -163,7 +164,9 @@ export const materials = new Elysia({ name: 'materials' })
                 );
             }
             await env.DB.batch(statements);
-            return status(201, materialOf(row, project.language));
+            // Cue reads the files again for the brief (once they have settled: several arriving together are read together).
+            if (row.error === null) await briefAgain(env.DB, userId, params.id);
+            return status(201, materialOf(row));
         },
         {
             // The route reads its own body: Elysia would buffer it and the stream could not go to R2.
@@ -185,24 +188,24 @@ export const materials = new Elysia({ name: 'materials' })
     .get(
         '/projects/:id/materials',
         async ({ userId, params }) => {
-            const project = await mustFindProject(userId, params.id);
+            await mustFindProject(userId, params.id);
             const { results } = await env.DB.prepare(`SELECT ${COLUMNS} FROM material WHERE project_id = ? AND user_id = ?`)
                 .bind(params.id, userId)
                 .all<MaterialRow>();
             const sorted = results.toSorted((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
-            return { materials: sorted.map((row) => materialOf(row, project.language)) };
+            return { materials: sorted.map((row) => materialOf(row)) };
         },
         { params: ProjectId, response: { 200: Materials, ...errors }, detail: { summary: "A project's materials, by name" } },
     )
     .get(
         '/projects/:id/materials/:materialId',
         async ({ userId, params }) => {
-            const project = await mustFindProject(userId, params.id);
+            await mustFindProject(userId, params.id);
             const row = await env.DB.prepare(`SELECT ${COLUMNS} FROM material WHERE id = ? AND project_id = ? AND user_id = ?`)
                 .bind(params.materialId, params.id, userId)
                 .first<MaterialRow>();
             if (!row) throw new ApiError('not_found', 'That file does not exist.');
-            return { ...materialOf(row, project.language), text: row.text };
+            return { ...materialOf(row), text: row.text };
         },
         {
             params: MaterialPath,
@@ -220,6 +223,7 @@ export const materials = new Elysia({ name: 'materials' })
             if (!row) throw new ApiError('not_found', 'That file does not exist.');
             await env.MATERIALS.delete(row.r2_key);
             await env.DB.prepare('DELETE FROM material WHERE id = ?').bind(params.materialId).run();
+            await briefAgain(env.DB, userId, params.id);
             return { deleted: params.materialId };
         },
         { params: MaterialPath, response: { 200: Deleted, ...errors }, detail: { summary: 'Removes a file from a project' } },

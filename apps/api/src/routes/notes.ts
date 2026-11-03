@@ -51,6 +51,8 @@ interface CallRow {
     started_at: number;
     ended_at: number | null;
     transcript: string;
+    /** What the call was held in, as live recognition heard it; null before any words. */
+    language: string | null;
 }
 
 /** The final lines of a call, whether it is over (kept in D1) or still going (the Call Durable Object has them). */
@@ -146,7 +148,7 @@ export const notes = new Elysia({ name: 'notes' })
         '/calls/:id/notes',
         async ({ userId, params, body, status }) => {
             const call = await env.DB.prepare(
-                'SELECT id, project_id, started_at, ended_at, transcript FROM call WHERE id = ? AND user_id = ?',
+                'SELECT id, project_id, started_at, ended_at, transcript, language FROM call WHERE id = ? AND user_id = ?',
             )
                 .bind(params.id, userId)
                 .first<CallRow>();
@@ -174,7 +176,10 @@ export const notes = new Elysia({ name: 'notes' })
                 audio[side] = upload.object_key;
             }
 
-            const lexicon = noteLexicon(project.language);
+            // What the call was held in: as the server heard it live, else as the client did, else as the project's last call was. The second
+            // pass hears it again from the recording.
+            const language = call.language ?? body.language ?? project.language;
+            const lexicon = noteLexicon(language);
             const lines = inRecording(await liveLines(call), call, body.take, body.endedAt);
             const speaker = body.speaker.trim();
             const reads = audio.me !== undefined && audio.others !== undefined;
@@ -196,8 +201,8 @@ export const notes = new Elysia({ name: 'notes' })
                 ended_at: body.endedAt,
                 duration_seconds: Math.max(0, (body.endedAt - body.take) / 1000),
                 status: 'processing',
-                language: project.language,
-                spoken_language: body.language && body.language !== project.language ? body.language : null,
+                language,
+                spoken_language: null,
                 speaker,
                 meeting: body.meeting ? JSON.stringify(body.meeting) : null,
                 participants: JSON.stringify(participantsOf(lexicon, speaker, lines)),

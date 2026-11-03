@@ -15,8 +15,8 @@ import {
 e2eCase(
     'Cue for Windows: with “Record automatically” a meeting is recorded without a prompt, into Meetings (created for it).',
     async (cue) => {
-        // The talk Cue is bound to, in English; meetings go elsewhere.
-        await accountProject(cue, 'Talk', { language: 'en', materials: [fixture('materials', 'talk.md')] });
+        // The talk Cue is bound to; meetings go elsewhere.
+        await accountProject(cue, 'Talk', { materials: [fixture('materials', 'talk.md')] });
         cue.calendar([
             {
                 title: 'Product demo',
@@ -61,10 +61,12 @@ e2eCase(
         assertContains(notes, /^project: "Meetings"$/);
         assertContains(notes, /^attendees: \["Mia Chen"\]$/);
         assertContains(notes, /onboarding screens/);
-        // Meetings has the PC's language, but the call was recognized live in Talk's English: the second pass listens in English too.
+        // Nobody chose a language: the second pass hears it, and the note is in the one the call was held in, as Cue heard it live.
         const asked = cue.serviceRequests('deepgram-file');
         assertEq(asked.length, 2, 'both sides should be read again');
-        for (const request of asked) assertEq(request.query['language'], 'en', 'the second pass should use the live language');
+        for (const request of asked) assertEq(request.query['language'], 'multi', 'the second pass hears the language');
+        const account = await (await cue.backend()).accountOf(cue.email);
+        assertEq((await account.notes())[0]?.language, 'en', 'the language the call was held in');
         assertContains(cue.sessionLog(), /✅ Transcript improved/);
         assertEq(listDir(join(cue.projectPath('Talk'), 'Notes')).length, 0, 'the active project gets nothing');
     },

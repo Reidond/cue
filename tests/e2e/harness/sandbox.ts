@@ -60,7 +60,9 @@ export type ClaudeRequest =
     | 'summary-system'
     | 'summary-input'
     | 'names-system'
-    | 'names-input';
+    | 'names-input'
+    | 'brief-system'
+    | 'brief-input';
 
 /** What the cloud services' stand-ins noted, by kind (see harness/fake-providers.ts). */
 export interface ServiceRequests {

@@ -157,6 +157,17 @@ export const ErrorEvent = Type.Object({
     fatal: Type.Boolean(),
 });
 
+/**
+ * The language the call is held in changed (and, on connecting, what it is): heard from the audio, the language most of the words said lately are in.
+ * Answers and their labels (`Numbers`, `Source`) follow it; so does the transcript's wording in a note.
+ */
+export const LanguageEvent = Type.Object({
+    type: Type.Literal('language'),
+    seq: Seq,
+    language: Type.String({ description: 'A code: en, uk, pl, …' }),
+    name: Type.String({ description: 'In English: "Ukrainian"' }),
+});
+
 /** The call is over (ended with `POST …/end`, or timed out without a client). The server closes the socket after it. */
 export const EndedEvent = Type.Object({ type: Type.Literal('ended'), seq: Seq, lines: Type.Integer() });
 
@@ -171,6 +182,7 @@ export const CallEvent = Type.Union([
     AnswerDeltaEvent,
     AnswerDoneEvent,
     ErrorEvent,
+    LanguageEvent,
     EndedEvent,
 ]);
 export type CallEvent = Static<typeof CallEvent>;

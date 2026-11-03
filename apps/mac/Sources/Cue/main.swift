@@ -360,7 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions
     /// waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's
     /// menu), `settings general|account|calendar` (a Settings tab) and
-    /// `set PROJECT | occasion|language|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (the minus button of a material),
+    /// `set PROJECT | occasion|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (the minus button of a material),
     /// `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes),
     /// `signin` (Sign In on the sign-in screen) and `signout` (Sign Out in Settings › Account). Until someone is signed in, only these,
     /// `page`, `size` and the Settings ones do anything.
@@ -410,7 +410,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if sides.count == 3, var project = state.projects.project(named: sides[0]) {
                 switch sides[1] {
                 case "occasion": project.occasion = sides[2]
-                case "language": project.language = sides[2]
                 case "names": project.vocabulary = sides[2]
                 default: break
                 }

@@ -48,12 +48,12 @@ export async function extract(name: string, bytes: ArrayBuffer, contentType: str
     return result;
 }
 
-/** What a stored material says about prepared answers, in the project's language. */
-export function preparedIn(material: { name: string; text: string; qa: string | null }, language: string): Prepared[] {
+/** The prepared answers written in a stored material, with any language's labels. */
+export function preparedIn(material: { name: string; text: string; qa: string | null }): Prepared[] {
     const blocks: QaBlock[] = material.qa
         ? (JSON.parse(material.qa) as QaBlock[])
         : [{ source: material.name, lines: material.text.split(/\r?\n/).map(unmark) }];
-    return blocks.flatMap((block) => extractQA(block.lines, language, block.source));
+    return blocks.flatMap((block) => extractQA(block.lines, block.source));
 }
 
 /** "1,204 words · 3 prepared answers", "12 slides · 2 prepared answers". */

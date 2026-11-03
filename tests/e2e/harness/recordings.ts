@@ -236,12 +236,11 @@ export async function recordCall(
         me?: [number, number][];
         others?: [number, number][];
         live?: boolean;
-        language?: string;
         namesAndTerms?: string;
     } = {},
 ): Promise<RecordedCall> {
     const seconds = options.seconds ?? 12;
-    const call = await startCall(backend, email, { language: options.language, namesAndTerms: options.namesAndTerms });
+    const call = await startCall(backend, email, { namesAndTerms: options.namesAndTerms });
     const meWav = readFileSync(await bursts(cue.path('me.wav'), seconds, options.me ?? [[5, 6.5]]));
     const othersWav = readFileSync(
         await bursts(

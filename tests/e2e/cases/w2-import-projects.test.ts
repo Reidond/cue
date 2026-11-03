@@ -37,8 +37,7 @@ e2eCase(
             ['talk.md'],
         );
         const ukrainian = await account.project('Семінар');
-        assertEq(ukrainian.language, 'uk');
-        assertEq((await account.answers(ukrainian))[0]?.answer, 'Сорок вісім.', "read in the project's language");
+        assertEq((await account.answers(ukrainian))[0]?.answer, 'Сорок вісім.', "read with every language's labels");
         assertEq((await account.project('Loose')).materialCount, 0, 'a folder with no project.json is a project named after it');
         assertContains(join(interviews, 'project.json'), /"serverID": "/);
         assertContains(join(cue.projectPath('Loose'), 'project.json'), /"serverID": "/);

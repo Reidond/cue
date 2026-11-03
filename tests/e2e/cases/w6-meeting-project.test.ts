@@ -6,7 +6,7 @@ const lines = (text: string, name: string): number => text.split('\n').filter((l
 e2eCase(
     'Cue for Windows: the project picked for a recurring meeting on Upcoming is remembered for its next occurrence, after a relaunch; the others go to Meetings.',
     async (cue) => {
-        await accountProject(cue, 'Research', { language: 'en', materials: [fixture('materials', 'talk.md')] });
+        await accountProject(cue, 'Research', { materials: [fixture('materials', 'talk.md')] });
         cue.calendar([
             {
                 id: 'weekly-1',

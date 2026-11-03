@@ -24,7 +24,7 @@ e2eCase(
 
         await cue.defaults('speakerName', 'Андрій Тест');
         await cue.defaults('autoAnswer', false);
-        await cue.project('Дзвінок', { language: 'uk' });
+        await cue.project('Дзвінок');
         const call = await excerpt(recording, cue.path('call.wav'), 0, 120);
         assertBetween(await audioLength(call), 110, 121, 'two minutes of the call');
         await cue.launch({ CUE_PROJECT: 'Дзвінок', CUE_REHEARSE_RECORD: '1', CUE_REHEARSE_PARTICIPANT: call });

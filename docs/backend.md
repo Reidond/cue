@@ -88,7 +88,8 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
 | Route | Does |
 |---|---|
 | `GET /v1/me` | Account, plan, limits, usage this month |
-| `GET/POST/PATCH/DELETE /v1/projects[/:id]` | Projects and their settings (language, terms, notes on/off, …) |
+| `GET/POST/PATCH/DELETE /v1/projects[/:id]` | Projects, the brief Cue wrote from their materials, and the person's own occasion and terms over it |
+| `POST /v1/projects/:id/brief` | Writes the brief again (it is written by itself whenever a file is added or removed) |
 | `POST /v1/projects/:id/materials`, `DELETE …/:materialId` | Upload a file (to R2), its text extracted and its prepared answers parsed |
 | `POST /v1/calls` | Starts a call for a project (calendar event, speaker, Auto, questions optional) → `callId` |
 | `GET /v1/live?call=ID[&after=SEQ]` (WebSocket) | In: binary audio frames (a channel byte, `me` / `others`, then PCM16 mono 16 kHz) and commands (`config`, `ask`, `answerNow`, `prepare`). Out, each with a `seq`: `ready`, `status {part, state, detail}`, `speaking`, `transcript.partial/final {channel, speaker, text, start, end}`, `question {id, exchange, text, opener, requested, forced}`, `prepared {questionId, answer, source, score}`, `answer.delta/done {questionId}`, `error`, `ended`. `after` replays what a reconnecting client missed. At a fixed path rather than `/v1/calls/:id/live`: Elysia drops a route's 101 under `cf dev`, so the socket is `.mount`ed and has no params |
@@ -107,13 +108,14 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
 | `GET/PUT /v1/calendar/assignments` | Which calendar series records into which project |
 
 - **Call Durable Object** (`apps/api/src/call/`, PR 5): builds the system prompt from the project's materials, writes the prompt
-  cache and keeps it warm with alarms, holds the Deepgram live streams (Nova-3, `diarize` on the call side), runs the
+  cache and keeps it warm with alarms, holds the Deepgram live streams (Nova-3 multilingual, `diarize` on the call side: the language is heard, and
+  each question tells Claude which to answer in, so the cached prompt names none), runs the
   question spotting and judge on each final line (the waiting rules of the Mac's `QuestionDetector`: wait for the participant to finish, answer
   at once when the speaker starts talking, the room's microphone as `Room`), matches prepared answers, answers questions, records usage,
   saves the live transcript to D1 when the call ends, and ends a call nobody has come back to. A dropped client resumes: events carry a `seq` and the
   last thousand are replayed.
 - **Notes Workflow** (`apps/api/src/notes/`, Cloudflare Workflows, each step retried three times on its own): `transcript` (Deepgram's recorded-file
-  API, Nova-3, the project's language and terms, `diarize` on the call side, one utterance per line; the live transcript is kept when it
+  API, Nova-3 multilingual — the language the recording is in becomes the note's — the project's terms, `diarize` on the call side, one utterance per line; the live transcript is kept when it
   hears much less than live recognition did) → `speakers` (each call-side line goes to the voice heard most while it was said, numbered in
   the order the voices first speak; the port of `Speakers.label`) → `names` (Sonnet suggests who the unnamed people are) → `summary` (Sonnet
   writes it; the port of `Summarizer` with `prompts/summary.md`) → `store` (note ready, audio dropped when Keep audio is off). A step that fails for
@@ -147,8 +149,14 @@ A project's files are uploaded as the request body (`POST /v1/projects/:id/mater
 on the server: Markdown and text as they are, PowerPoint by the API itself (slides and speaker notes; the notes are where prepared answers live), and PDF, Word, spreadsheets,
 HTML and the other formats Workers AI `toMarkdown` takes by `toMarkdown`. The text (at most a million characters) is kept in D1 beside the file's R2 key; a file that
 can't be read is kept with the reason. `GET …/materials`, `GET …/materials/:id` (with the text), `DELETE …/materials/:id`, and `GET /v1/projects/:id/prepared-answers`, found in the
-text with the project's language's question and answer labels (the port of the app's parser), which PR 5's Call DO matches questions against. Each `toMarkdown` file is a `usage`
-row (`material_text`). Not yet: re-reading old files after the extractor improves, images, `.doc`/`.rtf`.
+text with every language's question and answer labels (the port of the app's parser), which PR 5's Call DO matches questions against. Each `toMarkdown` file is a `usage`
+row (`material_text`).
+
+The person adds files; Cue writes the rest from them, the **brief**: a Workflow (`BriefWorkflow`) waits a few seconds after the last file was added or removed,
+then Sonnet reads the materials (`prompts/brief.md`) and writes the occasion, the names and terms speech recognition should listen for, and answers to the questions
+people are most likely to ask (after the ones the files prepare themselves). The app shows the materials first and keeps the occasion and the names and terms under
+Advanced: the person's own words there replace the brief's, and clearing them goes back to it. A brief that fails keeps the one before and says why; one over the month's
+allowance is not bought. Its tokens are `materials_brief` usage. There is no language setting: the project's `language` is the one its last call was heard in. Not yet: re-reading old files after the extractor improves, images, `.doc`/`.rtf`.
 
 ### Admin API
 

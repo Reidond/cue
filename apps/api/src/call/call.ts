@@ -2,14 +2,14 @@ import { type CallCommand, CallCommand as CallCommandSchema, type CallEvent, typ
 import { Value } from '@sinclair/typebox/value';
 import { DurableObject, env } from 'cloudflare:workers';
 import { preparedIn } from '../materials/read.ts';
-import { termsOf } from '../projects.ts';
+import { briefAnswersOf, inUse, termsOf } from '../projects.ts';
 import { limitState, recordUsage } from '../usage.ts';
 import { describe } from './anthropic.ts';
 import { QuestionDetector } from './detector.ts';
 import { SpeechStream } from './deepgram.ts';
 import { QuestionJudge } from './judge.ts';
 import { answerPrompt, firstSentence, isEcho, judgePrompt, Matcher, type PreparedAnswer } from './knowledge.ts';
-import { lexiconFor, type CallLexicon } from './lexicon.ts';
+import { lexiconFor, STOP_WORDS, type CallLexicon } from './lexicon.ts';
 import { speechUsage, tokenUsage } from '../pricing.ts';
 import { ANSWER_MODEL, noTokens, SPEECH_MODEL, type Tokens, type UsageRow } from './models.ts';
 import { ClaudeSession, type SessionState } from './session.ts';
@@ -38,6 +38,9 @@ type Draft = CallEvent extends infer Event ? (Event extends { seq: number } ? Om
 interface Line {
     channel: Channel;
     text: string;
+    /** What most of its words were in, as Deepgram heard them; null when it did not say. */
+    language: string | null;
+    words: number;
     speaker: number | null;
     start: number;
     end: number;
@@ -62,6 +65,8 @@ interface Exchange {
 }
 
 const EVENT_LOG = 1000;
+/** The call's language is the one most of the words of this many last lines were in. */
+const LANGUAGE_LINES = 8;
 const seconds = (name: keyof Env, fallback: number) => {
     const value = Number(env[name]);
     return Number.isFinite(value) && value > 0 ? value * 1000 : fallback * 1000;
@@ -71,8 +76,9 @@ export class Call extends DurableObject<Env> {
     #meta: Meta | undefined;
     #ready: Promise<void> | undefined;
 
-    // What the call knows, built from the project when it begins.
+    // What the call knows, built from the project when it begins. The language is heard: at first the one the project's last call was held in.
     #language = 'en';
+    #languageEvent: CallEvent | undefined;
     #terms: string[] = [];
     #occasion = '';
     #texts: string[] = [];
@@ -194,6 +200,7 @@ export class Call extends DurableObject<Env> {
             for (const event of this.#log) if (event.seq > after) socket.send(JSON.stringify(event));
         }
         if (this.#limitEvent && after === undefined) socket.send(JSON.stringify(this.#limitEvent));
+        if (this.#languageEvent && after === undefined) socket.send(JSON.stringify(this.#languageEvent));
         if (meta.ended) {
             socket.close(1000, 'ended');
             return;
@@ -310,20 +317,35 @@ export class Call extends DurableObject<Env> {
 
     async #init(): Promise<void> {
         const meta = this.#meta!;
-        const project = await env.DB.prepare('SELECT name, occasion, language, names_and_terms FROM project WHERE id = ? AND user_id = ?')
+        const project = await env.DB.prepare(
+            'SELECT name, occasion, language, names_and_terms, brief_occasion, brief_terms, brief_answers FROM project WHERE id = ? AND user_id = ?',
+        )
             .bind(meta.projectId, meta.userId)
-            .first<{ name: string; occasion: string; language: string; names_and_terms: string }>();
-        this.#language = project?.language ?? 'en';
+            .first<{
+                name: string;
+                occasion: string;
+                language: string;
+                names_and_terms: string;
+                brief_occasion: string;
+                brief_terms: string;
+                brief_answers: string;
+            }>();
+        this.#language = (await this.ctx.storage.get<string>('language')) ?? project?.language ?? 'en';
         this.#lexicon = lexiconFor(this.#language);
         const { results } = await env.DB.prepare(
             'SELECT name, text, qa FROM material WHERE project_id = ? AND user_id = ? AND error IS NULL ORDER BY created_at, id',
         )
             .bind(meta.projectId, meta.userId)
             .all<{ name: string; text: string; qa: string | null }>();
-        const prepared: PreparedAnswer[] = results.flatMap((material) => preparedIn(material, this.#language));
-        this.#matcher = new Matcher(prepared, this.#lexicon.stopWords);
-        this.#terms = termsOf(project?.names_and_terms ?? '');
-        this.#occasion = project?.occasion ?? '';
+        // The answers written in the materials first, then the ones Cue prepared from them.
+        const prepared: PreparedAnswer[] = [
+            ...results.flatMap((material) => preparedIn(material)),
+            ...(project ? briefAnswersOf(project) : []).map(({ q, a, who, source }) => ({ q, a, who, source })),
+        ];
+        this.#matcher = new Matcher(prepared, STOP_WORDS);
+        const used = project ? inUse(project) : { occasion: '', namesAndTerms: '' };
+        this.#terms = termsOf(used.namesAndTerms);
+        this.#occasion = used.occasion;
         this.#texts = results.map((material) => material.text);
         const history = (await this.ctx.storage.get<{ role: 'user' | 'assistant'; content: string }[]>('history')) ?? [];
         this.#startPrompts(history);
@@ -339,7 +361,7 @@ export class Call extends DurableObject<Env> {
         this.#answers = new ClaudeSession(
             {
                 model: ANSWER_MODEL,
-                system: answerPrompt(who, this.#lexicon, this.#matcher.prepared, this.#texts),
+                system: answerPrompt(who, this.#matcher.prepared, this.#texts),
                 title: 'Claude Sonnet',
                 mode: 'stream',
                 maxTokens: 4096,
@@ -348,7 +370,7 @@ export class Call extends DurableObject<Env> {
             },
             history,
         );
-        this.#judge = new QuestionJudge(judgePrompt(who, this.#lexicon), {
+        this.#judge = new QuestionJudge(judgePrompt(who), {
             onState: (state, detail) => this.#status('judge', state, detail),
             onTokens: (model, _kind, tokens) => this.#count('question_judge', model, tokens),
         });
@@ -373,11 +395,12 @@ export class Call extends DurableObject<Env> {
             if (this.#streams[channel]) continue;
             const stream = new SpeechStream(
                 channel,
-                { language: this.#language, terms: this.#terms, diarize: channel === 'others' },
+                { terms: this.#terms, diarize: channel === 'others' },
                 {
                     onSpeaking: (active) => this.#speak(channel, active),
                     onPartial: (text, speaker, start, end) => this.#partialLine(channel, text, speaker, start, end),
-                    onFinal: (text, speaker, start, end) => this.#finalLine(channel, text, speaker, start, end),
+                    onFinal: (text, speaker, start, end, language, words) =>
+                        this.#finalLine(channel, text, speaker, start, end, language, words),
                     onState: (ok, detail) => {
                         this.#speechOk[channel] = ok;
                         this.#speechDetail[channel] = detail;
@@ -417,7 +440,15 @@ export class Call extends DurableObject<Env> {
         this.#emit({ type: 'transcript.partial', channel, speaker, text, start, end });
     }
 
-    #finalLine(channel: Channel, text: string, speaker: number | null, start: number, end: number): void {
+    #finalLine(
+        channel: Channel,
+        text: string,
+        speaker: number | null,
+        start: number,
+        end: number,
+        language: string | null,
+        words: number,
+    ): void {
         const meta = this.#meta;
         if (!meta) return;
         this.#partial[channel] = '';
@@ -427,9 +458,10 @@ export class Call extends DurableObject<Env> {
             if (channel === 'others') this.#detector.participantsStopped(ended);
             return;
         }
-        const line: Line = { channel, text, speaker, start, end, started, ended };
+        const line: Line = { channel, text, language, words, speaker, start, end, started, ended };
         this.#lines.push(line);
         if (this.#lines.length > 3000) this.#lines.splice(0, this.#lines.length - 3000);
+        this.#heard();
         this.#emit({ type: 'transcript.final', channel, speaker, text, start, end });
         void this.ctx.storage.put('lines', this.#lines);
         // Questions are only looked for while the client asks for them (Cue running: the overlay shows them).
@@ -443,7 +475,29 @@ export class Call extends DurableObject<Env> {
         const now = Date.now();
         return this.#lines
             .slice(-4)
-            .some((other) => other.channel === 'others' && now - other.ended < 15_000 && isEcho(text, other.text, this.#lexicon.stopWords));
+            .some((other) => other.channel === 'others' && now - other.ended < 15_000 && isEcho(text, other.text, STOP_WORDS));
+    }
+
+    /**
+     * The language the call is held in: the one most of the words of the last lines were in. When it changes, answers follow it (the next
+     * question says so to Claude), the client is told, and the call keeps it for its notes.
+     */
+    #heard(): void {
+        const counts = new Map<string, number>();
+        for (const line of this.#lines.slice(-LANGUAGE_LINES))
+            if (line.language) counts.set(line.language, (counts.get(line.language) ?? 0) + line.words);
+        let heard: string | undefined;
+        for (const [language, words] of counts) if (heard === undefined || words > counts.get(heard)!) heard = language;
+        if (heard === undefined || heard === this.#language) return;
+        this.#language = heard;
+        this.#lexicon = lexiconFor(heard);
+        this.#languageEvent = this.#emit({ type: 'language', language: heard, name: this.#lexicon.name });
+        void this.ctx.storage.put('language', heard);
+        if (this.#meta)
+            void env.DB.prepare('UPDATE call SET language = ? WHERE id = ?')
+                .bind(heard, this.#meta.callId)
+                .run()
+                .catch((error: unknown) => console.error('language', error));
     }
 
     // MARK: Questions
@@ -578,6 +632,8 @@ export class Call extends DurableObject<Env> {
             .join('\n');
         let message = context === '' ? '' : `Recent transcript (context):\n${context.slice(-2500)}\n\n`;
         message += `Question: [${this.#promptLabel('others')}] ${question}`;
+        const lexicon = this.#lexicon;
+        message += `\n\n(The conversation is in ${lexicon.name}: answer in ${lexicon.name}, with the labels "${lexicon.numbersLabel}:" and "${lexicon.sourceLabel}:".)`;
         if (others.length > 0) {
             message += `\n\n(Asked in one go with ${others.join(', ')}, which are answered separately: answer only this question.)`;
         }
@@ -678,13 +734,25 @@ export class Call extends DurableObject<Env> {
         this.#judge?.stop();
         await this.#flushUsage().catch((error: unknown) => console.error('usage', error));
         const endedAt = Date.now();
-        await env.DB.prepare('UPDATE call SET ended_at = ?, transcript = ? WHERE id = ?')
-            .bind(
+        const heard = this.#lines.some((line) => line.language !== null);
+        await env.DB.batch([
+            env.DB.prepare('UPDATE call SET ended_at = ?, transcript = ?, language = ? WHERE id = ?').bind(
                 endedAt,
                 JSON.stringify(this.#lines.map(({ channel, speaker, text, start, end }) => ({ channel, speaker, text, start, end }))),
+                heard ? this.#language : null,
                 meta.callId,
-            )
-            .run();
+            ),
+            // The project's next call starts out in the language this one was held in.
+            ...(heard
+                ? [
+                      env.DB.prepare('UPDATE project SET language = ? WHERE id = ? AND user_id = ?').bind(
+                          this.#language,
+                          meta.projectId,
+                          meta.userId,
+                      ),
+                  ]
+                : []),
+        ]);
         this.#emit({ type: 'ended', lines: this.#lines.length });
         for (const socket of this.#sockets) {
             try {

@@ -97,8 +97,8 @@ public sealed partial class LiveModel
                 return;
             }
         }
-        // The language live recognition used: the bound project's, which a meeting's project may not share.
-        var spoken = ActiveProject?.Language ?? SpokenLanguage.Default;
+        // The language the call was held in, as live recognition heard it (the server hears it again in the recording).
+        var spoken = SpokenLanguage;
         var id = Recordings.Save(transcript, target, meeting, audio, spoken, liveCall?.Id);
         if (id is not null && !automatically) state.Dashboard.OpenNote(id);
         if (id is not null && !automatically) state.OpenDashboard();

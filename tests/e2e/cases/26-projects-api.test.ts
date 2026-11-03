@@ -5,6 +5,7 @@ interface Project {
     name: string;
     occasion: string;
     language: string;
+    brief: { state: string };
     namesAndTerms: string;
     terms: string[];
     lastUsedAt: number | null;
@@ -26,7 +27,6 @@ e2eCase('Projects are kept in the account with all their settings, and each pers
     const created = await backend.call('POST', '/v1/projects', a, {
         body: {
             name: ' Bee talk ',
-            language: 'uk',
             occasion: 'A PhD pre-defense',
             namesAndTerms: 'Varroa, Kyiv; Linden.\nTetiana Kovalenko',
         },
@@ -34,8 +34,9 @@ e2eCase('Projects are kept in the account with all their settings, and each pers
     assertEq(created.status, 201, 'creating a project');
     const project = created.body as Project;
     assertEq(project.name, 'Bee talk', 'the name is trimmed');
-    assertEq(project.language, 'uk');
+    assertEq(project.language, 'en', 'no call heard yet: English until one is');
     assertEq(project.occasion, 'A PhD pre-defense');
+    assertEq(project.brief.state, 'none', 'no materials, nothing written from them');
     assertDeepEq(project.terms, ['Varroa', 'Kyiv', 'Linden', 'Tetiana Kovalenko'], 'names and terms, one by one');
     assertEq(project.materialCount, 0);
     assertEq((await backend.call('POST', '/v1/projects', a, { body: { name: '   ' } })).status, 400, 'a project needs a name');
@@ -48,7 +49,7 @@ e2eCase('Projects are kept in the account with all their settings, and each pers
     const listed = (await backend.call('GET', '/v1/projects', a)).body.projects as Project[];
     assertEq(listed.length, 1);
     assertEq(listed[0]?.name, 'Bees');
-    assertEq(listed[0]?.language, 'pl');
+    assertEq(listed[0]?.language, 'en', 'the language is heard, never set (an older client sending one changes nothing)');
     assertEq(listed[0]?.occasion, 'A PhD pre-defense', 'what was not changed stays');
     assertEq(listed[0]?.namesAndTerms, 'Varroa, Kyiv; Linden.\nTetiana Kovalenko');
     assertEq(listed[0]?.lastUsedAt ?? undefined, 1_700_000_000_000);

@@ -7,7 +7,8 @@ e2eCase(
     async (cue) => {
         await cue.defaults('speakerName', 'Андрій Тест');
         await cue.defaults('autoAnswer', false);
-        await cue.project('Звіт', { language: 'uk' });
+        // Nobody says the call is in Ukrainian: Cue hears it.
+        await cue.project('Звіт');
         const call = await dialogue(fixture('dialogues', 'deadline-uk.txt'), cue.path('call'));
         await cue.launch({
             CUE_PROJECT: 'Звіт',
@@ -19,6 +20,7 @@ e2eCase(
             CUE_REHEARSE_ME: call.wav('me'),
         });
         await cue.waitLog(/Notes ready/, 180);
+        assertContains(cue.sessionLog(), /🌐 Language heard: Ukrainian/, 'the language, heard live');
 
         const notes = cue.readyNotes();
         if (!basename(notes).endsWith(" – Звіт до п'ятниці.md")) fail(`the note should be named after the summary: ${basename(notes)}`);

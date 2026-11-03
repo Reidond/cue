@@ -20,7 +20,7 @@ e2eCase(
         assertEq(warmups('judge').length, 1, "and the judge's");
         assertEq(JSON.stringify(warmups('answer')[0]?.systemCache), JSON.stringify({ type: 'ephemeral', ttl: '1h' }), 'for an hour');
         assertEq(JSON.stringify(warmups('answer')[0]?.cache), undefined, 'the warm-up has no conversation to cache');
-        assertEq(early.filter((request) => request.maxTokens > 0).length, 0, 'no question had been asked yet');
+        assertEq(early.filter((request) => request.kind !== 'brief' && request.maxTokens > 0).length, 0, 'no question had been asked yet');
 
         // Quiet: it is warmed again, and again (a request in each tick that finds it two seconds old).
         await cue.waitFor('the caches to be warmed again while the call is quiet', 30, () => {

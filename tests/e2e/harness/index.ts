@@ -77,6 +77,7 @@ export {
     captureScreen,
     click,
     clickToast,
+    expand,
     ocr,
     press,
     pressKeys,

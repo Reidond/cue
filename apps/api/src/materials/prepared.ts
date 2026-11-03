@@ -1,4 +1,4 @@
-import { labelsFor } from './lexicon.ts';
+import { LABELS_ALL } from './lexicon.ts';
 
 // Finds the prepared questions and answers in a material's lines (ported from the Mac app's Materials.swift): a line with a question (or a
 // question label) followed by a line that starts with an answer label, e.g. `12. How were the weights chosen? (Smith)` / `Answer: …`
@@ -70,8 +70,8 @@ function cleanQuestion(line: string, questionLabels: string[]): { question: stri
     return { question: trim(text), who };
 }
 
-export function extractQA(rawLines: string[], language: string, source: string): Prepared[] {
-    const { questionLabels, answerLabels } = labelsFor(language);
+export function extractQA(rawLines: string[], source: string): Prepared[] {
+    const { questionLabels, answerLabels } = LABELS_ALL;
     const lines = rawLines.flatMap((line) => line.split(NEWLINES)).map(trim);
     const nextNonBlank = (index: number): number | undefined => {
         let next = index + 1;
