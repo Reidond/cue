@@ -86,13 +86,33 @@ export class Backend {
     readonly log: string;
     readonly state: string;
     #child: ChildProcess;
+    readonly #spawn: () => ChildProcess;
+    #stopping = false;
+    #restarts = 0;
 
-    private constructor(url: string, idp: FakeIdp, log: string, state: string, child: ChildProcess) {
+    private constructor(url: string, idp: FakeIdp, log: string, state: string, spawnChild: () => ChildProcess) {
         this.url = url;
         this.idp = idp;
         this.log = log;
         this.state = state;
-        this.#child = child;
+        this.#spawn = spawnChild;
+        this.#child = this.#launch();
+    }
+
+    /**
+     * Starts the backend's process. Vite+ now and then panics, as it starts or a little later as it bundles dependencies ("entered
+     * unreachable code", a bug of its own, seen on CI's Windows runners): the process is started again then, on the same port and state,
+     * twice at most.
+     */
+    #launch(): ChildProcess {
+        const before = statSync(this.log, { throwIfNoEntry: false })?.size ?? 0;
+        const child = this.#spawn();
+        child.once('exit', () => {
+            if (this.#stopping || this.#restarts >= 2 || !/Vite\+ panicked/.test(readFileSync(this.log, 'utf8').slice(before))) return;
+            this.#restarts++;
+            this.#child = this.#launch();
+        });
+        return child;
     }
 
     /** Starts the backend with `dir` as its folder (database, logs) and waits until it answers. */
@@ -131,8 +151,7 @@ export class Backend {
                 const built = await exec(CF[0], [CF[1], 'build', '--mode', 'development'], { env, cwd: API, timeout: 300 });
                 if (built.code !== 0) fail('building the backend failed', built.output);
             }
-            for (let attempt = 1; ; attempt++) {
-                const before = statSync(log, { throwIfNoEntry: false })?.size ?? 0;
+            const spawnChild = () => {
                 const out = openSync(log, 'a');
                 // Its own process group: `cf dev` leaves `cf-vite` and `workerd` behind when only it is killed.
                 const child = preview
@@ -145,18 +164,11 @@ export class Backend {
                       })
                     : spawn(CF[0], [CF[1], 'dev'], { cwd: API, env, stdio: ['ignore', out, out], detached: true, windowsHide: true });
                 closeSync(out);
-                backend = new Backend(url, idp, log, state, child);
-                try {
-                    await backend.#waitUntilReady();
-                    return backend;
-                } catch (error) {
-                    // Vite+ now and then panics as it starts ("entered unreachable code", a bug of its own, seen on CI's Windows runners): it is
-                    // started again, twice at most.
-                    const panicked = child.exitCode !== null && /Vite\+ panicked/.test(readFileSync(log, 'utf8').slice(before));
-                    if (!panicked || attempt >= 3) throw error;
-                    backend = undefined;
-                }
-            }
+                return child;
+            };
+            backend = new Backend(url, idp, log, state, spawnChild);
+            await backend.#waitUntilReady();
+            return backend;
         } catch (error) {
             if (backend) await backend.stop();
             else await idp.close();
@@ -168,6 +180,8 @@ export class Backend {
         // The first start of a checkout optimizes dependencies, which takes a while.
         const deadline = Date.now() + 180_000;
         for (;;) {
+            // A process that panicked is started again (#launch): a moment for that before giving up.
+            if (this.#child.exitCode !== null) await sleep(1);
             if (this.#child.exitCode !== null) fail('the backend exited while starting', readFileSync(this.log, 'utf8').slice(-3000));
             const ready = await fetch(`${this.url}/`).then(
                 (response) => response.ok,
@@ -180,6 +194,7 @@ export class Backend {
     }
 
     async stop(): Promise<void> {
+        this.#stopping = true;
         const child = this.#child;
         if (child.pid !== undefined && child.exitCode === null) {
             const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
