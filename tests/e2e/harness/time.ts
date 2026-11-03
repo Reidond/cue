@@ -25,6 +25,17 @@ function iso(date: Date): string {
     return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
+/**
+ * Waits for midnight to pass when it is less than `minutes` away, so a case that says which calls are today's and which tomorrow's isn't
+ * read after the day changed under it (tomorrow's call is then today's).
+ */
+export async function clearOfMidnight(minutes: number): Promise<void> {
+    const midnight = new Date();
+    midnight.setHours(24, 0, 0, 0);
+    const left = midnight.getTime() - Date.now();
+    if (left < minutes * 60_000) await sleep(left / 1000 + 5);
+}
+
 /** The time `minutes` from now (negative: ago). */
 export function minutesFromNow(minutes: number): string {
     return iso(new Date(Date.now() + minutes * 60_000));

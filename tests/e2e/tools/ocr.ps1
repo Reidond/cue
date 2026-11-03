@@ -1,9 +1,16 @@
 # Reads the text of an image with Windows' own OCR (Windows.Media.Ocr), the Windows twin of ocr.swift: one line per line of text, top to bottom.
 #
-#   powershell -File ocr.ps1 IMAGE.png
+#   powershell -File ocr.ps1 IMAGE.png [LEFT TOP WIDTH HEIGHT]
 #
+# With an area (in the image's pixels), only the words whose middle is in it: the text of one part of a window, not of all of it.
 # The recognizer is English's when Windows has it (Settings > Time & language > Language & region; `setup.ps1` adds it), else the user's own languages'.
-param([Parameter(Mandatory = $true)][string]$Path)
+param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [int]$Left = 0,
+    [int]$Top = 0,
+    [int]$Width = [int]::MaxValue,
+    [int]$Height = [int]::MaxValue
+)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -34,4 +41,12 @@ if (-not $engine) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserPr
 if (-not $engine) { throw 'Windows has no OCR language installed.' }
 
 $result = Wait-Operation ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
-foreach ($line in $result.Lines) { [Console]::Out.WriteLine($line.Text) }
+foreach ($line in $result.Lines) {
+    $words = @($line.Words | Where-Object {
+            $x = $_.BoundingRect.X + $_.BoundingRect.Width / 2
+            $y = $_.BoundingRect.Y + $_.BoundingRect.Height / 2
+            $x -ge $Left -and $x -lt $Left + [double]$Width -and $y -ge $Top -and $y -lt $Top + [double]$Height
+        } | ForEach-Object Text)
+    if ($words.Count -eq $line.Words.Count) { [Console]::Out.WriteLine($line.Text) }
+    elseif ($words.Count -gt 0) { [Console]::Out.WriteLine($words -join ' ') }
+}

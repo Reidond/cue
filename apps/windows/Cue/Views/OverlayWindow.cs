@@ -41,6 +41,11 @@ public sealed class OverlayWindow : Window
     private AppBarToggleButton transcriptToggle = new();
     private AppBarElementContainer? recordHost;
     private ProgressRing? workingRing;
+    private Grid status = new();
+    private readonly TextBlock statusRuler = new() { MaxLines = 1 };
+    // What Auto's label adds to the 40 px of its icon (measured once it shows; Segoe UI's "Auto" until then).
+    private double autoLabelWidth = 36;
+    private const double IconCommandWidth = 40;
 
     // What needs attention, the lists, the transcript.
     private InfoBar attention = new();
@@ -300,7 +305,10 @@ public sealed class OverlayWindow : Window
         button.Resources["ButtonBorderBrushPressed"] = clear;
     }
 
-    /// <summary>A switch of the command bar that, when on, shows in the accent colour (its icon and text) on a subtle plate, not a solid accent one: what the system's own bars do for a view that is on.</summary>
+    /// <summary>
+    /// A switch of the command bar that, when on, shows in the accent colour (its icon and text) on a subtle plate, not a solid accent one: what the system's own bars do for a
+    /// view that is on. The plate has no edge either (the accent button's elevation edge is a dark line under a plate this light).
+    /// </summary>
     private void Calm(AppBarToggleButton button)
     {
         button.Resources["AppBarToggleButtonBackgroundChecked"] = Theme("SubtleFillColorSecondaryBrush");
@@ -309,6 +317,29 @@ public sealed class OverlayWindow : Window
         button.Resources["AppBarToggleButtonForegroundChecked"] = Theme("AccentTextFillColorPrimaryBrush");
         button.Resources["AppBarToggleButtonForegroundCheckedPointerOver"] = Theme("AccentTextFillColorSecondaryBrush");
         button.Resources["AppBarToggleButtonForegroundCheckedPressed"] = Theme("AccentTextFillColorTertiaryBrush");
+        button.Resources["AppBarToggleButtonBorderBrushChecked"] = clear;
+        button.Resources["AppBarToggleButtonBorderBrushCheckedPointerOver"] = clear;
+        button.Resources["AppBarToggleButtonBorderBrushCheckedPressed"] = clear;
+    }
+
+    /// <summary>
+    /// Auto's label shows while the status has the room for it beside the label; when it hasn't (a narrow overlay, a long project name, the recording's timer), Auto is its
+    /// icon alone, as Transcript and Settings are, and its tooltip and UI Automation name still say what it is. Runs when the status's width or text changes.
+    /// </summary>
+    private void Fit()
+    {
+        if (status.ActualWidth <= 0) return;
+        statusRuler.Style = statusText.Style;
+        statusRuler.FontSize = statusText.FontSize;
+        statusRuler.Text = statusText.Text;
+        statusRuler.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        var wanted = statusMark.ActualWidth + status.ColumnSpacing + statusRuler.DesiredSize.Width;
+        var labelled = autoToggle.LabelPosition == CommandBarLabelPosition.Default;
+        // 8 px to spare before the label comes back, so the switch never flips back and forth at the edge.
+        var label = labelled ? status.ActualWidth >= wanted : status.ActualWidth - autoLabelWidth >= wanted + 8;
+        if (label == labelled) return;
+        autoToggle.LabelPosition = label ? CommandBarLabelPosition.Default : CommandBarLabelPosition.Collapsed;
+        autoToggle.Width = label ? double.NaN : IconCommandWidth;
     }
 
     private static Button Accent(string text, Action click)
@@ -385,7 +416,7 @@ public sealed class OverlayWindow : Window
         callIcon = Glyph("");
         micIcon.VerticalAlignment = callIcon.VerticalAlignment = VerticalAlignment.Center;
 
-        projectName = new TextBlock { Style = Ramp("BodyStrongTextBlockStyle"), VerticalAlignment = VerticalAlignment.Center };
+        projectName = new TextBlock { Style = Ramp("BodyStrongTextBlockStyle"), VerticalAlignment = VerticalAlignment.Center, MaxWidth = 160, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1 };
         var project = new DropDownButton { Content = projectName, Flyout = ProjectMenu(), VerticalAlignment = VerticalAlignment.Center };
         project.Resources["ButtonBackground"] = clear;
         project.Resources["ButtonBorderBrush"] = clear;
@@ -394,9 +425,16 @@ public sealed class OverlayWindow : Window
 
         statusMark = new ContentControl { VerticalAlignment = VerticalAlignment.Center };
         statusText = new TextBlock { Style = Ramp("BodyTextBlockStyle"), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1 };
-        var status = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center, Children = { statusMark, statusText } };
+        // A grid, not a stack: the text gets the width that is left, so a long status ends in "…" (its tooltip has all of it) instead of being cut off.
+        status = new Grid { ColumnSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        status.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        status.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(statusText, 1);
+        status.Children.Add(statusMark);
+        status.Children.Add(statusText);
+        status.SizeChanged += (_, _) => Fit();
 
-        var left = new Grid { ColumnSpacing = 12, Margin = new Thickness(12, 0, 0, 0), HorizontalAlignment = HorizontalAlignment.Stretch };
+        var left = new Grid { ColumnSpacing = 8, Margin = new Thickness(8, 0, 0, 0), HorizontalAlignment = HorizontalAlignment.Stretch };
         for (var i = 0; i < 4; i++) left.ColumnDefinitions.Add(new ColumnDefinition { Width = i == 3 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
         void Put(FrameworkElement element, int column)
         {
@@ -416,23 +454,31 @@ public sealed class OverlayWindow : Window
             IsDynamicOverflowEnabled = false,
             OverflowButtonVisibility = CommandBarOverflowButtonVisibility.Collapsed,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            // The bar's own default is the top: the project and the status would sit above the buttons' middle.
+            VerticalContentAlignment = VerticalAlignment.Center,
         };
-        recordHost = new AppBarElementContainer { Content = RecordSlot };
+        recordHost = new AppBarElementContainer { Content = RecordSlot, VerticalContentAlignment = VerticalAlignment.Center };
         commands.PrimaryCommands.Add(recordHost);
 
-        autoToggle = new AppBarToggleButton { Label = "Auto", Icon = new FontIcon { Glyph = "" }, LabelPosition = CommandBarLabelPosition.Default, IsChecked = state.Preferences.AutoAnswer };
+        autoToggle = new AppBarToggleButton { Label = "Auto", Icon = new FontIcon { Glyph = "" }, LabelPosition = CommandBarLabelPosition.Default, Width = double.NaN, IsChecked = state.Preferences.AutoAnswer };
         Calm(autoToggle);
         autoToggle.Click += (_, _) => state.Preferences.AutoAnswer = autoToggle.IsChecked == true;
+        autoToggle.SizeChanged += (_, _) =>
+        {
+            if (autoToggle.LabelPosition == CommandBarLabelPosition.Default) autoLabelWidth = autoToggle.ActualWidth - IconCommandWidth;
+        };
         ToolTipService.SetToolTip(autoToggle, "Answer questions as they're asked; off, they're listed for Prepare Answer (Win+Alt+A)");
+        AutomationProperties.SetName(autoToggle, "Auto");
         commands.PrimaryCommands.Add(autoToggle);
 
-        transcriptToggle = new AppBarToggleButton { Label = "Transcript", Icon = new FontIcon { Glyph = "" }, LabelPosition = CommandBarLabelPosition.Collapsed, IsChecked = state.Preferences.ShowTranscript };
+        // A command without a label is the system's 40 px square (the media controls' size), not the 68 px a command has by default.
+        transcriptToggle = new AppBarToggleButton { Label = "Transcript", Icon = new FontIcon { Glyph = "" }, LabelPosition = CommandBarLabelPosition.Collapsed, Width = IconCommandWidth, IsChecked = state.Preferences.ShowTranscript };
         Calm(transcriptToggle);
         transcriptToggle.Click += (_, _) => state.Preferences.ShowTranscript = transcriptToggle.IsChecked == true;
         ToolTipService.SetToolTip(transcriptToggle, "Show transcript");
         commands.PrimaryCommands.Add(transcriptToggle);
 
-        var settings = new AppBarButton { Label = "Settings", Icon = new FontIcon { Glyph = "" }, LabelPosition = CommandBarLabelPosition.Collapsed };
+        var settings = new AppBarButton { Label = "Settings", Icon = new FontIcon { Glyph = "" }, LabelPosition = CommandBarLabelPosition.Collapsed, Width = IconCommandWidth };
         settings.Click += (_, _) =>
         {
             state.Dashboard.ShowSettings();
@@ -570,11 +616,15 @@ public sealed class OverlayWindow : Window
         AutomationProperties.SetName(micIcon, $"Microphone: {live.Mic.Detail}");
         AutomationProperties.SetName(callIcon, $"Call audio: {live.Call.Detail}");
 
-        var name = live.ActiveProject?.Name ?? "No Project";
-        projectName.Text = name.Length > 22 ? name[..21] + "…" : name;
+        projectName.Text = live.ActiveProject?.Name ?? "No Project";
 
         var (text, kind) = live.Status;
-        statusText.Text = text;
+        if (statusText.Text != text)
+        {
+            statusText.Text = text;
+            ToolTipService.SetToolTip(status, text);
+            Fit();
+        }
         statusText.Foreground = kind == StatusKind.Ready ? Theme("TextFillColorSecondaryBrush") : Theme("TextFillColorPrimaryBrush");
         switch (kind)
         {

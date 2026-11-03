@@ -1,65 +1,24 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { E2E_ARCH, E2E_ROOT } from '../harness/config.ts';
-import { assertContains, assertEq, assertTextContains, e2eCase, exec, fail, listDir, needElevation } from '../harness/index.ts';
+import { E2E_ARCH } from '../harness/config.ts';
+import {
+    assertContains,
+    assertEq,
+    assertTextContains,
+    buildInstaller,
+    builtInstaller,
+    e2eCase,
+    fail,
+    INSTALLED,
+    installedVersion,
+    listedPrograms as listed,
+    msiexec as runMsiexec,
+    needElevation,
+    nextVersion,
+} from '../harness/index.ts';
 
-const WINDOWS = join(E2E_ROOT, '..', '..', 'apps', 'windows');
-const BUILD = join(WINDOWS, 'scripts', 'build.ps1');
-const INSTALLED = join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'Cue');
 const SHORTCUT = join(process.env['ProgramData'] ?? 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Cue.lnk');
 const ARCH = E2E_ARCH;
-
-/** The installed Cue.exe's file version, or undefined when there is none. */
-async function installedVersion(): Promise<string | undefined> {
-    const exe = join(INSTALLED, 'Cue.exe');
-    if (!existsSync(exe)) return undefined;
-    const read = await exec('powershell.exe', ['-NoProfile', '-Command', `(Get-Item '${exe}').VersionInfo.FileVersion`]);
-    return read.stdout.trim();
-}
-
-/** How many Cue entries Windows' list of installed programs has (Settings › Apps). */
-async function listed(): Promise<number> {
-    const read = await exec('powershell.exe', [
-        '-NoProfile',
-        '-Command',
-        "@(Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' | Where-Object { $_.DisplayName -eq 'Cue' }).Count",
-    ]);
-    return Number(read.stdout.trim());
-}
-
-/** `build.ps1 -Msi -Quick` for `version` into `folder` (an installer only this case installs: stored, not compressed): its path. */
-async function buildInstaller(version: string, folder: string): Promise<string> {
-    const built = await exec(
-        'powershell.exe',
-        [
-            '-NoProfile',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-File',
-            BUILD,
-            '-Arch',
-            ARCH,
-            '-Version',
-            version,
-            '-Msi',
-            '-Quick',
-            '-Output',
-            folder,
-        ],
-        { timeout: 900 },
-    );
-    const made = join(folder, `Cue-${version}-${ARCH}.msi`);
-    if (built.code !== 0 || !existsSync(made)) fail(`building Cue ${version} failed`, built.output);
-    return made;
-}
-
-/** The installer the build made already (CI's build step, `build.ps1 -Msi`): the older of the two this case needs. */
-function builtInstaller(): { version: string; path: string } | undefined {
-    const found = listDir(join(WINDOWS, 'build'))
-        .map((name) => ({ name, version: new RegExp(`^Cue-(\\d+\\.\\d+\\.\\d+)-${ARCH}\\.msi$`).exec(name)?.[1] }))
-        .find((msi) => msi.version !== undefined);
-    return found?.version === undefined ? undefined : { version: found.version, path: join(WINDOWS, 'build', found.name) };
-}
 
 e2eCase(
     'Cue for Windows: the MSI installs it per machine with a Start menu shortcut, the installed Cue signs in, a newer MSI upgrades it in place, an older one is refused, and uninstalling removes it.',
@@ -75,14 +34,10 @@ e2eCase(
         const older = made?.version ?? '2.0.90';
         if (made) copyFileSync(made.path, msi(older));
         else copyFileSync(await buildInstaller(older, cue.path('build', older)), msi(older));
-        const [major, minor, patch] = older.split('.').map(Number);
-        const newer = `${major}.${minor}.${(patch ?? 0) + 1}`;
+        const newer = nextVersion(older);
         copyFileSync(await buildInstaller(newer, cue.path('build', newer)), msi(newer));
         rmSync(cue.path('build'), { recursive: true, force: true });
-        const msiexec = async (name: string, ...args: string[]) => {
-            const ran = await exec('msiexec.exe', [...args, '/qn', '/norestart', '/l*v', cue.path(`${name}.log`)], { timeout: 600 });
-            return ran.code;
-        };
+        const msiexec = (name: string, ...args: string[]) => runMsiexec(cue.path(`${name}.log`), ...args);
 
         try {
             // Install.

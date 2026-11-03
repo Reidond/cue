@@ -138,6 +138,8 @@ internal sealed class NotesView : UserControl
         Content = new Grid { Children = { notes, empty } };
         Loaded += (_, _) =>
         {
+            // Taken out and put back at once, the page is told Loaded before the Unloaded it had: subscribed once, and that Unloaded is ignored below.
+            state.Recordings.Changed -= OnChanged;
             state.Recordings.Changed += OnChanged;
             state.Dashboard.PropertyChanged += OnLanguageChanged;
             state.Preferences.PropertyChanged += OnLanguageChanged;
@@ -146,6 +148,8 @@ internal sealed class NotesView : UserControl
         };
         Unloaded += (_, _) =>
         {
+            // Back on the page already: unsubscribing now left it showing a note's first steps while the note was made.
+            if (IsLoaded) return;
             state.Recordings.Changed -= OnChanged;
             state.Dashboard.PropertyChanged -= OnLanguageChanged;
             state.Preferences.PropertyChanged -= OnLanguageChanged;
@@ -306,11 +310,12 @@ internal sealed class NotesView : UserControl
     {
         if (file is null)
         {
-            detailHost.Child = noSelection;
+            if (!ReferenceEquals(detailHost.Child, noSelection)) detailHost.Child = noSelection;
             detailShown = "";
             return;
         }
-        detailHost.Child = detail;
+        // Set again, the note's tools would be taken out and put back, and the player bar could stop following the player (see PlayerBar).
+        if (!ReferenceEquals(detailHost.Child, detail)) detailHost.Child = detail;
         var processing = state.Recordings.IsProcessing(file.Id);
         var steps = state.Recordings.Steps(file.Id);
         var info = new FileInfo(file.Path);
@@ -635,12 +640,17 @@ internal sealed class PlayerBar : UserControl
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
         };
+        // As the notes page's own: subscribed once, and a late Unloaded (the bar back on the page already) is ignored.
         Loaded += (_, _) =>
         {
+            player.Changed -= Redraw;
             player.Changed += Redraw;
             Redraw();
         };
-        Unloaded += (_, _) => player.Changed -= Redraw;
+        Unloaded += (_, _) =>
+        {
+            if (!IsLoaded) player.Changed -= Redraw;
+        };
     }
 
     /// <summary>1×, 1.5× (1,5× where that's the decimal separator), 2×.</summary>

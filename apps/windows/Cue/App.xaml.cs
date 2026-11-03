@@ -37,6 +37,12 @@ public partial class App : Application
             Exit();
             return;
         }
+        // An update downloaded earlier and not installed yet (Cue wasn't quit since) installs now, before any window; Cue opens again once it is in.
+        if (State.Updates.InstallDownloaded())
+        {
+            Exit();
+            return;
+        }
         if (Env.Background) Native.OptOutOfThrottling();
         window = new MainWindow(State);
         overlay = new OverlayWindow(State);

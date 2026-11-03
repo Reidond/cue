@@ -135,6 +135,8 @@ final class AppState: ObservableObject {
     let calendar: MeetingCalendar
     /// The Cue API and who is signed in: Cue works only while someone is.
     let api: CueAPI
+    /// New versions of Cue, from its GitHub releases.
+    let updater: Updater
     private(set) lazy var meetings = MeetingMonitor(state: self)
 
     /// The project Cue answers from and records into.
@@ -259,6 +261,7 @@ final class AppState: ObservableObject {
         player = NotePlayer(log: log, api: api)
         AudioRecorder.removeStaleWorkingFolders()
         calendar = MeetingCalendar(preferences: preferences)
+        updater = Updater(log: log, preferences: preferences)
         // The projects are the account's: once someone is signed in they are loaded (and the ones found in the library imported), and one is chosen.
         api.onSignedIn = { [weak self] in
             await self?.projects.syncWithAccount()
@@ -279,7 +282,7 @@ final class AppState: ObservableObject {
         if let activeProject { log.write("📁 Project: \(activeProject.name)") }
     }
 
-    /// The language the live call is held in, as the server heard it (`language` events); nil until it changed from the project's.
+    /// The language the live call is held in, as the server says (`language` events: the one it starts out in, then the one heard).
     @Published private(set) var heardLanguage: String?
 
     /// The language data of what is spoken: the live call's, else the language the project's last call was held in.
@@ -333,6 +336,7 @@ final class AppState: ObservableObject {
         call = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
         observeSettings()
         meetings.start()
+        updater.start()
 
         meterTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             Task { @MainActor in
@@ -722,7 +726,8 @@ final class AppState: ObservableObject {
         case "language":
             guard let code = event.language, code != heardLanguage else { return }
             heardLanguage = code
-            log.write("🌐 Language heard: \(event.name ?? code)")
+            // The language the call starts out in is said at once, as not heard yet: only a heard one is news.
+            if event.heard != false { log.write("🌐 Language heard: \(event.name ?? code)") }
         case "error":
             if event.code == "limit_reached" {
                 reachedLimit(event.message ?? "You've reached your Cue plan's limit for this month.")

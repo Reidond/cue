@@ -5,13 +5,21 @@ import { E2E_BIN, E2E_ROOT, IS_WINDOWS } from './config.ts';
 import { exec, type Ran } from './process.ts';
 import { fail, print } from './results.ts';
 
-/** Runs tools/ocr.swift on an image (tools/ocr.ps1 on Windows). */
-export async function readImage(png: string): Promise<Ran> {
-    if (!IS_WINDOWS) return exec(join(E2E_BIN, 'ocr'), [png]);
+/** Runs tools/ocr.swift on an image (tools/ocr.ps1 on Windows, which can read one area of it alone). */
+export async function readImage(png: string, area?: Area): Promise<Ran> {
+    if (!IS_WINDOWS) return area ? fail('reading one area of an image is for Windows') : exec(join(E2E_BIN, 'ocr'), [png]);
     // Windows' OCR holds the file while it reads, and Cue replaces its snapshot every 2 s: read a copy.
     const copy = `${png}.ocr.png`;
     copyFileSync(png, copy);
-    return powershell('ocr.ps1', copy);
+    return powershell('ocr.ps1', copy, ...(area ? [area.left, area.top, area.width, area.height].map(String) : []));
+}
+
+/** A rectangle in an image's or the screen's own pixels. */
+export interface Area {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
 }
 
 /** Runs one of the PowerShell tools in tests/e2e/tools. */
@@ -48,6 +56,25 @@ export async function windowText(pid: number): Promise<string> {
     const read = await powershell('uia.ps1', String(pid));
     if (read.code !== 0) fail(`uia.ps1 ${pid} failed`, read.output);
     return read.stdout.replaceAll('\r\n', '\n');
+}
+
+/** A control of a window as UI Automation lays it out (see `controlsOf`). */
+export interface Control {
+    name: string;
+    /** UI Automation's control type: `Button`, `Text`, … */
+    type: string;
+    /** In the screen's own pixels. */
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+}
+
+/** Where the named controls of the program's window with this title are (tools/uia-bounds.ps1), in the order the tree has them. */
+export async function controlsOf(pid: number, title: string): Promise<Control[]> {
+    const read = await powershell('uia-bounds.ps1', String(pid), title);
+    if (read.code !== 0) fail(`uia-bounds.ps1 ${pid} failed`, read.output);
+    return JSON.parse(read.stdout) as Control[];
 }
 
 /**
@@ -111,7 +138,7 @@ export async function typeText(text: string): Promise<void> {
 }
 
 /** A picture of part of the screen as a screenshot or a screen share would show it (tools/capture.ps1), at the screen's own pixels. */
-export async function captureScreen(area: { left: number; top: number; width: number; height: number }, out: string): Promise<void> {
+export async function captureScreen(area: Area, out: string): Promise<void> {
     const ran = await powershell('capture.ps1', ...[area.left, area.top, area.width, area.height].map(String), out);
     if (ran.code !== 0) fail('capture.ps1 failed', ran.output);
 }
@@ -150,9 +177,9 @@ export async function appWindows(pid: number): Promise<AppWindows> {
     return JSON.parse(read.stdout) as AppWindows;
 }
 
-/** The text Vision reads in an image, one line per text block, top to bottom. */
-export async function ocr(png: string): Promise<string> {
-    const read = await readImage(png);
+/** The text Vision reads in an image, one line per text block, top to bottom; on Windows, with `area`, only the words in that part of it. */
+export async function ocr(png: string, area?: Area): Promise<string> {
+    const read = await readImage(png, area);
     if (read.stderr) print(read.stderr);
     return read.stdout;
 }

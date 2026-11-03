@@ -70,6 +70,9 @@ public sealed class CallEvent
     /// <summary>A `question` event's, with two languages chosen: the other one, and the question in it.</summary>
     public QuestionTranslation? Translation { get; init; }
 
+    /// <summary>`language`: heard in this call; false for the one it starts out in.</summary>
+    public bool? Heard { get; init; }
+
     /// <summary>The audio source the event is about.</summary>
     public Side? Lane => Sides.Parse(Channel);
 

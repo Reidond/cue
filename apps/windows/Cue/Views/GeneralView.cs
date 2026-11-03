@@ -6,8 +6,8 @@ using Microsoft.UI.Xaml.Input;
 namespace Cue;
 
 /// <summary>
-/// Settings › General: who the speaker is, the languages Cue is read in (the account's) and how two of them are laid out (this PC's), and what the
-/// notes of a recorded call get. The rest (answers, the library) comes with the slices that have them.
+/// Settings › General: who the speaker is, the languages Cue is read in (the account's) and how two of them are laid out (this PC's), what the
+/// notes of a recorded call get, and updates. The rest (answers, the library) comes with the slices that have them.
 /// </summary>
 public sealed class GeneralView : UserControl
 {
@@ -15,6 +15,7 @@ public sealed class GeneralView : UserControl
     private readonly StackPanel languages = new() { Spacing = 8 };
     private string languagesShown = "";
     private bool choosing;
+    private readonly StackPanel updates = new() { Spacing = 8 };
 
     public GeneralView(AppState state)
     {
@@ -50,12 +51,51 @@ public sealed class GeneralView : UserControl
                 Ui.Header("Notes"),
                 notes,
                 Ui.Caption("Win+Alt+C records a call into the current project. Let people know when you record — consent rules vary by place."),
+                Ui.Header("Updates"),
+                updates,
             },
         };
+        // Drawn at once, and again as updating goes on.
+        state.Updates.PropertyChanged += OnUpdatesChanged;
+        RenderUpdates();
+        Unloaded += (_, _) => state.Updates.PropertyChanged -= OnUpdatesChanged;
         RenderLanguages();
         // The account's languages are read at sign-in and now and then (another PC may change them): the pickers follow.
         Loaded += (_, _) => state.Api.PropertyChanged += OnAccountChanged;
         Unloaded += (_, _) => state.Api.PropertyChanged -= OnAccountChanged;
+    }
+
+    private void OnUpdatesChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => RenderUpdates();
+
+    /// <summary>The version, and for a Cue that updates itself: the switch, where updating is, and Check Now or Restart to Update.</summary>
+    private void RenderUpdates()
+    {
+        updates.Children.Clear();
+        var updater = state.Updates;
+        if (updater.Feed is null)
+        {
+            updates.Children.Add(Ui.Card(Ui.Row("Version", updater.Version)));
+            return;
+        }
+        var preferences = state.Preferences;
+        var action = new Button { Content = updater.Phase == UpdatePhase.Ready ? "Restart to Update" : "Check Now" };
+        action.IsEnabled = updater.Phase is not (UpdatePhase.Checking or UpdatePhase.Downloading);
+        action.Click += async (_, _) =>
+        {
+            if (updater.Phase == UpdatePhase.Ready) updater.Restart();
+            else await updater.Check();
+        };
+        var status = new Grid { ColumnSpacing = 16 };
+        status.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        status.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        status.Children.Add(new TextBlock { Text = updater.Status, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
+        Grid.SetColumn(action, 1);
+        status.Children.Add(action);
+        updates.Children.Add(Ui.Card(
+            Ui.Row("Version", updater.Version),
+            Ui.Padded(Toggle("Update Cue automatically", null, preferences.AutomaticUpdates, on => preferences.AutomaticUpdates = on)),
+            Ui.Padded(status)));
+        updates.Children.Add(Ui.Caption("Cue looks for a new version when it opens and every few hours, and installs it when Cue restarts, quits or next opens. Windows asks for permission, as Cue is installed for everyone on this PC."));
     }
 
     private void OnAccountChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

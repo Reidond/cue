@@ -10,7 +10,7 @@ enum SettingsTab: String, CaseIterable {
     /// Each pane's window size: the window takes it when its tab is picked.
     var size: CGSize {
         switch self {
-        case .general: CGSize(width: 500, height: 700)
+        case .general: CGSize(width: 500, height: 780)
         case .account: CGSize(width: 500, height: 600)
         case .calendar: CGSize(width: 500, height: 440)
         }
@@ -24,13 +24,14 @@ enum SettingsTab: String, CaseIterable {
     }
 }
 
-/// General: who the speaker is, the languages Cue is read in, how answers show, what notes keep, where the library is.
+/// General: who the speaker is, the languages Cue is read in, how answers show, what notes keep, where the library is, and updates.
 struct GeneralSettings: View {
     @ObservedObject var preferences: Preferences
     /// The account, which keeps the languages.
     @ObservedObject var api: CueAPI
     /// Saves the languages to the account (`AppState.setLanguages`).
     let setLanguages: ([String]) -> Void
+    @ObservedObject var updater: Updater
 
     var body: some View {
         Form {
@@ -103,6 +104,28 @@ struct GeneralSettings: View {
                 Text("Library")
             } footer: {
                 Text("One folder per project, with its materials and notes. Choosing another folder doesn’t move the projects already there.")
+            }
+
+            // Only in a Cue that updates itself (a release build): a local or test build's General pane stays as it was.
+            if updater.feed != nil {
+                Section {
+                    LabeledContent("Version", value: updater.version)
+                    Toggle("Update Cue automatically", isOn: $preferences.automaticUpdates)
+                    LabeledContent {
+                        if case .installed = updater.phase {
+                            Button("Restart to Update", action: updater.restart)
+                        } else {
+                            Button("Check Now") { Task { await updater.check() } }
+                                .disabled(updater.busy)
+                        }
+                    } label: {
+                        Text(updater.status)
+                    }
+                } header: {
+                    Text("Updates")
+                } footer: {
+                    Text("Cue looks for a new version when it opens and every few hours, and puts it in place of this one. macOS asks again for the microphone and call audio afterwards.")
+                }
             }
         }
         .formStyle(.grouped)

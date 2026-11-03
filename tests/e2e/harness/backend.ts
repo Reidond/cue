@@ -262,7 +262,8 @@ export class Backend {
 
     /**
      * `cf d1 raw` on the backend's database, which the running backend has open too: SQLite answers `SQLITE_BUSY` when both write at once (the app
-     * reading the account every second, say), so a busy database is tried again.
+     * reading the account every second, say), so a busy database is tried again. So is a 500 from Cloudflare's API, which `cf` asks even for a
+     * local database (`Failed to get session commit token`, seen on CI's Windows runners), a little longer each time.
      */
     async #d1(sql: string): Promise<Ran> {
         let ran: Ran;
@@ -272,8 +273,10 @@ export class Backend {
                 cwd: API,
                 timeout: 60,
             });
-            if (ran.code === 0 || attempt >= 8 || !/SQLITE_BUSY|database is locked/i.test(ran.output)) return ran;
-            await sleep(0.5);
+            if (ran.code === 0 || attempt >= 8) return ran;
+            if (/SQLITE_BUSY|database is locked/i.test(ran.output)) await sleep(0.5);
+            else if (/session commit token|500 Internal Server Error/i.test(ran.output)) await sleep(2 * (attempt + 1));
+            else return ran;
         }
     }
 

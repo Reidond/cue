@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var recordingObserver: Any?
     private var cueObserver: Any?
     private var layoutObserver: Any?
+    private var updateObserver: Any?
     private var statusItem: NSStatusItem!
     private var signalSources: [DispatchSourceSignal] = []
     private var controlLinesDone = 0
@@ -145,7 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let setLanguages: ([String]) -> Void = { codes in Task { await state.setLanguages(codes) } }
             for pane in SettingsTab.allCases {
                 let content: AnyView = switch pane {
-                case .general: AnyView(GeneralSettings(preferences: preferences, api: state.api, setLanguages: setLanguages))
+                case .general: AnyView(GeneralSettings(preferences: preferences, api: state.api, setLanguages: setLanguages, updater: state.updater))
                 case .account: AnyView(AccountSettings(api: state.api))
                 case .calendar: AnyView(CalendarSettings(preferences: preferences, calendar: state.calendar))
                 }
@@ -264,8 +265,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(withTitle: "Settings…", action: #selector(menuSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Restart Live Call", action: #selector(menuRestart), keyEquivalent: "").target = self
         menu.addItem(.separator())
+        // Shown once a new Cue is installed in place of this one.
+        let update = menu.addItem(withTitle: "Restart to Update Cue", action: #selector(menuRestartToUpdate), keyEquivalent: "")
+        update.target = self
         menu.addItem(withTitle: "Quit Cue", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
+        updateObserver = state.updater.$phase.sink { phase in
+            if case .installed = phase { update.isHidden = false } else { update.isHidden = true }
+        }
 
         // The menu bar icon turns red while recording, even with the overlay hidden.
         recordingObserver = state.recorder.$startedAt.sink { [weak self] started in
@@ -279,6 +286,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func menuSettings() { showSettings() }
     @objc private func menuRestart() { state.restartCall() }
     @objc private func menuRecord() { state.toggleRecording(.menuBar) }
+    @objc private func menuRestartToUpdate() { state.updater.restart() }
+    /// Check for Updates…: Settings › General shows how it goes.
+    @objc private func menuCheckForUpdates() {
+        showSettings(.general)
+        Task { await state.updater.check() }
+    }
     @objc private func menuDashboard() { showDashboard() }
     @objc private func menuNewProject() {
         showDashboard()
@@ -297,6 +310,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let app = submenu("Cue")
         app.addItem(withTitle: "About Cue", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        if state.updater.feed != nil {
+            app.addItem(withTitle: "Check for Updates…", action: #selector(menuCheckForUpdates), keyEquivalent: "").target = self
+        }
         app.addItem(.separator())
         app.addItem(withTitle: "Settings…", action: #selector(menuSettings), keyEquivalent: ",").target = self
         app.addItem(.separator())
@@ -383,8 +399,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// `languages CODE CODE` (Settings › General › Languages: the languages Cue is read in, in order, saved to the account; `languages` alone
     /// clears them), `answer-layout subtitles|mirror|focus` and `note-layout switch|both` (the Answers and Notes pickers there, shown with two
     /// languages), `note-language CODE` (the language switch of the open note),
-    /// `signin` (Sign In on the sign-in screen) and `signout` (Sign Out in Settings › Account). Until someone is signed in, only these,
-    /// `page`, `size` and the Settings ones do anything.
+    /// `signin` (Sign In on the sign-in screen), `signout` (Sign Out in Settings › Account) and `update check|restart` (Check for Updates…,
+    /// Restart to Update). Until someone is signed in, only these, `page`, `size` and the Settings ones do anything.
     private func startControl(from path: String) {
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -410,7 +426,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func control(_ line: String) async {
         let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
         let command = parts.first ?? "", argument = parts.count > 1 ? parts[1] : ""
-        if !state.api.isSignedIn, !["signin", "signout", "settings", "page", "size"].contains(command) {
+        if !state.api.isSignedIn, !["signin", "signout", "settings", "page", "size", "update"].contains(command) {
             state.log.write("⚠︎ Sign in to Cue first (\(command) ignored)")
             return
         }
@@ -419,6 +435,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Task { await self.state.api.signIn() }
         case "signout":
             Task { await self.state.api.signOut() }
+        case "update":
+            if argument == "restart" { state.updater.restart() } else { await state.updater.check() }
         case "new":
             showDashboard()
             if let project = try? await state.projects.create(named: argument) { dashboard.open(project) }

@@ -205,7 +205,17 @@ export class Call extends DurableObject<Env> {
             for (const event of this.#log) if (event.seq > after) socket.send(JSON.stringify(event));
         }
         if (this.#limitEvent && after === undefined) socket.send(JSON.stringify(this.#limitEvent));
-        if (this.#languageEvent && after === undefined) socket.send(JSON.stringify(this.#languageEvent));
+        // The language too, heard or not yet: a client starts out with its own idea of it (the project's, as it last read it), which may be another's.
+        if (after === undefined) {
+            const language: CallEvent = this.#languageEvent ?? {
+                type: 'language',
+                seq: this.#seq,
+                language: this.#language,
+                name: this.#lexicon.name,
+                heard: false,
+            };
+            socket.send(JSON.stringify(language));
+        }
         if (meta.ended) {
             socket.close(1000, 'ended');
             return;
@@ -501,7 +511,7 @@ export class Call extends DurableObject<Env> {
         if (heard === undefined || heard === this.#language) return;
         this.#language = heard;
         this.#lexicon = lexiconFor(heard);
-        this.#languageEvent = this.#emit({ type: 'language', language: heard, name: this.#lexicon.name });
+        this.#languageEvent = this.#emit({ type: 'language', language: heard, name: this.#lexicon.name, heard: true });
         void this.ctx.storage.put('language', heard);
         if (this.#meta)
             void env.DB.prepare('UPDATE call SET language = ? WHERE id = ?')
