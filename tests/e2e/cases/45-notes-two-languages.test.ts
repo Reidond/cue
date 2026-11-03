@@ -117,8 +117,8 @@ e2eCase(
         if (countLines(page, /Скільки вуликів ви дослідили/) === 0) cue.control('size 1060 1400');
         await cue.waitFor('the transcript with its translations', 30, () => cue.dashboardShows(/Скільки вуликів ви дослідили/));
         assertContains(page, /Translations/, 'the switch by the transcript’s heading');
+        // The first turn and its translation (a small display shows no more; the file above has every turn).
         assertContains(page, /How many hives did you study/);
-        assertContains(page, /We studied 48 hives on six rooftops/);
 
         // The other language: the translated title and summary, and each line's translation first with the line as it was said under it.
         let asked = Date.now();
