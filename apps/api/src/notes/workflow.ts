@@ -2,7 +2,8 @@ import { env, WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from '
 import { NonRetryableError } from 'cloudflare:workflows';
 import { describe, send, stream } from '../call/anthropic.ts';
 import { lexiconFor, STOP_WORDS } from '../call/lexicon.ts';
-import { ANSWER_MODEL, noThinking, type Tokens, type UsageRow } from '../call/models.ts';
+import { ANSWER_MODEL, JUDGE_MODEL, noThinking, type Tokens, type UsageRow } from '../call/models.ts';
+import { languagesOf, nameOf, pairFor } from '../languages.ts';
 import { speechUsage, tokenUsage } from '../pricing.ts';
 import { inUse, termsOf } from '../projects.ts';
 import { limitState, recordUsage } from '../usage.ts';
@@ -12,6 +13,7 @@ import { janitor } from './janitor.ts';
 import { noteLexicon } from './lexicon.ts';
 import { addEvent, type AudioKeys, linesOf, loadNote, type NoteRow, parse, setStep, type StepId, voicesOf } from './store.ts';
 import { type Meeting, namesPrompt, type PromptContext, summaryPrompt } from './summary.ts';
+import { linesMessage, linesOf as translatedLines, summaryMessage, summaryOf, TRANSLATE_BATCH, translatePrompt } from './translate.ts';
 import {
     droppingTranscriptRemarks,
     labelsOf,
@@ -64,6 +66,7 @@ const TEXT: Record<StepId, StepText> = {
     },
     names: { start: null, failed: (why) => `⚠︎ Couldn't suggest names: ${why}`, kept: '' },
     summary: { start: '✍️ Writing summary…', failed: (why) => `⚠︎ Summary failed: ${why}`, kept: '' },
+    translate: { start: '🌐 Translating notes…', failed: (why) => `⚠︎ Couldn't translate the notes: ${why}`, kept: '' },
 };
 
 /** What a step did not do when the month's allowance was used up (the session log's `⚠︎ Cue plan limit reached: …`). */
@@ -72,6 +75,7 @@ const LIMITED: Record<StepId, string> = {
     speakers: "the speakers weren't told apart — the transcript is kept as it was",
     names: 'no names were suggested',
     summary: "the summary wasn't written — the transcript is kept",
+    translate: "the notes weren't translated",
 };
 
 /**
@@ -135,6 +139,7 @@ export class NotesWorkflow extends WorkflowEntrypoint<Env, NotesParams> {
         );
         await guarded('names', (note) => suggestNames(db, note));
         await guarded('summary', (note) => writeSummary(db, note));
+        await guarded('translate', (note) => translateNotes(db, note));
         await step.do('store', config, async () => {
             const note = await loadNote(db, noteId);
             const keys = parse<AudioKeys>(note.audio, {});
@@ -357,4 +362,60 @@ async function writeSummary(db: D1Database, note: NoteRow): Promise<string | nul
         });
     }
     return null;
+}
+
+/**
+ * The note in the other of the person's two languages: the title and the summary, then the transcript in batches of numbered lines. Names and
+ * the people's labels stay as they are, so a rename later reaches the translation too.
+ */
+async function translateNotes(db: D1Database, note: NoteRow): Promise<string | null> {
+    const pair = pairFor(await languagesOf(db, note.user_id), note.language);
+    if (!pair) return 'Only one language chosen';
+    const language = nameOf(pair.other);
+    const system = translatePrompt(language, parse<string[]>(note.participants, []));
+    const ask = async (content: string) => {
+        try {
+            const { text, tokens } = await send({
+                model: JUDGE_MODEL,
+                max_tokens: 16000,
+                thinking: noThinking(JUDGE_MODEL),
+                system,
+                messages: [{ role: 'user', content }],
+            });
+            await usage(note, db, tokenUsage('note_translation', JUDGE_MODEL, tokens));
+            return text;
+        } catch (error) {
+            throw new Error(describe(error));
+        }
+    };
+    const translated =
+        note.summary.trim() === ''
+            ? { title: note.title, summary: '' }
+            : summaryOf(await ask(summaryMessage(note.title, note.summary)), note.title, note.summary);
+    const turns = parse<{ text: string }[]>(note.transcript, []);
+    const lines: string[] = [];
+    for (let at = 0; at < turns.length; at += TRANSLATE_BATCH) {
+        const batch = turns.slice(at, at + TRANSLATE_BATCH).map((turn) => turn.text);
+        lines.push(...translatedLines(await ask(linesMessage(batch)), batch.length));
+    }
+    await db
+        .prepare('UPDATE note SET translation = ? WHERE id = ?')
+        .bind(
+            JSON.stringify({
+                language: pair.other,
+                name: language,
+                title: translated.title,
+                summary: translated.summary,
+                transcript: lines,
+            }),
+            note.id,
+        )
+        .run();
+    await addEvent(db, note.id, {
+        kind: 'step',
+        step: 'translate',
+        state: 'running',
+        line: `✅ Notes translated into ${language}: ${lines.length} lines`,
+    });
+    return `Into ${language}`;
 }

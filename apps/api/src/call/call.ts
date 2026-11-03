@@ -9,6 +9,7 @@ import { QuestionDetector } from './detector.ts';
 import { SpeechStream } from './deepgram.ts';
 import { QuestionJudge } from './judge.ts';
 import { answerPrompt, firstSentence, isEcho, judgePrompt, Matcher, type PreparedAnswer } from './knowledge.ts';
+import { languagesOf, nameOf, pairFor } from '../languages.ts';
 import { lexiconFor, STOP_WORDS, type CallLexicon } from './lexicon.ts';
 import { speechUsage, tokenUsage } from '../pricing.ts';
 import { ANSWER_MODEL, noTokens, SPEECH_MODEL, type Tokens, type UsageRow } from './models.ts';
@@ -79,6 +80,10 @@ export class Call extends DurableObject<Env> {
     // What the call knows, built from the project when it begins. The language is heard: at first the one the project's last call was held in.
     #language = 'en';
     #languageEvent: CallEvent | undefined;
+    /** The languages the person reads Cue in: with two, answers and questions come with their translation into the other. */
+    #languages: string[] = [];
+    /** What the judge gave each question it found in the other language, by the question's text. */
+    #translations = new Map<string, string>();
     #terms: string[] = [];
     #occasion = '';
     #texts: string[] = [];
@@ -253,6 +258,10 @@ export class Call extends DurableObject<Env> {
                 meta.auto = command.auto ?? meta.auto;
                 meta.micQuestions = command.micQuestions ?? meta.micQuestions;
                 meta.questions = command.questions ?? meta.questions;
+                if (command.languages !== undefined) {
+                    this.#languages = command.languages;
+                    void this.ctx.storage.put('languages', command.languages);
+                }
                 if (wasAsking && !meta.questions) this.#detector.take();
                 void this.ctx.storage.put('meta', meta);
                 break;
@@ -331,6 +340,7 @@ export class Call extends DurableObject<Env> {
                 brief_answers: string;
             }>();
         this.#language = (await this.ctx.storage.get<string>('language')) ?? project?.language ?? 'en';
+        this.#languages = (await this.ctx.storage.get<string[]>('languages')) ?? (await languagesOf(env.DB, meta.userId));
         this.#lexicon = lexiconFor(this.#language);
         const { results } = await env.DB.prepare(
             'SELECT name, text, qa FROM material WHERE project_id = ? AND user_id = ? AND error IS NULL ORDER BY created_at, id',
@@ -523,8 +533,14 @@ export class Call extends DurableObject<Env> {
             .slice(-10)
             .map((line) => `[${this.#judgeLabel(line.channel)}] ${line.text}`)
             .join('\n');
-        const message = `${context === '' ? '' : `Said earlier (context):\n${context.slice(-2000)}\n\n`}Just said:\n${speech}`;
-        return (await this.#judge?.judge(message)) ?? null;
+        let message = `${context === '' ? '' : `Said earlier (context):\n${context.slice(-2000)}\n\n`}Just said:\n${speech}`;
+        const pair = pairFor(this.#languages, this.#language);
+        if (pair) message += `\n\n(After each "Q: " line, add a line that starts with "T: ": the question in ${nameOf(pair.other)}.)`;
+        const found = await this.#judge?.judge(message);
+        if (!found) return null;
+        for (const item of found) if (item.translation) this.#translations.set(item.question, item.translation);
+        if (this.#translations.size > 200) this.#translations.delete(this.#translations.keys().next().value!);
+        return found.map((item) => item.question);
     }
 
     #answerNow(): void {
@@ -557,9 +573,12 @@ export class Call extends DurableObject<Env> {
         exchange.questions.forEach((question, index) => {
             this.#byQuestion.set(question.id, exchange);
             const match = this.#matcher.match(question.text);
+            // With two languages the answer is in the one the person says, which may not be the one heard.
+            const pair = pairFor(this.#languages, this.#language);
+            const lexicon = pair ? lexiconFor(pair.say) : this.#lexicon;
             const opener =
-                (match && firstSentence(match.answer.a, this.#lexicon.thanksPrefix)) ??
-                (this.#lexicon.defaultOpener === '' ? null : this.#lexicon.defaultOpener);
+                (match && firstSentence(match.answer.a, lexicon.thanksPrefix)) ??
+                (lexicon.defaultOpener === '' ? null : lexicon.defaultOpener);
             this.#emitFor(exchange, {
                 type: 'question',
                 id: question.id,
@@ -570,6 +589,9 @@ export class Call extends DurableObject<Env> {
                 opener,
                 requested: options.request,
                 forced: options.force,
+                translation: pair
+                    ? { language: pair.other, name: nameOf(pair.other), text: this.#translations.get(question.text) ?? null }
+                    : null,
             });
             if (match) {
                 this.#emitFor(exchange, {
@@ -632,8 +654,14 @@ export class Call extends DurableObject<Env> {
             .join('\n');
         let message = context === '' ? '' : `Recent transcript (context):\n${context.slice(-2500)}\n\n`;
         message += `Question: [${this.#promptLabel('others')}] ${question}`;
-        const lexicon = this.#lexicon;
-        message += `\n\n(The conversation is in ${lexicon.name}: answer in ${lexicon.name}, with the labels "${lexicon.numbersLabel}:" and "${lexicon.sourceLabel}:".)`;
+        const pair = pairFor(this.#languages, this.#language);
+        const lexicon = pair ? lexiconFor(pair.say) : this.#lexicon;
+        const say = pair ? nameOf(pair.say) : lexicon.name;
+        message += `\n\n(The conversation is in ${this.#lexicon.name}: answer in ${say}, with the labels "${lexicon.numbersLabel}:" and "${lexicon.sourceLabel}:".)`;
+        if (pair) {
+            const other = lexiconFor(pair.other);
+            message += `\n(After each line of the answer, write it in ${nameOf(pair.other)} on a line of its own that starts with "» ", its bullet and its label translated too: "» • …", "» ${other.numbersLabel}: …", "» ${other.sourceLabel}: …".)`;
+        }
         if (others.length > 0) {
             message += `\n\n(Asked in one go with ${others.join(', ')}, which are answered separately: answer only this question.)`;
         }

@@ -7,6 +7,10 @@
 // The judge finds the sentences of what was just said that end in "?", unless FAKE_CLAUDE_JUDGEMENTS
 // (JSON `{"pattern": "reply"}`, the first pattern matching what was just said wins) gives its reply. A project's brief is
 // FAKE_CLAUDE_BRIEF (the JSON object prompts/brief.md asks for), else one with nothing in it.
+//
+// Two languages: what is asked for in the other one (an answer's "» " lines, the judge's "T: " lines, a note's translation) is
+// FAKE_CLAUDE_TRANSLATIONS (JSON `{"text": "its translation"}`, by the whole line) where it has the line, else the line after "(LANGUAGE) ";
+// a note's translated summary is the FAKE_CLAUDE_TRANSLATED_SUMMARY file, else the summary with each line translated so.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -45,7 +49,44 @@ export function answer(content: string, env: Env): string {
     const answers = Object.entries(JSON.parse(env['FAKE_CLAUDE_ANSWERS'] ?? '{}') as Record<string, string>);
     const question = /^Question: (.*)$/m.exec(content)?.[1] ?? '';
     const own = answers.find(([pattern]) => new RegExp(pattern, 'i').test(question))?.[1];
-    return own ?? env['FAKE_CLAUDE_ANSWER'] ?? 'Fake answer from the end-to-end tests.\n- A supporting point\nSource: tests';
+    const text = own ?? env['FAKE_CLAUDE_ANSWER'] ?? 'Fake answer from the end-to-end tests.\n- A supporting point\nSource: tests';
+    // Asked for each line in a second language too: an answer that has no "» " lines of its own gets them.
+    const second = /write it in ([^ ]+) on a line of its own that starts with "» "/.exec(content)?.[1];
+    if (!second || text.includes('\n» ')) return text;
+    return text
+        .split('\n')
+        .flatMap((line) => [line, `» ${translated(line, second, env)}`])
+        .join('\n');
+}
+
+/** A line in another language: FAKE_CLAUDE_TRANSLATIONS's, else marked with the language's name. */
+export function translated(line: string, language: string, env: Env): string {
+    const own = (JSON.parse(env['FAKE_CLAUDE_TRANSLATIONS'] ?? '{}') as Record<string, string>)[line.trim()];
+    return own ?? `(${language}) ${line}`;
+}
+
+/** A translate request's reply: the title, the summary or the numbered lines it was given, in the language its system prompt names. */
+export function translation(system: string, content: string, env: Env): string {
+    const language = /into ([^:]+): its title/.exec(system)?.[1] ?? 'the other language';
+    if (content.startsWith('Transcript:')) {
+        return content
+            .split('\n')
+            .slice(1)
+            .map((line) =>
+                line.replace(/^(\d+)\. (.*)$/, (_, number: string, text: string) => `${number}. ${translated(text, language, env)}`),
+            )
+            .join('\n');
+    }
+    const title = /^Title: (.*)$/m.exec(content)?.[1] ?? '';
+    const summary = content.split(/^Summary:\n/m)[1] ?? '';
+    const own = readOrUndefined(env['FAKE_CLAUDE_TRANSLATED_SUMMARY']);
+    const lines =
+        own ??
+        summary
+            .split('\n')
+            .map((line) => (line.trim() === '' || line.startsWith('#') ? line : translated(line, language, env)))
+            .join('\n');
+    return `Title: ${translated(title, language, env)}\n\nSummary:\n${lines}`;
 }
 
 /** The judge's reply to a message: a "Q: …" line per question in what was just said, else "—". */
@@ -62,7 +103,12 @@ export function judgement(content: string, env: Env): string {
         .join(' ')
         .split(/(?<=[.?!…])\s+/)
         .filter((sentence) => sentence.includes('?') && sentence.trim().split(/\s+/).length >= 2);
-    return questions.length > 0 ? questions.map((question) => `Q: ${question.trim()}`).join('\n') : '—';
+    if (questions.length === 0) return '—';
+    // Two languages: each question's translation, on a "T: " line after it.
+    const second = /the question in ([^.)]+)\.\)/.exec(content)?.[1];
+    return questions
+        .map((question) => `Q: ${question.trim()}${second ? `\nT: ${translated(question.trim(), second, env)}` : ''}`)
+        .join('\n');
 }
 
 const defaultSummary = `# E2E rehearsal notes

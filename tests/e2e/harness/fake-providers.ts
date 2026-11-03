@@ -10,7 +10,8 @@
 //                  `judge`, a transcript `summary-system` and `summary-input` (the notes Workflow's summary) or, when the system prompt starts "You find
 //                  the names", `names-system` and `names-input`; a project's materials (the system prompt starts "You read the materials") `brief-system`
 //                  and `brief-input`, replied to with FAKE_CLAUDE_BRIEF (the JSON object the brief prompt asks for; by default one with nothing
-//                  in it), FAKE_ANTHROPIC_BRIEF_FAILS=N failing the first N; each request also as `anthropic-request`, with the headers it came with.
+//                  in it), FAKE_ANTHROPIC_BRIEF_FAILS=N failing the first N; a note's translation ("You translate the notes") `translate-system` and
+//                  `translate-input`, replied to in the shape asked for (fake-replies.ts `translation`); each request also as `anthropic-request`, with the headers it came with.
 //                  Replies carry `usage` and simulate the prompt cache (a system prompt seen before is a cache read). FAKE_CLAUDE_JUDGE_FAILS=1
 //                  fails every judge request with a 500, FAKE_ANTHROPIC_OVERLOADED=N the first N judge requests with a 529 (overloaded),
 //                  FAKE_ANTHROPIC_CUT=N breaks off the first N streamed answers after their first words (no `message_stop`), FAKE_CLAUDE_JUDGE_DELAY
@@ -41,14 +42,14 @@ import type { AddressInfo, Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { unzip } from './documents.ts';
-import { answer, brief, judgement, names, pieces, record, summary, type Env } from '../tools/fake-replies.ts';
+import { answer, brief, judgement, names, pieces, record, summary, translation, type Env } from '../tools/fake-replies.ts';
 
 /** The only keys the stand-ins take. */
 export const FAKE_KEYS = { anthropic: 'sk-ant-e2e-fake-key', deepgram: 'dg-e2e-fake-key' } as const;
 
 /** What the Anthropic stand-in noted about a request. */
 export interface AnthropicRequest {
-    kind: 'answer' | 'judge' | 'summary' | 'names' | 'brief';
+    kind: 'answer' | 'judge' | 'summary' | 'names' | 'brief' | 'translate';
     key: string;
     version: string;
     model: string;
@@ -323,15 +324,17 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         const system = textOf(sent['system']);
         const messages = (sent['messages'] ?? []) as { content: unknown }[];
         const content = textOf(messages.at(-1)?.content);
-        const kind: AnthropicRequest['kind'] = content.startsWith('Transcript:')
-            ? system.startsWith('You find the names')
-                ? 'names'
-                : 'summary'
-            : system.startsWith('You watch the live transcript')
-              ? 'judge'
-              : system.startsWith('You read the materials')
-                ? 'brief'
-                : 'answer';
+        const kind: AnthropicRequest['kind'] = system.startsWith('You translate the notes')
+            ? 'translate'
+            : content.startsWith('Transcript:')
+              ? system.startsWith('You find the names')
+                  ? 'names'
+                  : 'summary'
+              : system.startsWith('You watch the live transcript')
+                ? 'judge'
+                : system.startsWith('You read the materials')
+                  ? 'brief'
+                  : 'answer';
         const key = String(request.headers['x-api-key'] ?? '');
         const noted: AnthropicRequest = {
             kind,
@@ -391,6 +394,10 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
             const delay = Number(environment['FAKE_CLAUDE_SUMMARY_DELAY']);
             if (delay > 0) await sleep(delay * 1000);
             text = summary(environment);
+        } else if (kind === 'translate') {
+            record(log, 'translate-system', system);
+            record(log, 'translate-input', content);
+            text = translation(system, content, environment);
         } else if (kind === 'brief') {
             record(log, 'brief-system', system);
             record(log, 'brief-input', content);

@@ -34,10 +34,12 @@ export interface NoteRow {
     audio_deleted_at: number | null;
     trashed_at: number | null;
     created_at: number;
+    /** JSON NoteTranslation, or null. */
+    translation: string | null;
 }
 
 export const NOTE_COLUMNS =
-    'id, user_id, call_id, project_id, take, stamp, title, started_at, ended_at, duration_seconds, status, language, spoken_language, speaker, meeting, participants, summary, transcript_heading, transcript, lines, voices, suggestions, steps, audio, keep_audio, summarize, ready_at, audio_deleted_at, trashed_at, created_at';
+    'id, user_id, call_id, project_id, take, stamp, title, started_at, ended_at, duration_seconds, status, language, spoken_language, speaker, meeting, participants, summary, transcript_heading, transcript, lines, voices, suggestions, steps, audio, keep_audio, summarize, ready_at, audio_deleted_at, trashed_at, created_at, translation';
 
 export type StepId = NoteStep['id'];
 
@@ -46,6 +48,7 @@ export const STEP_TITLES: Record<StepId, string> = {
     speakers: 'Finding speakers',
     names: 'Suggesting names',
     summary: 'Writing summary',
+    translate: 'Translating notes',
 };
 
 /** The R2 object keys of a note's audio, by side. */
@@ -69,6 +72,7 @@ export function noteOf(row: NoteRow): Note {
         summary: row.summary,
         transcriptHeading: row.transcript_heading,
         transcript: parse(row.transcript, []),
+        translation: parse(row.translation, null),
         suggestions: parse(row.suggestions, {}),
         steps: parse(row.steps, []),
         audio: Object.keys(parse<AudioKeys>(row.audio, {})) as Side[],

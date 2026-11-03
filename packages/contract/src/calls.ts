@@ -109,6 +109,15 @@ export const PartialEvent = Type.Object({ type: Type.Literal('transcript.partial
 /** A finished utterance. A line the microphone only picked up from the speakers (an echo of the call) is not sent. */
 export const FinalEvent = Type.Object({ type: Type.Literal('transcript.final'), seq: Seq, ...Line });
 
+/** The other of the person's two languages, for a question: what it and its answer are translated into. */
+export const QuestionTranslation = Type.Object({
+    language: Type.String({ description: 'A code: uk' }),
+    name: Type.String({ description: 'Its name in English: "Ukrainian"' }),
+    text: Type.Union([Type.String(), Type.Null()], {
+        description: 'The question in it; null when it could not be told (a question typed or forced)',
+    }),
+});
+
 /** A question noticed (or asked), before any answer. Questions asked in one go share `exchange`. */
 export const QuestionEvent = Type.Object({
     type: Type.Literal('question'),
@@ -121,6 +130,10 @@ export const QuestionEvent = Type.Object({
     opener: Type.Union([Type.String(), Type.Null()], { description: "What to say right away, until the answer's first line is ready" }),
     requested: Type.Boolean({ description: 'An answer is being written; false with Auto off, until `prepare`' }),
     forced: Type.Boolean({ description: 'The person asked for it (the Ask field, answer now): show it at once' }),
+    translation: Type.Union([QuestionTranslation, Type.Null()], {
+        description:
+            'With two languages chosen: the other one (the answer is in the language the call is held in, each line followed by its translation on a line that starts with "» "). Null otherwise',
+    }),
 });
 
 /** The prepared answer that matches a question, found in the project's materials. */
@@ -196,6 +209,9 @@ export const ConfigCommand = Type.Object({
     auto: Type.Optional(Type.Boolean()),
     micQuestions: Type.Optional(Type.Boolean()),
     questions: Type.Optional(Type.Boolean()),
+    languages: Type.Optional(
+        Type.Array(Type.String(), { maxItems: 2, description: "The person's languages changed (Settings): as Me.languages" }),
+    ),
 });
 /** The Ask field: answers `text` now, as an exchange of its own. */
 export const AskCommand = Type.Object({ type: Type.Literal('ask'), text: Type.String({ minLength: 1 }) });

@@ -39,7 +39,7 @@ export class QuestionJudge {
     }
 
     /** The questions in `message` for the speaker (none: []), or null when the judge could not tell (not ready, failed, too slow). */
-    async judge(message: string): Promise<string[] | null> {
+    async judge(message: string): Promise<Judged[] | null> {
         if (this.#session.state !== 'ready') return null;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const patience = new Promise<null>((resolve) => {
@@ -54,12 +54,20 @@ export class QuestionJudge {
     }
 }
 
-/** The "Q: …" lines of a reply; anything else (an explanation instead of "—") is no question. */
-export function questionsIn(reply: string): string[] {
-    return reply
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line.toUpperCase().startsWith('Q:'))
-        .map((line) => line.slice(2).trim())
-        .filter((question) => question !== '');
+/** A question the judge found, and its translation when it was asked for one (two languages). */
+export interface Judged {
+    question: string;
+    translation: string | null;
+}
+
+/** The "Q: …" lines of a reply, each with the "T: …" line after it (its translation) if there is one; anything else (an explanation instead of "—") is no question. */
+export function questionsIn(reply: string): Judged[] {
+    const found: Judged[] = [];
+    for (const line of reply.split('\n').map((text) => text.trim())) {
+        const label = line.slice(0, 2).toUpperCase();
+        const text = line.slice(2).trim();
+        if (label === 'Q:' && text !== '') found.push({ question: text, translation: null });
+        else if (label === 'T:' && text !== '' && found.at(-1)?.translation === null) found.at(-1)!.translation = text;
+    }
+    return found;
 }
