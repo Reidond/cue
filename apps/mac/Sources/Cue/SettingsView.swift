@@ -24,9 +24,10 @@ enum SettingsTab: String, CaseIterable {
     }
 }
 
-/// General: who the speaker is, how answers show, what notes keep, where the library is.
+/// General: who the speaker is, how answers show, what notes keep, where the library is, and updates.
 struct GeneralSettings: View {
     @ObservedObject var preferences: Preferences
+    @ObservedObject var updater: Updater
 
     var body: some View {
         Form {
@@ -71,6 +72,29 @@ struct GeneralSettings: View {
                 Text("Library")
             } footer: {
                 Text("One folder per project, with its materials and notes. Choosing another folder doesn’t move the projects already there.")
+            }
+
+            Section {
+                LabeledContent("Version", value: updater.version)
+                if updater.feed != nil {
+                    Toggle("Update Cue automatically", isOn: $preferences.automaticUpdates)
+                    LabeledContent {
+                        if case .installed = updater.phase {
+                            Button("Restart to Update", action: updater.restart)
+                        } else {
+                            Button("Check Now") { Task { await updater.check() } }
+                                .disabled(updater.busy)
+                        }
+                    } label: {
+                        Text(updater.status)
+                    }
+                }
+            } header: {
+                Text("Updates")
+            } footer: {
+                if updater.feed != nil {
+                    Text("Cue looks for a new version when it opens and every few hours, and puts it in place of this one. macOS asks again for the microphone and call audio afterwards.")
+                }
             }
         }
         .formStyle(.grouped)

@@ -11,6 +11,8 @@
 #   -Quick    with -Msi, an installer for a test and not for shipping: its files are stored, not compressed, and it is not validated
 #             (a few seconds, not a minute; about 250 MB, not 70)
 #   -Output   where the build goes: apps\windows\build by default
+#
+# CUE_UPDATES=OWNER/NAME (release.yml sets it) makes a release build: Cue updates itself from that repository's GitHub releases.
 [CmdletBinding()]
 param(
     [ValidateSet('x64', 'arm64')][string]$Arch,
@@ -50,8 +52,10 @@ $app = Join-Path $Output $Arch
 $clock = [System.Diagnostics.Stopwatch]::StartNew()
 Write-Host "Publishing Cue $Version for $Arch..."
 # TreatWarningsAsErrors is on in Cue.csproj: new code must build warning-free.
+$stamps = @("-p:Version=$Version", "-p:CueApiUrl=$apiUrl")
+if ($env:CUE_UPDATES) { $stamps += "-p:CueUpdates=$env:CUE_UPDATES" }
 Invoke-DotNet publish (Join-Path $windows 'Cue\Cue.csproj') -c Release -r "win-$Arch" --self-contained `
-    "-p:Version=$Version" "-p:CueApiUrl=$apiUrl" "-p:PublishDir=$app" '-p:DebugType=None' '-p:DebugSymbols=false' -nologo '-v:minimal'
+    @stamps "-p:PublishDir=$app" '-p:DebugType=None' '-p:DebugSymbols=false' -nologo '-v:minimal'
 Write-Host ("Built $app\Cue.exe in {0:N0} s" -f $clock.Elapsed.TotalSeconds)
 
 if ($Msi) {

@@ -139,6 +139,9 @@ public sealed class AppState : Observable
     /// <summary>Plays the audio of the note open in the dashboard; the transcript's timestamps jump in it.</summary>
     public NotePlayer Player { get; }
 
+    /// <summary>New versions of Cue, from its GitHub releases.</summary>
+    public Updater Updates { get; }
+
     private string? planLimit;
 
     public AppState(DispatcherQueue queue)
@@ -151,6 +154,7 @@ public sealed class AppState : Observable
         Player = new NotePlayer(this);
         Calendar = new MeetingCalendar(Preferences);
         Meetings = new MeetingMonitor(this);
+        Updates = new Updater(this);
         // The projects are the account's: once someone is signed in they are loaded (and the ones found in the library imported), and one is chosen.
         Api.OnSignedIn = async () =>
         {
@@ -226,11 +230,13 @@ public sealed class AppState : Observable
         Live.Start();
         Meetings.Start();
         Api.Start(Queue);
+        Updates.Start();
         Control.StartFromEnvironment();
     }
 
     public void Quit()
     {
+        Updates.InstallOnQuit();
         Live.Shutdown();
         Meetings.Shutdown();
         Microsoft.UI.Xaml.Application.Current.Exit();

@@ -102,6 +102,8 @@ final class AppState: ObservableObject {
     let calendar: MeetingCalendar
     /// The Cue API and who is signed in: Cue works only while someone is.
     let api: CueAPI
+    /// New versions of Cue, from its GitHub releases.
+    let updater: Updater
     private(set) lazy var meetings = MeetingMonitor(state: self)
 
     /// The project Cue answers from and records into.
@@ -223,6 +225,7 @@ final class AppState: ObservableObject {
         player = NotePlayer(log: log, api: api)
         AudioRecorder.removeStaleWorkingFolders()
         calendar = MeetingCalendar(preferences: preferences)
+        updater = Updater(log: log, preferences: preferences)
         // The projects are the account's: once someone is signed in they are loaded (and the ones found in the library imported), and one is chosen.
         api.onSignedIn = { [weak self] in
             await self?.projects.syncWithAccount()
@@ -290,6 +293,7 @@ final class AppState: ObservableObject {
         call = ServiceStatus(ok: false, detail: "Not listening — Start Cue to listen")
         observeSettings()
         meetings.start()
+        updater.start()
 
         meterTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             Task { @MainActor in

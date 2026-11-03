@@ -54,6 +54,7 @@ export {
     type RecordedCall,
     type UploadOptions,
 } from './recordings.ts';
+export { buildInstaller, builtInstaller, INSTALLED, installedVersion, listedPrograms, msiexec, nextVersion } from './installer.ts';
 export { exec, shellQuote, type Ran } from './process.ts';
 export {
     hasAudioOutput,
@@ -71,6 +72,7 @@ export { fail, print, skip } from './results.ts';
 export { Account, AdminClient, Backend, type AccountMaterial, type AccountProject, type BackendOptions } from './backend.ts';
 export { AdminPage, browser, closeBrowser } from './browser.ts';
 export { type FakeIdp } from './fake-idp.ts';
+export { type FakeRelease, type FakeReleases } from './fake-github.ts';
 export { Cue, type CalendarEvent, type ClaudeRequest } from './sandbox.ts';
 export {
     appWindows,

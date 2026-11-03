@@ -275,7 +275,7 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   `CUE_ME_TICK`, `CUE_API_URL`, `CUE_WEB_AUTH=headless`, `CUE_PROJECT=name` as on the Mac; `CUE_CONTROL` commands now: `signin [google|github]`, `signout`, `settings general|account|calendar`,
   `page home|upcoming|NAME|NAME/overview|NAME/answers|NAME/notes`, `size W H`, `quit`, and the projects': `new NAME`, `add PATH` (a file dropped on the open project's materials, else the active project's),
   `set PROJECT | occasion|language|names | VALUE`, `remove PROJECT | FILE`, plus two the Mac has no command for, because it does them in a dialog no case drives: `rename-project NAME | NEW` and `delete-project NAME`
-  (what the pane's context menu runs). Commands run one after another, so `new` and `add` finish before the next line. `signin`, `signout`, `settings`, `page`, `size` and `quit` work signed out; any other command then
+  (what the pane's context menu runs), and `update check|restart` as on the Mac. Commands run one after another, so `new` and `add` finish before the next line. `signin`, `signout`, `settings`, `page`, `size`, `update` and `quit` work signed out; any other command then
   logs `⚠︎ Sign in to Cue first (NAME ignored)`.
   The live call's `CUE_CONTROL` commands: `start NAME` (Start Cue for that project: shows the overlay and listens), `stop`, `project NAME` (the overlay's project menu), `ask TEXT`, `show TEXT`, `newest`, `prepare`; the project is found as `page NAME` finds it (by name, else by folder name), and none is no-op, as on the Mac.
   The meetings' `CUE_CONTROL` commands: `assign EVENT | PROJECT` (the project picker of an event on Upcoming, by the event's title) and `notification record|dismiss` (Record / Not Now on the latest prompt); `CUE_CALENDAR_EVENTS`, `CUE_MIC_APPS`, `CUE_MEETING_TICK` and `CUE_MIC_RELEASE` are as on the Mac except that `CUE_MIC_APPS` names program files or package family names, not bundle IDs, and that without `CUE_CALENDAR_EVENTS` the calendar is Windows' appointment store (see Meetings, the calendar and notifications on Windows).
@@ -642,12 +642,14 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_SNAPSHOT_METHOD=m` | How `CUE_SNAPSHOT` takes them: `desktop` (the default: each window over the desktop picture alone, so its glass refracts real pixels yet no other window covers it or shows through), `window` (the window alone: the overlay's glass over nothing), `display` (what's on screen behind the window now, other apps included, minus whatever is in front of it) or `offscreen` (the fallback, forced). |
 | `CUE_APPEARANCE=light\|dark` | Use this appearance instead of the system's. |
 | `CUE_PROJECT=name` | Make this project active at launch, creating it if there is none by that name. |
-| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|account\|calendar` (Settings on that tab), `set PROJECT | occasion|language|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (a material's minus button), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes), `signin` (Sign In on Home) and `signout` (Sign Out in Settings › Account). Until someone is signed in only `signin`, `signout`, `settings`, `page` and `size` do anything (the rest log `⚠︎ Sign in to Cue first (…)`). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
+| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|account\|calendar` (Settings on that tab), `set PROJECT | occasion|language|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (a material's minus button), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes), `signin` (Sign In on Home), `signout` (Sign Out in Settings › Account) and `update check\|restart` (Check Now / Restart to Update in Settings › General). Until someone is signed in only `signin`, `signout`, `settings`, `page`, `size` and `update` do anything (the rest log `⚠︎ Sign in to Cue first (…)`). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
 | `CUE_CALENDAR_EVENTS=file.json` | Read the calendar from this file instead of EventKit (no permission asked), again on every check: a JSON array of `{title, start, end}` (ISO 8601) with optional `id`, `series` (shared by a recurring event's occurrences), `calendar` (name), `url`, `location`, `notes`, `attendees` (names), `recurring`. |
 | `CUE_MIC_APPS=file` | The bundle IDs using the microphone right now, one per line, read on every check instead of Core Audio's process list. |
 | `CUE_MEETING_TICK=s` / `CUE_MIC_RELEASE=s` | Check for calls every `s` seconds instead of 5; stop a call's recording once the call app has been off the microphone for `s` seconds instead of 60. |
 | `CUE_API_URL=url` | The Cue API (`CueAPI.baseURL`, default `https://api.cue.app`): the backend a case runs. |
 | `CUE_WEB_AUTH=headless` | Sign in without the browser sheet: `CueAPI` follows the authorize URL with `URLSession` (cookies, the sign-in page's Google button) up to the redirect back to the app, which it keeps. |
+| `CUE_UPDATE_URL=url` | Read the latest release from `url` (a stand-in for GitHub's `/repos/OWNER/NAME/releases/latest`: `cue.releases()`) and update from it, whatever the build; without it a Cue under `CUE_HOME` never looks for updates, and only a release build (`CueUpdates` stamped) looks at all. |
+| `CUE_UPDATE_TICK=s` | Look for an update every `s` seconds instead of every 6 hours (and once at launch, as always). |
 | `CUE_ME_TICK=s` | Read the account (`/v1/me`: usage, still allowed?) every `s` seconds instead of 300; a signed-out Cue with a saved refresh token tries again at the same pace. |
 | `CUE_ALLOW_CAPTURE=1` | Let screenshots see the overlay. |
 | `CUE_SHOW_SETTINGS=1` | Open Settings at launch. |
@@ -681,7 +683,10 @@ or `⚠︎ Couldn't improve the transcript: …`, `👥 Finding speakers…`,
 `🔑 Signed in to Cue as EMAIL`, `🔑 Signed out of Cue` (Sign Out, or after `⚠︎ Your Cue session ended: …`),
 `🔑 Cue access refreshed`, `📦 Imported N projects from this Mac (M files)`, `📎 Added FILE to PROJECT: SUMMARY`, `🗑 Removed FILE from PROJECT`,
 `☁️ Saved “PROJECT” to your account`, `⚠︎ Not invited: EMAIL`, `⚠︎ Couldn't sign in to Cue: …`, `⚠︎ Sign in to Cue first`,
-`📝 Notes ready: …`, `📅 Recording “Title” into Project`, `🔔 Record “Title”?`
+`📝 Notes ready: …`, `📅 Recording “Title” into Project`, `🔔 Record “Title”?`,
+`✅ Cue is up to date (VERSION)`, `🔄 Downloading Cue NEW (this is OLD)…`, `✅ Cue NEW is installed: it opens the next time Cue starts` (the Mac) or
+`✅ Cue NEW is downloaded: it installs when Cue restarts` (Windows), `⚠︎ Couldn't update Cue: …`, `🔄 Restarting Cue to finish the update to NEW`,
+`✅ Cue was updated from OLD to NEW` (the next Cue)
 for every notification, `⚠︎ Nothing was recorded: …` for every alert,
 `🧐 Question judge ready: Claude Haiku` or
 `⚠︎ Question judge unavailable (…) — going by question marks`,
@@ -701,6 +706,30 @@ updating the cases.
 - Match the surrounding code: comment density, naming, SwiftUI and HIG idioms
   (standard controls, semantic colours, system Liquid Glass).
 - One feature per branch and PR, with its e2e case in the same PR.
+
+## Updates (`apps/mac/Sources/Cue/Updater.swift`, `apps/windows/Cue/Core/Updater.cs`)
+
+Both apps update themselves from the repository's latest GitHub release (what `release.yml` publishes), with no service of their own: `GET
+https://api.github.com/repos/OWNER/NAME/releases/latest` when Cue opens and every 6 hours (while Settings › General's *Update Cue automatically* is on; *Check Now*
+and the Mac's *Check for Updates…* look at once), the asset for this platform by its name, and its `size` and `digest` (`sha256:…`, which GitHub gives every asset)
+checked before anything is installed. A newer version is one whose tag (`vMAJOR.MINOR.PATCH`) is later than this Cue's version.
+
+- **Which builds look**: a release build only: `build.sh` and `build.ps1` stamp the repository (`CueUpdates` in `Info.plist`, assembly metadata `CueUpdates`) when
+  `CUE_UPDATES=OWNER/NAME` is set, which `release.yml` does. A local build, a case's build and any Cue under `CUE_HOME` never ask GitHub; `CUE_UPDATE_URL` points one at a stand-in.
+- **The Mac**: `Cue-VERSION.zip` is unpacked (`ditto`) into `Application Support/Cue/updates`, and the app in it must be Cue (bundle identifier), the release's version, valid
+  (`codesign --verify --deep --strict`) and for this macOS (`LSMinimumSystemVersion`); then it takes the place of the running Cue.app (`FileManager.replaceItemAt`: one swap where
+  Cue.app is, refused when Cue runs translocated or the folder isn't writable). The running Cue goes on; the new one opens at the next start or with *Restart to Update* (Settings,
+  the menu bar icon: a shell waits for this Cue to be gone, then `open`s the app; under `CUE_HOME` it runs the executable with this environment but `CUE_CONTROL`). `updates/installed.json`
+  says what was replaced, for the next Cue's `✅ Cue was updated from OLD to NEW`. The builds are signed ad hoc, so macOS asks for the microphone and call audio again after each update.
+- **Windows**: `Cue-VERSION-ARCH.msi` (the process's architecture) is downloaded into `%LOCALAPPDATA%\Cue\Updates` (`CUE_HOME`'s `updates`), and `ready.json` keeps it. An MSI can't replace
+  a running Cue, so it installs when Cue goes: *Restart to Update* (Settings, the notification area), quitting Cue, or the next launch (before any window). `install.ps1`, written there
+  and run hidden with Cue's environment but `CUE_CONTROL`, waits for Cue's process to end, runs `msiexec /i … /passive` (`/qn` under `CUE_BACKGROUND`; Windows Installer asks for
+  permission itself, as the MSI is per machine), writes its exit code to `result.txt` and, for a restart, opens Cue again (not elevated: the script isn't). The next Cue reads `update.json`
+  and says how it went (`✅ Cue was updated …`, or `⚠︎ Cue NEW wasn't installed: the installation was cancelled` / `⚠︎ Couldn't install Cue NEW: Windows Installer stopped with code N`).
+- **Cases**: `06-update` (the Mac: a download that doesn't match is refused; the matching one replaces a copy of the build in the case's `Applications`; Restart to Update opens it) and
+  `w1-update` (Windows, elevated, like `w1-installer`: the installed older MSI downloads the newer, Restart to Update installs it and opens the new Cue). `cue.releases()` is the stand-in for
+  GitHub's releases (`harness/fake-github.ts`: `publish({ version, files, wrongDigest })`, `url`, `requests`), `cue.followRestart(bin, seconds)` waits for the Cue that the launched one opened
+  as it quit and makes it the running one, and `harness/installer.ts` has the installer's helpers (`buildInstaller`, `builtInstaller`, `installedVersion`, `msiexec`, …).
 
 ## CI and releases
 

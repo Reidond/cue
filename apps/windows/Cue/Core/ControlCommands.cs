@@ -35,6 +35,16 @@ public sealed class ControlCommands
             state.Dashboard.ShowPage(argument);
             return Task.CompletedTask;
         }, needsSignIn: false);
+        // Check Now and Restart to Update in Settings › General.
+        Register("update", argument =>
+        {
+            if (argument == "restart")
+            {
+                state.Updates.Restart();
+                return Task.CompletedTask;
+            }
+            return state.Updates.Check();
+        }, needsSignIn: false);
         Register("quit", _ =>
         {
             state.Quit();
