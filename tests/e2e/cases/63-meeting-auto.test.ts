@@ -50,11 +50,11 @@ e2eCase('With "Record automatically" a meeting is recorded without a prompt, int
     assertContains(notes, /^project: "Meetings"$/);
     assertContains(notes, /^attendees: \["Mia Chen"\]$/);
     assertContains(notes, /onboarding screens/);
-    // Meetings has the system language, but the call was recognized live in Talk's English: the second
-    // pass listens in English too, and its transcript is the one kept.
+    // No project says what the call is in: the second pass listens in every language, as live recognition did, and its transcript is the
+    // one kept.
     const asked = cue.serviceRequests('deepgram-file');
     assertEq(asked.length, 2, 'both sides should be read again');
-    for (const request of asked) assertEq(request.query['language'], 'en', 'the second pass should use the live language');
+    for (const request of asked) assertEq(request.query['language'], 'multi', 'the second pass hears the language');
     assertContains(cue.sessionLog(), /✅ Transcript improved/);
     assertEq(listDir(join(cue.projectPath('Talk'), 'Notes')).length, 0, 'the active project gets nothing');
 });
