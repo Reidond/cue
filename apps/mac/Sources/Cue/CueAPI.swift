@@ -44,6 +44,8 @@ struct CueMe: Decodable, Equatable {
     }
     let account: Account
     let plan: Plan
+    /// The languages the person reads Cue in, in order (none, one or two); nil from a backend that doesn't know them yet.
+    let languages: [String]?
     let limits: Limits
     let usage: Usage
 
@@ -191,6 +193,11 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
     @Published private(set) var me: CueMe?
     /// What went wrong the last time, for the sign-in screen: "not invited" is said plainly.
     @Published private(set) var problem: String?
+    /// The languages the person reads Cue in, in order: the account's (`/v1/me`), and what Settings saved since. With two, answers and notes
+    /// come in both.
+    @Published private(set) var languages: [String] = []
+    /// Saves of the languages under way: meanwhile what `/v1/me` read before them doesn't put the old ones back.
+    private(set) var savingLanguages = 0
 
     var isSignedIn: Bool { phase == .signedIn }
 
@@ -286,6 +293,7 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
         accessToken = nil
         refreshAt = .distantPast
         me = nil
+        languages = []
         problem = nil
         phase = .signedOut
     }
@@ -327,10 +335,31 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
 
     private func loadMe() async throws {
         let data = try await get("v1/me")
+        let read: CueMe
         do {
-            me = try JSONDecoder().decode(CueMe.self, from: data)
+            read = try JSONDecoder().decode(CueMe.self, from: data)
         } catch {
             throw CueAPIError.server("Cue answered something unexpected: \(error.localizedDescription)")
+        }
+        me = read
+        if savingLanguages == 0, let codes = read.languages, codes != languages { languages = codes }
+    }
+
+    /// Saves the languages the person reads Cue in to the account (`PUT /v1/me/languages`): they take effect here at once, and are put back
+    /// when the account refuses them.
+    func saveLanguages(_ codes: [String]) async throws {
+        struct Saved: Decodable { let languages: [String] }
+        let previous = languages
+        languages = codes
+        savingLanguages += 1
+        defer { savingLanguages -= 1 }
+        do {
+            let data = try await request("PUT", "v1/me/languages", json: try JSONSerialization.data(withJSONObject: ["languages": codes]))
+            let saved = (try? JSONDecoder().decode(Saved.self, from: data))?.languages ?? codes
+            if saved != languages { languages = saved }
+        } catch {
+            languages = previous
+            throw error
         }
     }
 

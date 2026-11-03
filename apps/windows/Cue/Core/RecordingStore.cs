@@ -152,6 +152,8 @@ public sealed class RecordingStore
             steps.Add(new NoteProgress(NoteStep.FindingSpeakers, StepState.Pending));
         }
         if (summarize) steps.Add(new NoteProgress(NoteStep.WritingSummary, StepState.Pending));
+        // With two languages chosen the account translates the notes into the other one.
+        if (Api.Languages.Count == 2) steps.Add(new NoteProgress(NoteStep.TranslatingNotes, StepState.Pending));
 
         var front = new List<string>
         {
@@ -470,6 +472,15 @@ public sealed class RecordingStore
                 break;
             case ("summary", "failed"):
                 Set(NoteStep.WritingSummary, id, StepState.Failed, Sentence(detail));
+                break;
+            case ("translate", "running"):
+                Set(NoteStep.TranslatingNotes, id, StepState.Running);
+                break;
+            case ("translate", "done"):
+                Set(NoteStep.TranslatingNotes, id, StepState.Done, detail);
+                break;
+            case ("translate", "failed"):
+                Set(NoteStep.TranslatingNotes, id, StepState.Failed, Sentence(detail) + " The notes are kept in one language.");
                 break;
         }
     }

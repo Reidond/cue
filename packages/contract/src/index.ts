@@ -51,6 +51,38 @@ export const errorStatus: Record<ErrorCode, number> = {
 };
 
 /** `GET /v1/me`: who is signed in, on which plan, within which limits, having used how much this month. */
+/**
+ * The languages a person can choose to read Cue in (Settings › General › Languages): the code, and the name in English and in itself. With two
+ * chosen, every answer and every note comes in both: the language spoken in the call, and the other one beside it.
+ */
+export const LANGUAGES = [
+    { code: 'en', name: 'English', native: 'English' },
+    { code: 'uk', name: 'Ukrainian', native: 'Українська' },
+    { code: 'pl', name: 'Polish', native: 'Polski' },
+    { code: 'de', name: 'German', native: 'Deutsch' },
+    { code: 'fr', name: 'French', native: 'Français' },
+    { code: 'es', name: 'Spanish', native: 'Español' },
+    { code: 'it', name: 'Italian', native: 'Italiano' },
+    { code: 'pt', name: 'Portuguese', native: 'Português' },
+    { code: 'nl', name: 'Dutch', native: 'Nederlands' },
+    { code: 'cs', name: 'Czech', native: 'Čeština' },
+] as const;
+
+export const LanguageCode = Type.Union(
+    LANGUAGES.map((language) => Type.Literal(language.code)),
+    { description: 'One of LANGUAGES' },
+);
+
+/** `PUT /v1/me/languages`: the person's languages, in order (none, one, or two). */
+export const Languages = Type.Object({
+    languages: Type.Array(LanguageCode, {
+        maxItems: 2,
+        uniqueItems: true,
+        description: 'In order. Two: answers and notes in both. One or none: in the language the call is held in',
+    }),
+});
+export type Languages = Static<typeof Languages>;
+
 export const Me = Type.Object({
     account: Type.Object({
         id: Type.String(),
@@ -62,6 +94,7 @@ export const Me = Type.Object({
         id: Type.Literal('cue'),
         name: Type.String(),
     }),
+    languages: Type.Array(Type.String(), { description: 'The languages the person reads Cue in, in order (see Languages)' }),
     limits: Type.Object({
         monthlyUsd: Type.Union([Type.Number(), Type.Null()], {
             description: 'The monthly spend limit in US dollars that applies to this account',

@@ -249,6 +249,30 @@ public sealed partial class CueApi : Observable
         }
     }
 
+    /// <summary>The languages the person reads Cue in, as the account has them (none while signed out).</summary>
+    public IReadOnlyList<string> Languages => Me?.Chosen ?? [];
+
+    /// <summary>
+    /// Settings › General › Languages: the account's languages become these (`PUT /v1/me/languages`: two at most, each once, codes of
+    /// <see cref="Cue.Languages.All"/>), and the account is read again so everything that follows <see cref="Me"/> has them. A refusal is logged.
+    /// </summary>
+    public async Task SetLanguages(IReadOnlyList<string> languages)
+    {
+        var codes = languages.Select(code => code.Trim().ToLowerInvariant()).Where(code => code.Length > 0).ToArray();
+        if (codes.SequenceEqual(Languages)) return;
+        try
+        {
+            await Request("PUT", "v1/me/languages", json: JsonSerializer.SerializeToUtf8Bytes(new { languages = codes }, Json));
+            await LoadMe();
+        }
+        catch (CueApiException e)
+        {
+            log.Write($"{SessionLog.Warning} Couldn't save your languages: {e.Message}");
+            // What the pickers show goes back to what the account has.
+            Raise(nameof(Me));
+        }
+    }
+
     private byte[] lastMe = [];
 
     private async Task LoadMe()

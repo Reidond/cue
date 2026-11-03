@@ -67,6 +67,9 @@ public sealed class CallEvent
 
     public string? Name { get; init; }
 
+    /// <summary>A `question` event's, with two languages chosen: the other one, and the question in it.</summary>
+    public QuestionTranslation? Translation { get; init; }
+
     /// <summary>`language`: heard in this call; false for the one it starts out in.</summary>
     public bool? Heard { get; init; }
 
@@ -85,6 +88,38 @@ public sealed class CallEvent
         {
             return null;
         }
+    }
+}
+
+/// <summary>
+/// With two languages chosen, what a question says of the other one (contract: `QuestionTranslation`): its code and English name, and the question
+/// in it (null for a question typed or forced). The answer then follows each line with its translation on a line that starts with "» ".
+/// </summary>
+public sealed record QuestionTranslation(string Language, string Name, string? Text);
+
+/// <summary>One line of an answer, and its translation when the answer comes in two languages (not there yet while it streams in).</summary>
+public sealed record AnswerRow(string Text, string? Translation)
+{
+    /// <summary>
+    /// An answer's lines as rows: a line that starts with "» " is the translation of the row above it. Empty lines are left out; a line still
+    /// streaming in is there as far as it has come.
+    /// </summary>
+    public static IReadOnlyList<AnswerRow> Of(string text)
+    {
+        var rows = new List<AnswerRow>();
+        foreach (var raw in text.Split('\n'))
+        {
+            var line = raw.Trim(' ', '\t', '\r');
+            if (line.Length == 0) continue;
+            if (line.StartsWith('»'))
+            {
+                var translation = line[1..].Trim();
+                if (rows.Count > 0 && rows[^1].Translation is null && translation.Length > 0) rows[^1] = rows[^1] with { Translation = translation };
+                continue;
+            }
+            rows.Add(new AnswerRow(line, null));
+        }
+        return rows;
     }
 }
 
@@ -168,15 +203,17 @@ public sealed class Answer
     /// <summary>What to say right now: Claude's first line when ready, the instant opener until then.</summary>
     public string? SayNow => FirstLine ?? Opener;
 
-    public IReadOnlyList<string> Rest
-    {
-        get
-        {
-            var newline = Text.IndexOf('\n');
-            if (newline < 0) return [];
-            return Text[(newline + 1)..].Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim(Space)).ToArray();
-        }
-    }
+    /// <summary>With two languages chosen: the other one (the question in it, when it was heard); null with one or none.</summary>
+    public QuestionTranslation? Translation { get; init; }
+
+    /// <summary>What Claude said, line by line, each with its translation ("» " lines) when the answer comes in two languages.</summary>
+    public IReadOnlyList<AnswerRow> Rows => AnswerRow.Of(Text);
+
+    /// <summary>The first line's translation, once it has come.</summary>
+    public string? FirstTranslation => FirstLine is null ? null : Rows.FirstOrDefault()?.Translation;
+
+    /// <summary>The lines after the first, with their translations.</summary>
+    public IReadOnlyList<AnswerRow> Rest => FirstLine is null ? [] : [.. Rows.Skip(1)];
 }
 
 /// <summary>How one part of the live path is doing (the microphone, the call audio, speech recognition, Claude).</summary>

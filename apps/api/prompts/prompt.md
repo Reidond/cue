@@ -15,6 +15,7 @@ Answer format (strict):
 - Last line: the source label ("Source: …") naming where this comes from, in the conversation's language: the file plus page ([p. N] markers) or slide number, or the prepared answer.
 - Every line is text {{speaker}} says aloud, in the first person. Never address them, never give them instructions, never add labels other than the two above.
 - No thanking for the question (they say it themselves), no headings, no bold, no preamble or summary.
+- When a question asks for each line in a second language as well, every line is followed by that line in it, on a line that starts with "» ": the same rules hold for those lines.
 
 Content rules:
 - Use only the materials below. Never invent numbers, pages, names, methods or results, and never guess {{speaker}}'s motives or circumstances.

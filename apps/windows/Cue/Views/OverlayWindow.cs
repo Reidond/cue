@@ -66,6 +66,15 @@ public sealed class OverlayWindow : Window
 
     private readonly IntPtr handle;
 
+    /// <summary>The window's content: its width says whether Side by side fits.</summary>
+    private FrameworkElement? rootElement;
+
+    /// <summary>Side by side needs this much (effective pixels); a narrower overlay shows the two languages as Subtitles.</summary>
+    private const double MirrorWidth = 560;
+
+    /// <summary>How wide Side by side makes an overlay that was too narrow for it when it was chosen (as the Mac's does).</summary>
+    private const double MirrorOpensAt = 680;
+
     // Kept in a field: what only a local variable holds is collected, and its events stop.
     private readonly Windows.UI.ViewManagement.UISettings uiSettings = new();
     private DispatcherQueueTimer? saveTimer;
@@ -88,7 +97,11 @@ public sealed class OverlayWindow : Window
         live.OverlayVisible = () => shown;
         live.Changed += () => dirty = true;
         live.PropertyChanged += (_, _) => UpdateBar();
-        state.Preferences.PropertyChanged += (_, _) => dirty = true;
+        state.Preferences.PropertyChanged += (_, e) =>
+        {
+            dirty = true;
+            if (e.PropertyName == nameof(Preferences.AnswerLayout) && state.Preferences.AnswerLayout == AnswerLayout.Mirror) MakeRoomForColumns();
+        };
         state.PropertyChanged += (_, _) => UpdateBar();
         Closed += (_, _) => shown = false;
         // The theme or high contrast changed under it: its brushes are looked up again.
@@ -177,6 +190,22 @@ public sealed class OverlayWindow : Window
         width = Math.Min(width, area.Width - 2 * margin);
         height = Math.Min(height, area.Height - 2 * margin);
         AppWindow.MoveAndResize(new RectInt32(area.X + area.Width - width - margin, area.Y + margin, width, height));
+    }
+
+    /// <summary>
+    /// Side by side was chosen while the overlay is too narrow for two columns: it widens to <see cref="MirrorOpensAt"/>, its right edge where it was
+    /// (it sits in the screen's top right corner), within the screen. Made narrower again, it shows the two languages as subtitles.
+    /// </summary>
+    private void MakeRoomForColumns()
+    {
+        if (rootElement is not { ActualWidth: > 0 } root || root.ActualWidth >= MirrorWidth) return;
+        var scale = Math.Max(Native.GetDpiForWindow(handle), 96u) / 96.0;
+        var at = AppWindow.Position;
+        var size = AppWindow.Size;
+        var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
+        var width = Math.Min((int)Math.Round(MirrorOpensAt * scale), area.Width);
+        var x = Math.Max(area.X, at.X + size.Width - width);
+        AppWindow.MoveAndResize(new RectInt32(x, at.Y, width, size.Height));
     }
 
     /// <summary>Shows the overlay without taking the focus.</summary>
@@ -323,6 +352,12 @@ public sealed class OverlayWindow : Window
     private UIElement Build()
     {
         var root = new Grid { Padding = new Thickness(8), RowSpacing = 8 };
+        rootElement = root;
+        // Side by side takes the overlay's width, and gives way to Subtitles below it: crossing it redraws the answer.
+        root.SizeChanged += (_, e) =>
+        {
+            if (e.PreviousSize.Width < MirrorWidth != e.NewSize.Width < MirrorWidth) dirty = true;
+        };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -700,8 +735,9 @@ public sealed class OverlayWindow : Window
         return panel;
     }
 
-    /// <summary>A question and its marker: its number when several were asked in one go, else who's asking.</summary>
-    private static UIElement QuestionLine(string question, int? number, double size, int lines)
+    /// <summary>A question and its marker: its number when several were asked in one go, else who's asking; with two languages, the question in the
+    /// other one under it, smaller.</summary>
+    private static UIElement QuestionLine(string question, int? number, double size, int lines, string? translation = null)
     {
         var grid = new Grid { ColumnSpacing = 8 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(size + 4) });
@@ -713,10 +749,22 @@ public sealed class OverlayWindow : Window
         marker.Margin = new Thickness(0, 2, 0, 0);
         grid.Children.Add(marker);
         var text = Text(question, "BodyStrongTextBlockStyle", size, maxLines: lines);
-        Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
+        FrameworkElement content = text;
+        if (!string.IsNullOrWhiteSpace(translation))
+        {
+            content = new StackPanel
+            {
+                Spacing = 2,
+                Children = { text, Text(translation, "BodyTextBlockStyle", Smaller(size), Theme("TextFillColorSecondaryBrush"), lines) },
+            };
+        }
+        Grid.SetColumn(content, 1);
+        grid.Children.Add(content);
         return grid;
     }
+
+    /// <summary>The size a translation is set in under its line: a step down the ramp, never below Caption's.</summary>
+    private static double Smaller(double size) => Math.Max(size - 2, 12);
 
     /// <summary>An exchange in compact form: each question, then what to say, that the answer is coming, or that it isn't a question for the speaker (dimmed).
     /// Questions noticed with Auto off get Prepare Answer.</summary>
@@ -728,7 +776,7 @@ public sealed class OverlayWindow : Window
         {
             var answer = exchange.Answers[index];
             var part = new StackPanel { Spacing = 2, Opacity = answer.IsNotAQuestion ? 0.6 : 1 };
-            part.Children.Add(QuestionLine(answer.Question, exchange.Answers.Count > 1 ? index + 1 : null, questionSize, 2));
+            part.Children.Add(QuestionLine(answer.Question, exchange.Answers.Count > 1 ? index + 1 : null, questionSize, 2, answer.Translation?.Text));
             if (RowStatus(answer, size) is { } status)
             {
                 status.Margin = new Thickness(questionSize + 12, 0, 0, 0);
@@ -792,7 +840,7 @@ public sealed class OverlayWindow : Window
     private UIElement AnswerContent(Answer answer, int? number, double size, Lexicon lexicon)
     {
         var panel = new StackPanel { Spacing = 12 };
-        panel.Children.Add(QuestionLine(answer.Question, number, size, 6));
+        panel.Children.Add(QuestionLine(answer.Question, number, size, 6, answer.Translation?.Text));
         if (!answer.Requested)
         {
         }
@@ -804,13 +852,31 @@ public sealed class OverlayWindow : Window
         }
         else
         {
-            panel.Children.Add(SayNow(answer, size));
             var rest = answer.Rest;
-            if (rest.Count > 0)
+            var pair = PairOf(answer);
+            var layout = pair is null ? AnswerLayout.Subtitles : state.Preferences.AnswerLayout;
+            // Side by side needs room for two columns: a narrow overlay sets them as subtitles.
+            if (layout == AnswerLayout.Mirror && (rootElement?.ActualWidth ?? 0) < MirrorWidth) layout = AnswerLayout.Subtitles;
+            if (pair is not null && layout == AnswerLayout.Mirror && answer.FirstLine is not null)
             {
-                var lines = new StackPanel { Spacing = 8 };
-                foreach (var line in rest) lines.Children.Add(AnswerLine(line, size, lexicon));
-                panel.Children.Add(lines);
+                panel.Children.Add(SideBySide(answer, size, pair));
+            }
+            else
+            {
+                // Subtitles shows each line's translation under it; Focus (and one language) the lines alone, the translations after them.
+                var subtitles = pair is not null && layout == AnswerLayout.Subtitles;
+                panel.Children.Add(SayNow(answer, size, subtitles && answer.FirstTranslation != answer.FirstLine ? answer.FirstTranslation : null));
+                if (rest.Count > 0)
+                {
+                    var lines = new StackPanel { Spacing = 8 };
+                    foreach (var row in rest) lines.Children.Add(AnswerLine(row, size, pair?.Say ?? lexicon, subtitles ? pair!.Other : null));
+                    panel.Children.Add(lines);
+                }
+                if (pair is not null && layout == AnswerLayout.Focus && answer.FirstLine is not null && Joined(answer) is { Length: > 0 } joined)
+                {
+                    panel.Children.Add(new Border { Height = 1, Background = Theme("DividerStrokeColorDefaultBrush") });
+                    panel.Children.Add(FocusParagraph(pair, joined, size));
+                }
             }
             if (!answer.Done && answer.FirstLine is not null && rest.Count == 0) panel.Children.Add(new ProgressRing { Width = 20, Height = 20, IsActive = true, HorizontalAlignment = HorizontalAlignment.Left });
             if (answer.Error is { } error)
@@ -820,14 +886,15 @@ public sealed class OverlayWindow : Window
         return panel;
     }
 
-    /// <summary>The line to say first: the instant opener, replaced by Claude's first line when it lands.</summary>
-    private static UIElement SayNow(Answer answer, double size)
+    /// <summary>The line to say first: the instant opener, replaced by Claude's first line when it lands; under it, as subtitles, its translation.</summary>
+    private static UIElement SayNow(Answer answer, double size, string? translation = null)
     {
         var panel = new StackPanel { Spacing = 4 };
         panel.Children.Add(Text("Say", "CaptionTextBlockStyle", Math.Max(size - 3, 11), Theme("AccentTextFillColorPrimaryBrush")));
         if (answer.SayNow is { } line)
         {
             panel.Children.Add(Text(line, "TitleTextBlockStyle", size * 1.5));
+            if (translation is not null) panel.Children.Add(Text(translation, "BodyTextBlockStyle", size * 1.15, Theme("TextFillColorSecondaryBrush")));
         }
         else
         {
@@ -841,21 +908,131 @@ public sealed class OverlayWindow : Window
         return panel;
     }
 
-    /// <summary>Points with hanging bullets; the numbers and source lines set as secondary detail.</summary>
-    private static UIElement AnswerLine(string line, double size, Lexicon lexicon)
+    /// <summary>
+    /// Points with hanging bullets; the numbers and source lines set as secondary detail. With `other` (Subtitles), the row's translation is under
+    /// its text, smaller, set the same way (its bullet and label, in the other language's words, taken off).
+    /// </summary>
+    private static UIElement AnswerLine(AnswerRow row, double size, Lexicon lexicon, Lexicon? other = null)
     {
-        if (line.StartsWith('•') || line.StartsWith("- ", StringComparison.Ordinal))
-            return DetailRow(null, size, line.TrimStart('•', '-', ' '), size, false);
-        if (Strip(line, lexicon.NumbersLabel) is { } numbers) return DetailRow("", size, numbers, size - 1, true);
-        if (Strip(line, lexicon.SourceLabel) is { } source) return DetailRow("", size, source, Math.Max(size - 3, 11), true);
-        return DetailRow(null, size, line, size, false);
+        var (kind, text) = Kind(row.Text, lexicon);
+        var translation = other is not null && row.Translation is { } said ? Kind(said, other).Text : null;
+        // What reads the same in both (a file's name, a figure) is said once.
+        if (translation == text) translation = null;
+        return kind switch
+        {
+            LineKind.Numbers => DetailRow("", size, text, size - 1, true, translation),
+            LineKind.Source => DetailRow("", size, text, Math.Max(size - 3, 11), true, translation),
+            LineKind.Point => DetailRow(null, size, text, size, false, translation),
+            _ => DetailRow(null, size, text, size, false, translation),
+        };
+    }
+
+    private enum LineKind
+    {
+        Point,
+        Numbers,
+        Source,
+        Plain,
+    }
+
+    /// <summary>What a line of an answer is (a point, the numbers, the source, a plain line) and its text without the bullet or the label.</summary>
+    private static (LineKind Kind, string Text) Kind(string line, Lexicon lexicon)
+    {
+        if (line.StartsWith('•') || line.StartsWith("- ", StringComparison.Ordinal)) return (LineKind.Point, line.TrimStart('•', '-', ' '));
+        if (Strip(line, lexicon.NumbersLabel) is { } numbers) return (LineKind.Numbers, numbers);
+        if (Strip(line, lexicon.SourceLabel) is { } source) return (LineKind.Source, source);
+        return (LineKind.Plain, line);
     }
 
     private static string? Strip(string line, string label) =>
         line.StartsWith(label + ":", StringComparison.CurrentCultureIgnoreCase) ? line[(label.Length + 1)..].Trim() : null;
 
-    /// <summary>A row whose marker (bullet or symbol) sits in a fixed leading column, so wrapped lines hang and every row's text starts at the same x.</summary>
-    private static UIElement DetailRow(string? symbol, double markerWidth, string text, double textSize, bool secondary)
+    // MARK: Two languages
+
+    /// <summary>An answer in two languages: the one to say (its English name and words) and the other one.</summary>
+    private sealed record LanguagePair(string SayName, Lexicon Say, string OtherCode, string OtherName, Lexicon Other);
+
+    /// <summary>
+    /// The two languages of an answer that comes in both (null with one): the other is the question's translation's; the one to say is the person's
+    /// other language (the one heard, when it is one of them), else the language the call is held in.
+    /// </summary>
+    private LanguagePair? PairOf(Answer answer)
+    {
+        if (answer.Translation is not { } translation) return null;
+        var other = Languages.Find(translation.Language)?.Code ?? translation.Language;
+        var say = state.Api.Languages.FirstOrDefault(code => code != other) ?? state.Live.SpokenLanguage;
+        return new LanguagePair(Languages.NameOf(say), Lexicon.Load(say), other, translation.Name, Lexicon.Load(other));
+    }
+
+    /// <summary>
+    /// Side by side: a column for each language under its name, the rows aligned across them; the one to say set as with one language, the other in
+    /// the secondary colour.
+    /// </summary>
+    private static UIElement SideBySide(Answer answer, double size, LanguagePair pair)
+    {
+        var grid = new Grid { ColumnSpacing = 16, RowSpacing = 8 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var row = 0;
+        void Put(UIElement element, int column)
+        {
+            if (grid.RowDefinitions.Count <= row) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetRow((FrameworkElement)element, row);
+            Grid.SetColumn((FrameworkElement)element, column);
+            grid.Children.Add(element);
+        }
+        var small = Math.Max(size - 3, 11);
+        Put(Text(pair.SayName, "CaptionTextBlockStyle", small, Theme("AccentTextFillColorPrimaryBrush")), 0);
+        Put(Text(pair.OtherName, "CaptionTextBlockStyle", small, Theme("TextFillColorSecondaryBrush")), 1);
+        row++;
+        var secondary = Theme("TextFillColorSecondaryBrush");
+        var first = answer.Rows.FirstOrDefault();
+        Put(Text(answer.FirstLine ?? "", "TitleTextBlockStyle", size * 1.3), 0);
+        if (first?.Translation is { } translated) Put(Text(translated, "TitleTextBlockStyle", size * 1.3, secondary), 1);
+        foreach (var line in answer.Rest)
+        {
+            row++;
+            Put(AnswerLine(line with { Translation = null }, size, pair.Say), 0);
+            if (line.Translation is { } said) Put(Secondary(AnswerLine(new AnswerRow(said, null), size, pair.Other)), 1);
+        }
+        return grid;
+    }
+
+    /// <summary>A line of the other language's column: its text in the secondary colour.</summary>
+    private static UIElement Secondary(UIElement line)
+    {
+        if (line is Grid grid)
+            foreach (var text in grid.Children.OfType<TextBlock>().Where(text => Grid.GetColumn(text) == 1)) text.Foreground = Theme("TextFillColorSecondaryBrush");
+        return line;
+    }
+
+    /// <summary>Focus: every translation of the answer, its bullets taken off, as one paragraph.</summary>
+    private static string Joined(Answer answer)
+    {
+        var joined = new System.Text.StringBuilder();
+        foreach (var row in answer.Rows)
+        {
+            if (row.Translation is not { } said) continue;
+            var text = said.StartsWith('•') || said.StartsWith("- ", StringComparison.Ordinal) ? said.TrimStart('•', '-', ' ') : said;
+            if (joined.Length > 0) joined.Append(".!?…:;".Contains(joined[^1]) ? " " : ". ");
+            joined.Append(text);
+        }
+        return joined.ToString();
+    }
+
+    /// <summary>Focus: after a hairline, the translations in one compact paragraph, smaller and secondary, after the other language's code ("UK ·").</summary>
+    private static TextBlock FocusParagraph(LanguagePair pair, string joined, double size)
+    {
+        var block = Text("", "BodyTextBlockStyle", Smaller(size), Theme("TextFillColorSecondaryBrush"));
+        block.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = pair.OtherCode.ToUpperInvariant(), FontWeight = FontWeights.SemiBold });
+        block.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = " · " + joined });
+        AutomationProperties.SetName(block, $"{pair.OtherCode.ToUpperInvariant()} · {joined}");
+        return block;
+    }
+
+    /// <summary>A row whose marker (bullet or symbol) sits in a fixed leading column, so wrapped lines hang and every row's text starts at the same x; a
+    /// translation goes under the text, smaller.</summary>
+    private static UIElement DetailRow(string? symbol, double markerWidth, string text, double textSize, bool secondary, string? translation = null)
     {
         var grid = new Grid { ColumnSpacing = 8 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(markerWidth) });
@@ -869,6 +1046,16 @@ public sealed class OverlayWindow : Window
         var content = Text(text, "BodyTextBlockStyle", textSize, secondary ? Theme("TextFillColorSecondaryBrush") : null);
         Grid.SetColumn(content, 1);
         grid.Children.Add(content);
+        if (translation is { Length: > 0 })
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var under = Text(translation, "BodyTextBlockStyle", Smaller(textSize), Theme(secondary ? "TextFillColorTertiaryBrush" : "TextFillColorSecondaryBrush"));
+            under.Margin = new Thickness(0, 2, 0, 0);
+            Grid.SetColumn(under, 1);
+            Grid.SetRow(under, 1);
+            grid.Children.Add(under);
+        }
         return grid;
     }
 

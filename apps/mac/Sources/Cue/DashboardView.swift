@@ -19,6 +19,8 @@ final class DashboardModel: ObservableObject {
     @Published var selection: SidebarItem? = .home
     @Published var tab: ProjectTab = .overview
     @Published var note: String?
+    /// The language translated notes are shown in (their page's switch); nil: each in its own.
+    @Published var noteLanguage: String?
     @Published var creatingProject = false
 
     var selectedProject: String? {

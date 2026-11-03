@@ -11,6 +11,7 @@ namespace Cue;
 /// A project's notes: the list on the left, the note on the right (the Mac's ProjectNotesView). The note is its Markdown copy rendered, with the steps a
 /// new one goes through while it is made, the names its summary suggested (Apply, ✕), a player when it has audio (the transcript's timestamps play from
 /// there) and a click on a speaker's name to rename them. Which note is open is the dashboard's (<see cref="DashboardModel.NoteId"/>).
+/// A note in two languages is laid out as Settings says (<see cref="NoteLayout"/>): a switch between them above it, or one after the other.
 /// Made once for a project; <see cref="Update"/> brings it up to date.
 /// </summary>
 internal sealed class NotesView : UserControl
@@ -25,6 +26,17 @@ internal sealed class NotesView : UserControl
     private readonly Border detailHost = new();
     private readonly PlayerBar playerBar;
     private readonly MarkdownView markdown = new();
+
+    // A note in two languages: the switch between them, the transcript's heading with the Translations switch, the transcript under it.
+    private readonly StackPanel note = new();
+    private readonly SelectorBar languageSwitch = new() { Margin = new Thickness(-12, 0, 0, 12) };
+    private readonly SelectorBarItem ownItem = new();
+    private readonly SelectorBarItem translatedItem = new();
+    private readonly TextBlock transcriptHeading = new() { Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"], VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
+    private readonly ToggleSwitch translations = new() { OnContent = "Translations", OffContent = "Translations", MinWidth = 0, VerticalAlignment = VerticalAlignment.Center };
+    private readonly Grid transcriptRow = new() { ColumnSpacing = 16, Margin = new Thickness(0, 28, 0, 0) };
+    private readonly MarkdownView transcript = new() { Margin = new Thickness(0, 12, 0, 0) };
+    private bool switching;
     private readonly StackPanel body = new() { Spacing = 20, MaxWidth = 720, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly ScrollViewer scroller = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     private readonly Grid detail = new() { RowSpacing = 12 };
@@ -77,7 +89,27 @@ internal sealed class NotesView : UserControl
         header.Children.Add(actions);
         header.Children.Add(playerBar);
         detail.Children.Add(header);
-        body.Children.Add(markdown);
+        note.Children.Add(markdown);
+        body.Children.Add(note);
+        languageSwitch.Items.Add(ownItem);
+        languageSwitch.Items.Add(translatedItem);
+        AutomationProperties.SetName(languageSwitch, "Language");
+        languageSwitch.SelectionChanged += (_, _) =>
+        {
+            if (switching) return;
+            state.Dashboard.NoteLanguage = ReferenceEquals(languageSwitch.SelectedItem, translatedItem) ? (string?)translatedItem.Tag : null;
+        };
+        AutomationProperties.SetName(translations, "Translations");
+        ToolTipService.SetToolTip(translations, "Show each line's translation under it");
+        translations.Toggled += (_, _) =>
+        {
+            if (!switching) state.Dashboard.NoteTranslations = translations.IsOn;
+        };
+        transcriptRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        transcriptRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        transcriptRow.Children.Add(transcriptHeading);
+        Grid.SetColumn(translations, 1);
+        transcriptRow.Children.Add(translations);
         scroller.Content = new Grid { Padding = new Thickness(16, 0, 16, 24), Children = { body } };
         Grid.SetRow(scroller, 1);
         detail.Children.Add(scroller);
@@ -109,6 +141,8 @@ internal sealed class NotesView : UserControl
             // Taken out and put back at once, the page is told Loaded before the Unloaded it had: subscribed once, and that Unloaded is ignored below.
             state.Recordings.Changed -= OnChanged;
             state.Recordings.Changed += OnChanged;
+            state.Dashboard.PropertyChanged += OnLanguageChanged;
+            state.Preferences.PropertyChanged += OnLanguageChanged;
             state.Recordings.Reload();
             Refresh();
         };
@@ -117,12 +151,20 @@ internal sealed class NotesView : UserControl
             // Back on the page already: unsubscribing now left it showing a note's first steps while the note was made.
             if (IsLoaded) return;
             state.Recordings.Changed -= OnChanged;
+            state.Dashboard.PropertyChanged -= OnLanguageChanged;
+            state.Preferences.PropertyChanged -= OnLanguageChanged;
             state.Player.Load(null, null);
             detailShown = "";
         };
     }
 
     private void OnChanged() => Refresh();
+
+    /// <summary>The language the note is read in, the Translations switch, or the layout of two languages changed.</summary>
+    private void OnLanguageChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(DashboardModel.NoteLanguage) or nameof(DashboardModel.NoteTranslations) or nameof(Preferences.NoteLayout)) Refresh();
+    }
 
     /// <summary>Brings the page up to date: the project's notes, the one open.</summary>
     public void Update(Project project)
@@ -285,7 +327,11 @@ internal sealed class NotesView : UserControl
             info.Exists ? info.Length : 0,
             processing,
             steps is null ? "" : string.Join(',', steps.Select(step => $"{step.Step}:{step.State}:{step.Detail}")),
-            file.HasAudio);
+            file.HasAudio,
+            state.Preferences.NoteLayout,
+            state.Dashboard.NoteLanguage,
+            state.Dashboard.NoteTranslations,
+            string.Join(',', state.Api.Languages));
         if (signature == detailShown) return;
         var text = state.Recordings.Contents(file.Id);
         var moved = detailShown.Split('|')[0] != file.Id;
@@ -303,13 +349,101 @@ internal sealed class NotesView : UserControl
         var at = 0;
         if (steps is not null) body.Children.Insert(at++, Steps(steps));
         if (file.Suggestions.Count > 0 && !processing) body.Children.Insert(at++, Suggestions(file));
-        markdown.Show(
+        ShowNote(
             text,
             file.HasAudio ? seconds => state.Player.PlayFrom(seconds) : null,
             processing ? null : name => _ = NoteDialogs.Rename(state, file, name, XamlRoot));
         if (moved) scroller.ChangeView(null, 0, null, disableAnimation: true);
         else DispatcherQueue.TryEnqueue(() => scroller.ChangeView(null, offset, null, disableAnimation: true));
     }
+
+    // MARK: Two languages
+
+    /// <summary>
+    /// The note itself. With its translation, as the layout has it: Switch puts the two languages' names above the note, and the one chosen gives the
+    /// title and summary, and the transcript's lines with the other language's under each (the Translations switch hides those); One after another
+    /// has the summary, then the translated one under the language's name, then the transcript with each line's translation.
+    /// </summary>
+    private void ShowNote(string text, Action<double>? onTimestamp, Action<string>? onSpeaker)
+    {
+        if (BilingualNote.Parse(text) is not { } bilingual)
+        {
+            Arrange(markdown);
+            markdown.Show(text, onTimestamp, onSpeaker);
+            return;
+        }
+        var switched = state.Preferences.NoteLayout == NoteLayout.Switch;
+        // The parts stay in the tree while only what they show changes (the switch keeps its selection, and its focus).
+        if (switched) Arrange(languageSwitch, markdown, transcriptRow, transcript);
+        else Arrange(markdown, transcriptRow, transcript);
+        var translated = switched && state.Dashboard.NoteLanguage == bilingual.Language;
+        var withTranslations = !switched || state.Dashboard.NoteTranslations;
+        if (switched)
+        {
+            var own = OwnLanguage(bilingual);
+            switching = true;
+            try
+            {
+                ownItem.Text = own is null ? "Original" : Languages.NativeOf(own);
+                ownItem.Tag = own;
+                translatedItem.Text = Languages.NativeOf(bilingual.Language);
+                translatedItem.Tag = bilingual.Language;
+                AutomationProperties.SetName(ownItem, ownItem.Text);
+                AutomationProperties.SetName(translatedItem, translatedItem.Text);
+                ownItem.IsSelected = !translated;
+                translatedItem.IsSelected = translated;
+                languageSwitch.SelectedItem = translated ? translatedItem : ownItem;
+                translations.IsOn = withTranslations;
+            }
+            finally
+            {
+                switching = false;
+            }
+        }
+
+        var head = bilingual.Front + "\n"
+            + (translated
+                ? $"# {bilingual.TranslatedTitle}\n\n{bilingual.TranslatedSummary}\n"
+                : $"# {bilingual.Title}\n\n{bilingual.Summary}\n"
+                  + (switched || bilingual.TranslatedSummary.Length == 0 ? "" : $"\n## {Languages.NativeOf(bilingual.Language)}\n\n{Demoted(bilingual.TranslatedSummary)}\n"));
+        markdown.Show(head, onTimestamp, onSpeaker);
+
+        transcriptHeading.Text = bilingual.Heading;
+        translations.Visibility = switched ? Visibility.Visible : Visibility.Collapsed;
+        // The language read first is the turn's line; the other one, when it is shown, is the "> " line under it.
+        var turns = bilingual.Turns.Select(turn =>
+        {
+            var (first, second) = translated && turn.Translation is { Length: > 0 } said ? (said, turn.Text) : (turn.Text, turn.Translation);
+            return withTranslations && second is { Length: > 0 } ? $"{turn.Header}\n{first}\n> {second}" : $"{turn.Header}\n{first}";
+        });
+        transcript.Show(string.Join("\n\n", turns), onTimestamp, onSpeaker);
+    }
+
+    /// <summary>The note's parts, in order; nothing moves when they are the ones there already.</summary>
+    private void Arrange(params UIElement[] parts)
+    {
+        if (note.Children.Count == parts.Length && note.Children.Zip(parts).All(pair => ReferenceEquals(pair.First, pair.Second))) return;
+        note.Children.Clear();
+        foreach (var part in parts) note.Children.Add(part);
+    }
+
+    /// <summary>
+    /// The language a translated note was written in: the person's other one, else the one whose transcript heading it has; null when neither
+    /// says (the switch then calls it the original).
+    /// </summary>
+    private string? OwnLanguage(BilingualNote bilingual)
+    {
+        var mine = state.Api.Languages;
+        if (mine.Count == 2 && mine.Contains(bilingual.Language)) return mine.First(code => code != bilingual.Language);
+        return Languages.All.FirstOrDefault(language =>
+            language.Code != bilingual.Language
+            && (language.Code == "en" || Lexicon.Load(language.Code) != Lexicon.English)
+            && Lexicon.Load(language.Code).TranscriptHeading == bilingual.Heading)?.Code;
+    }
+
+    /// <summary>The translated summary under its language's name: its headings a level down, under that one.</summary>
+    private static string Demoted(string markdown) =>
+        string.Join("\n", markdown.Split('\n').Select(line => line.StartsWith('#') && line.TakeWhile(c => c == '#').Count() < 6 ? "#" + line : line));
 
     /// <summary>What happens to a new note after Stop, step by step; it stays on the page if a step failed.</summary>
     private static Border Steps(IReadOnlyList<NoteProgress> steps)

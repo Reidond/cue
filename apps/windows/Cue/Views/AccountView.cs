@@ -93,6 +93,7 @@ public sealed class AccountView : UserControl
             "note_transcript" => "Transcript clean-up",
             "note_names" => "Suggested names",
             "notes_summary" => "Summaries",
+            "note_translation" => "Translations",
             "material_text" => "Reading files",
             _ => feature,
         };

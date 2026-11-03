@@ -1,7 +1,9 @@
 import Foundation
 
 /// A note as Markdown: the copy Cue keeps in the project's `Notes` folder (YAML front matter, the title, the summary, and the transcript after
-/// an HTML comment marker), written from the account's note and, for the notes a Mac had before it had an account, read back into one.
+/// an HTML comment marker), written from the account's note and, for the notes a Mac had before it had an account, read back into one. A note
+/// translated into the other of the person's two languages has `translation: CODE` in its front matter, its translated title and summary in a
+/// block after its own (`RecordingFile.translationStart` … `translationEnd`), and each turn's translation on a `> ` line right under it.
 enum NoteMarkdown {
     /// 0:42 → "1 min"; under a minute "<1 min". The locale's abbreviations ("1 hr, 5 min").
     static func duration(_ seconds: TimeInterval) -> String {
@@ -39,15 +41,35 @@ enum NoteMarkdown {
             front.append("audio-online: yes")
         }
         if !note.suggestions.isEmpty { front.append("suggestions: \(RecordingFile.names(note.suggestions))") }
+        if let translation = note.translation { front.append("translation: \(translation.language)") }
         front.append("note: \(note.id)")
 
         let summary = note.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        var transcript = "\(RecordingFile.transcriptMarker)\n## \(note.transcriptHeading)\n\n"
-            + note.transcript.map { "**\(offset($0.start)) · \($0.label)**\n\($0.text)" }.joined(separator: "\n\n") + "\n"
+        // With two languages the title and summary in the other one follow the note's own, in a block of their own.
+        var translated = ""
+        if let translation = note.translation {
+            let other = translation.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = translation.title.replacingOccurrences(of: "\n", with: " ")
+            translated = "\(RecordingFile.translationStart(translation.language))\n# \(title)\n\n"
+            if !other.isEmpty { translated += other + "\n" }
+            translated += RecordingFile.translationEnd + "\n\n"
+        }
+        // Each turn, and on the line under it its translation (none when it couldn't be translated).
+        var turns: [String] = []
+        for (index, turn) in note.transcript.enumerated() {
+            var text = "**\(offset(turn.start)) · \(turn.label)**\n\(turn.text)"
+            if let lines = note.translation?.transcript, index < lines.count {
+                let line = lines[index].replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+                if !line.isEmpty { text += "\n> \(line)" }
+            }
+            turns.append(text)
+        }
+        var transcript = "\(RecordingFile.transcriptMarker)\n## \(note.transcriptHeading)\n\n" + turns.joined(separator: "\n\n") + "\n"
         if note.transcript.isEmpty, let existing, let marker = existing.range(of: RecordingFile.transcriptMarker) {
             transcript = String(existing[marker.lowerBound...])
         }
-        return "---\n" + front.joined(separator: "\n") + "\n---\n\n# \(note.title)\n\n" + (summary.isEmpty ? "" : summary + "\n\n") + transcript
+        let head = "---\n" + front.joined(separator: "\n") + "\n---\n\n# \(note.title)\n\n"
+        return head + (summary.isEmpty ? "" : summary + "\n\n") + translated + transcript
     }
 
     /// The account's note for a file of the library that was written before there was one: its front matter, summary and transcript taken
@@ -59,7 +81,8 @@ enum NoteMarkdown {
         else { return nil }
         let body = String(text[end.upperBound...])
         let marker = body.range(of: RecordingFile.transcriptMarker)
-        let head = marker.map { String(body[..<$0.lowerBound]) } ?? body
+        // The note in its own language: its translation is the account's to make again.
+        let head = RecordingFile.withoutTranslation(marker.map { String(body[..<$0.lowerBound]) } ?? body)
         let tail = marker.map { String(body[$0.upperBound...]) } ?? ""
 
         // The summary is everything between the H1 title and the transcript.
@@ -91,7 +114,8 @@ enum NoteMarkdown {
                 let seconds: Double = hours * 3600 + minutes * 60 + secs
                 current = (seconds, String(match.4), [])
             } else if current != nil {
-                if line.trimmingCharacters(in: .whitespaces).isEmpty { flush() } else { current?.lines.append(line) }
+                // A "> " line under a turn is its translation, not part of what was said.
+                if line.trimmingCharacters(in: .whitespaces).isEmpty { flush() } else if !line.hasPrefix(">") { current?.lines.append(line) }
             } else if line.hasPrefix("## ") {
                 heading = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
             }

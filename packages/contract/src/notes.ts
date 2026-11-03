@@ -62,12 +62,25 @@ export const NoteStepId = Type.Union([
     Type.Literal('speakers'),
     Type.Literal('names'),
     Type.Literal('summary'),
+    Type.Literal('translate'),
 ]);
+
+/** A note in the other of the person's two languages: its title and summary, and each turn of the transcript, translated. */
+export const NoteTranslation = Type.Object({
+    language: Type.String({ description: 'A code: uk' }),
+    name: Type.String({ description: 'Its name in English: "Ukrainian"' }),
+    title: Type.String(),
+    summary: Type.String({ description: 'Markdown, as `summary`' }),
+    transcript: Type.Array(Type.String(), { description: 'One per turn of `transcript`, in the same order' }),
+});
+export type NoteTranslation = Static<typeof NoteTranslation>;
 
 /** A step of the Workflow as the note's page lists it. */
 export const NoteStep = Type.Object({
     id: NoteStepId,
-    title: Type.String({ description: '"Improving transcript", "Finding speakers", "Suggesting names", "Writing summary"' }),
+    title: Type.String({
+        description: '"Improving transcript", "Finding speakers", "Suggesting names", "Writing summary", "Translating notes"',
+    }),
     state: Type.Union([Type.Literal('pending'), Type.Literal('running'), Type.Literal('done'), Type.Literal('failed')]),
     detail: Type.Union([Type.String(), Type.Null()], { description: 'What it found, or why it failed (for people)' }),
 });
@@ -92,6 +105,7 @@ export const Note = Type.Object({
     summary: Type.String({ description: 'Markdown, without the title and the name suggestions' }),
     transcriptHeading: Type.String({ description: '"Transcript", «Транскрипт»: the language’s heading for it' }),
     transcript: Type.Array(Turn),
+    translation: Type.Union([NoteTranslation, Type.Null()], { description: 'With two languages chosen: the note in the other one' }),
     suggestions: Type.Record(Type.String(), Type.String(), {
         description: 'Names the summary found for labels: {"Participant 1": "Olena Mulesa"}',
     }),

@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var dashboardWindow: NSWindow?
     private var recordingObserver: Any?
     private var cueObserver: Any?
+    private var layoutObserver: Any?
     private var updateObserver: Any?
     private var statusItem: NSStatusItem!
     private var signalSources: [DispatchSourceSignal] = []
@@ -81,6 +82,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panel.setFrameOrigin(NSPoint(x: visible.maxX - 540, y: visible.maxY - 660))
         }
         if !isSandboxed { panel.setFrameAutosaveName("overlay") }
+        // Side by side needs room for two columns: choosing it widens a narrower overlay.
+        layoutObserver = preferences.$answerLayout.removeDuplicates().sink { [weak self] layout in
+            if layout == .mirror { self?.widenOverlay() }
+        }
         if background {
             keepBehind(panel)
             activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "CUE_BACKGROUND")
@@ -116,6 +121,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
+    /// Answers side by side: an overlay too narrow for two columns grows to the left, its right edge where it was, and stays on its screen.
+    private func widenOverlay() {
+        let width: CGFloat = 680
+        guard panel.frame.width < AnswerLayout.mirrorWidth else { return }
+        var frame = panel.frame
+        frame.origin.x = frame.maxX - width
+        frame.size.width = width
+        if let visible = (panel.screen ?? NSScreen.main)?.visibleFrame { frame.origin.x = max(frame.origin.x, visible.minX) }
+        panel.setFrame(frame, display: true)
+    }
+
     /// ⌃⌥H: hides or shows the overlay while Cue runs (it keeps listening); starts Cue when it doesn't.
     private func toggleOverlay() {
         if !state.cueRunning { state.startListening() } else if panel.isVisible { panel.orderOut(nil) } else { panel.orderFrontRegardless() }
@@ -126,9 +142,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if settingsWindow == nil {
             let tabs = NSTabViewController()
             tabs.tabStyle = .toolbar
+            let state = self.state
+            let setLanguages: ([String]) -> Void = { codes in Task { await state.setLanguages(codes) } }
             for pane in SettingsTab.allCases {
                 let content: AnyView = switch pane {
-                case .general: AnyView(GeneralSettings(preferences: preferences, updater: state.updater))
+                case .general: AnyView(GeneralSettings(preferences: preferences, api: state.api, setLanguages: setLanguages, updater: state.updater))
                 case .account: AnyView(AccountSettings(api: state.api))
                 case .calendar: AnyView(CalendarSettings(preferences: preferences, calendar: state.calendar))
                 }
@@ -378,6 +396,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// menu), `settings general|account|calendar` (a Settings tab) and
     /// `set PROJECT | occasion|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (the minus button of a material),
     /// `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes),
+    /// `languages CODE CODE` (Settings › General › Languages: the languages Cue is read in, in order, saved to the account; `languages` alone
+    /// clears them), `answer-layout subtitles|mirror|focus` and `note-layout switch|both` (the Answers and Notes pickers there, shown with two
+    /// languages), `note-language CODE` (the language switch of the open note),
     /// `signin` (Sign In on the sign-in screen), `signout` (Sign Out in Settings › Account) and `update check|restart` (Check for Updates…,
     /// Restart to Update). Until someone is signed in, only these, `page`, `size` and the Settings ones do anything.
     private func startControl(from path: String) {
@@ -475,6 +496,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let exchange = state.exchanges.last(where: \.waiting) { state.prepare(exchange.id) }
         case "settings":
             showSettings(SettingsTab(rawValue: argument))
+        case "languages":
+            await state.setLanguages(argument.split(separator: " ").map(String.init))
+        case "answer-layout":
+            if let layout = AnswerLayout(rawValue: argument) { preferences.answerLayout = layout }
+        case "note-layout":
+            if let layout = NoteLayout(rawValue: argument) { preferences.noteLayout = layout }
+        case "note-language":
+            dashboard.noteLanguage = argument.isEmpty ? nil : argument
         case "size":
             // The dashboard's edge dragged to make it W × H points (as small as it lets it be).
             let numbers = argument.split(separator: " ").compactMap { Double($0) }

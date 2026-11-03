@@ -12,11 +12,13 @@ import {
     Notes,
     NotesQuery,
     type Side,
+    type NoteTranslation,
 } from '@cue/contract';
 import { env } from 'cloudflare:workers';
 import { Elysia, sse } from 'elysia';
 import { callOf } from '../call/stub.ts';
 import { ApiError } from '../errors.ts';
+import { languagesOf } from '../languages.ts';
 import { findProject } from '../projects.ts';
 import { janitor } from '../notes/janitor.ts';
 import { participantsOf, turnsFor } from '../notes/compose.ts';
@@ -72,7 +74,7 @@ function inRecording(lines: Line[], call: CallRow, take: number, endedAt: number
         .toSorted((a, b) => a.start - b.start);
 }
 
-const insertNote = (row: Omit<NoteRow, 'ready_at' | 'audio_deleted_at' | 'trashed_at'> & Partial<NoteRow>) =>
+const insertNote = (row: Omit<NoteRow, 'ready_at' | 'audio_deleted_at' | 'trashed_at' | 'translation'> & Partial<NoteRow>) =>
     env.DB.prepare(
         `INSERT INTO note (${NOTE_COLUMNS}) VALUES (${NOTE_COLUMNS.split(',')
             .map(() => '?')
@@ -108,6 +110,7 @@ const insertNote = (row: Omit<NoteRow, 'ready_at' | 'audio_deleted_at' | 'trashe
         row.audio_deleted_at ?? null,
         row.trashed_at ?? null,
         row.created_at,
+        row.translation ?? null,
     );
 
 /** Deletes a note's audio from R2 and from the note. */
@@ -117,7 +120,7 @@ async function dropAudio(id: string, keys: AudioKeys): Promise<void> {
 }
 
 /**
- * A rename, throughout the note: its transcript, summary, title and participants, whole words only (the other people keep their labels). Two
+ * A rename, throughout the note: its transcript, summary, title, participants and translation, whole words only (the other people keep their labels). Two
  * labels that turn out to be one person become one participant, and the name suggested for the old one is dropped.
  */
 function renamed(row: NoteRow, from: string, name: string): Record<string, string> {
@@ -132,12 +135,23 @@ function renamed(row: NoteRow, from: string, name: string): Record<string, strin
     }
     const suggestions = parse<Record<string, string>>(row.suggestions, {});
     delete suggestions[from];
+    const translation = parse<NoteTranslation | null>(row.translation, null);
     return {
         title: replacingName(from, name, row.title),
         summary: replacingName(from, name, row.summary),
         transcript: JSON.stringify(turns),
         participants: JSON.stringify(people),
         suggestions: JSON.stringify(suggestions),
+        ...(translation
+            ? {
+                  translation: JSON.stringify({
+                      ...translation,
+                      title: replacingName(from, name, translation.title),
+                      summary: replacingName(from, name, translation.summary),
+                      transcript: translation.transcript.map((text) => replacingName(from, name, text)),
+                  }),
+              }
+            : {}),
     };
 }
 
@@ -186,6 +200,8 @@ export const notes = new Elysia({ name: 'notes' })
             const steps: StepId[] = [
                 ...(reads ? (['transcript', 'speakers'] as const) : []),
                 ...(body.summarize ? (['names', 'summary'] as const) : []),
+                // With two languages chosen, the notes are translated into the other.
+                ...((await languagesOf(env.DB, userId)).length === 2 ? (['translate'] as const) : []),
             ];
             const id = crypto.randomUUID();
             const title = body.meeting?.title ?? body.title ?? 'Call';

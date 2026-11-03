@@ -12,21 +12,29 @@ struct OverlayView: View {
     private var size: CGFloat { CGFloat(preferences.textSize) }
 
     var body: some View {
-        // Spacing below the gaps keeps the pieces distinct instead of melting together.
-        GlassEffectContainer(spacing: 4) {
-            VStack(spacing: 10) {
-                ControlBar(state: state, preferences: preferences)
-                QuestionList(state: state, size: size)
-                    .frame(maxHeight: .infinity)
-                if preferences.showTranscript {
-                    TranscriptCard(state: state, size: size)
-                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 6)))
+        // The overlay's width decides whether answers fit side by side (the snapshots draw it at the window's size, so this is layout, not state).
+        GeometryReader { geometry in
+            // Spacing below the gaps keeps the pieces distinct instead of melting together.
+            GlassEffectContainer(spacing: 4) {
+                VStack(spacing: 10) {
+                    ControlBar(state: state, preferences: preferences)
+                    QuestionList(state: state, size: size, layout: layout(width: geometry.size.width))
+                        .frame(maxHeight: .infinity)
+                    if preferences.showTranscript {
+                        TranscriptCard(state: state, size: size)
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 6)))
+                    }
+                    AskBar(state: state)
                 }
-                AskBar(state: state)
+                .animation(.smooth(duration: 0.2), value: preferences.showTranscript)
             }
-            .animation(.smooth(duration: 0.2), value: preferences.showTranscript)
+            .padding(10)
         }
-        .padding(10)
+    }
+
+    /// How answers in two languages show: side by side only while there is room for two columns.
+    private func layout(width: CGFloat) -> AnswerLayout {
+        preferences.answerLayout == .mirror && width < AnswerLayout.mirrorWidth ? .subtitles : preferences.answerLayout
     }
 }
 
@@ -204,6 +212,8 @@ private struct IconButton: View {
 private struct QuestionList: View {
     @ObservedObject var state: AppState
     let size: CGFloat
+    /// With two languages, how the answer in full shows them.
+    let layout: AnswerLayout
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var position = ScrollPosition(idType: UUID.self)
 
@@ -215,7 +225,7 @@ private struct QuestionList: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 2) {
                         if let exchange = state.current {
-                            ExchangeCard(exchange: exchange, size: size, lexicon: state.lexicon,
+                            ExchangeCard(exchange: exchange, size: size, lexicon: state.lexicon, layout: layout,
                                          prepare: { state.prepare(exchange.id) },
                                          answerAnyway: { state.ask($0, force: true) })
                                 .id(exchange.id)
@@ -306,9 +316,11 @@ private struct AccentCapsuleStyle: ButtonStyle {
     }
 }
 
-/// A question and its marker: its number when several were asked in one go, else who's asking.
+/// A question and its marker: its number when several were asked in one go, else who's asking. With two languages, the question in the
+/// other one under it, smaller and secondary.
 private struct QuestionLine: View {
     let question: String
+    var translation: String?
     let number: Int?
     let size: CGFloat
     let lines: Int
@@ -318,11 +330,20 @@ private struct QuestionLine: View {
             Image(systemName: number.map { "\($0).circle.fill" } ?? "person.wave.2.fill")
                 .foregroundStyle(.secondary)
                 .frame(width: size, alignment: .center)
-            Text(question)
-                .fontWeight(.semibold)
-                .foregroundStyle(.primary)
-                .lineLimit(lines)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(question)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+                    .lineLimit(lines)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let translation {
+                    Text(translation)
+                        .font(.system(size: max(size - 2, 11)))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(lines)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
         .font(.system(size: size))
     }
@@ -344,8 +365,8 @@ private struct ExchangeRow: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(Array(exchange.answers.enumerated()), id: \.element.id) { index, answer in
                         VStack(alignment: .leading, spacing: 2) {
-                            QuestionLine(question: answer.question, number: exchange.answers.count > 1 ? index + 1 : nil,
-                                         size: questionSize, lines: 2)
+                            QuestionLine(question: answer.question, translation: answer.questionTranslation,
+                                         number: exchange.answers.count > 1 ? index + 1 : nil, size: questionSize, lines: 2)
                             status(answer).padding(.leading, questionSize + 8)
                         }
                         .opacity(answer.isNotAQuestion ? 0.5 : 1)
@@ -401,6 +422,7 @@ private struct ExchangeCard: View {
     let exchange: Exchange
     let size: CGFloat
     let lexicon: Lexicon
+    let layout: AnswerLayout
     let prepare: () -> Void
     let answerAnyway: (String) -> Void
 
@@ -409,7 +431,7 @@ private struct ExchangeCard: View {
             ForEach(Array(exchange.answers.enumerated()), id: \.element.id) { index, answer in
                 if index > 0 { Divider() }
                 AnswerContent(answer: answer, number: exchange.answers.count > 1 ? index + 1 : nil,
-                              size: size, lexicon: lexicon) { answerAnyway(answer.question) }
+                              size: size, lexicon: lexicon, layout: layout) { answerAnyway(answer.question) }
             }
             if exchange.waiting {
                 Button("Prepare Answer", action: prepare)
@@ -428,11 +450,15 @@ private struct AnswerContent: View {
     let number: Int?
     let size: CGFloat
     let lexicon: Lexicon
+    let layout: AnswerLayout
     let answerAnyway: () -> Void
+
+    /// The labels of the language the answer is in.
+    private var sayLexicon: Lexicon { answer.sayLanguage.map { Lexicon.load($0) } ?? lexicon }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            QuestionLine(question: answer.question, number: number, size: size, lines: 6)
+            QuestionLine(question: answer.question, translation: answer.questionTranslation, number: number, size: size, lines: 6)
 
             if !answer.requested {
                 EmptyView()
@@ -443,8 +469,18 @@ private struct AnswerContent: View {
                 Button("Answer Anyway", action: answerAnyway)
                     .buttonStyle(.glass)
             } else {
-                SayNow(answer: answer, size: size)
-                AnswerLines(lines: answer.rest, size: size, lexicon: lexicon)
+                // With one language (no translation) every layout is the one answer as it has always been.
+                if let other = answer.translation, layout == .mirror {
+                    MirroredAnswer(answer: answer, size: size, lexicon: sayLexicon,
+                                   say: answer.sayLanguage.map { CueLanguage.name(of: $0) } ?? lexicon.name, other: other.name)
+                } else {
+                    let subtitles = answer.translation != nil && layout == .subtitles
+                    SayNow(answer: answer, size: size, translation: subtitles ? answer.firstTranslation : nil)
+                    AnswerLines(rows: answer.rest, size: size, lexicon: sayLexicon, translations: subtitles)
+                    if let other = answer.translation, layout == .focus {
+                        FocusTranslation(language: other.language, rows: answer.completeRows, size: size)
+                    }
+                }
                 if !answer.done && answer.firstLine != nil && answer.rest.isEmpty {
                     ProgressView().controlSize(.small)
                 }
@@ -462,72 +498,268 @@ private struct AnswerContent: View {
     }
 }
 
-/// The line to say first: the instant opener, replaced by Claude's first line when it lands.
-private struct SayNow: View {
-    let answer: Answer
+/// The "Say" label over the line to say first.
+private struct SayLabel: View {
     let size: CGFloat
 
     var body: some View {
+        Text("Say")
+            .font(.system(size: max(size - 4, 10), weight: .semibold))
+            .foregroundStyle(.tint)
+            .textCase(.uppercase)
+    }
+}
+
+/// The line to say first: the instant opener, replaced by Claude's first line when it lands. Subtitles: its translation right under it.
+private struct SayNow: View {
+    let answer: Answer
+    let size: CGFloat
+    var translation: String?
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Say")
-                .font(.system(size: max(size - 4, 10), weight: .semibold))
-                .foregroundStyle(.tint)
-                .textCase(.uppercase)
+            SayLabel(size: size)
             if let line = answer.sayNow {
-                Text(line)
-                    .font(.system(size: size * 1.4, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .contentTransition(.opacity)
-                    .animation(.smooth(duration: 0.2), value: answer.firstLine != nil)
-            } else {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Thinking…").foregroundStyle(.secondary)
+                SayLine(line: line, answer: answer, size: size)
+                if let translation {
+                    Text(translation)
+                        .font(.system(size: size * 1.1))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.system(size: size))
+            } else {
+                Thinking(size: size)
             }
         }
     }
 }
 
-/// Points with hanging bullets; the numbers and source lines set as secondary detail.
+/// What to say first, large.
+private struct SayLine: View {
+    let line: String
+    let answer: Answer
+    let size: CGFloat
+
+    var body: some View {
+        Text(line)
+            .font(.system(size: size * 1.4, weight: .semibold))
+            .foregroundStyle(.primary)
+            .fixedSize(horizontal: false, vertical: true)
+            .contentTransition(.opacity)
+            .animation(.smooth(duration: 0.2), value: answer.firstLine != nil)
+    }
+}
+
+private struct Thinking: View {
+    let size: CGFloat
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("Thinking…").foregroundStyle(.secondary)
+        }
+        .font(.system(size: size))
+    }
+}
+
+/// A line of an answer as the overlay sets it: a point, the numbers, the source, or plain text, with its bullet or label taken off.
+private struct AnswerLine {
+    enum Kind { case plain, point, numbers, source }
+
+    let kind: Kind
+    let text: String
+
+    init(_ line: String, lexicon: Lexicon) {
+        if line.hasPrefix("•") || line.hasPrefix("- ") {
+            kind = .point
+            text = line.drop(while: { "•- ".contains($0) }).trimmingCharacters(in: .whitespaces)
+        } else if let detail = Self.strip(line, label: lexicon.numbersLabel) {
+            kind = .numbers
+            text = detail
+        } else if let detail = Self.strip(line, label: lexicon.sourceLabel) {
+            kind = .source
+            text = detail
+        } else {
+            kind = .plain
+            text = line
+        }
+    }
+
+    /// The marker in the leading column: a bullet, or the numbers' and the source's symbol.
+    var symbol: String? {
+        switch kind {
+        case .plain, .point: nil
+        case .numbers: "number"
+        case .source: "book.closed"
+        }
+    }
+
+    func font(_ size: CGFloat) -> Font {
+        switch kind {
+        case .plain, .point: .system(size: size)
+        case .numbers: .system(size: size - 1).monospacedDigit()
+        case .source: .system(size: size - 3)
+        }
+    }
+
+    /// The translation of a line of this kind, its bullet or label (in the other language: "» • …", "» Цифри: …") taken off the same way;
+    /// nil when it says nothing the line doesn't (a file's name).
+    func translated(_ translation: String) -> String? {
+        var said = translation
+        switch kind {
+        case .plain:
+            break
+        case .point:
+            said = translation.drop(while: { "•- ".contains($0) }).trimmingCharacters(in: .whitespaces)
+        case .numbers, .source:
+            if let colon = translation.firstIndex(of: ":"), translation.distance(from: translation.startIndex, to: colon) <= 24 {
+                said = translation[translation.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return said.isEmpty || said == text ? nil : said
+    }
+
+    /// The translation under a line (Subtitles), a step smaller and quieter than the line.
+    func translationFont(_ size: CGFloat) -> Font {
+        switch kind {
+        case .plain, .point: .system(size: max(size - 2, 11))
+        case .numbers: .system(size: max(size - 3, 10)).monospacedDigit()
+        case .source: .system(size: max(size - 4, 10))
+        }
+    }
+
+    private static func strip(_ line: String, label: String) -> String? {
+        guard line.lowercased().hasPrefix(label.lowercased() + ":") else { return nil }
+        return line.dropFirst(label.count + 1).trimmingCharacters(in: .whitespaces)
+    }
+}
+
+/// Points with hanging bullets; the numbers and source lines set as secondary detail. Subtitles (`translations`): each line's translation
+/// right under it in the same column, smaller and secondary.
 private struct AnswerLines: View {
-    let lines: [String]
+    let rows: [AnswerRow]
     let size: CGFloat
     let lexicon: Lexicon
+    var translations = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                row(line)
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                let line = AnswerLine(row.text, lexicon: lexicon)
+                let translation = translations ? row.translation.flatMap { line.translated($0) } : nil
+                DetailRow(symbol: line.symbol, size: size) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(line.text)
+                        if let translation {
+                            // Secondary, as the numbers and the source already are: smaller says it's the translation, and it stays
+                            // legible on the glass.
+                            Text(translation)
+                                .font(line.translationFont(size))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .font(line.font(size))
+                .foregroundStyle(line.kind == .plain || line.kind == .point ? .primary : .secondary)
+            }
+        }
+    }
+}
+
+/// Side by side: the language the answer is in on the left, the other on the right, under their names, row for row; the other column
+/// secondary.
+private struct MirroredAnswer: View {
+    let answer: Answer
+    let size: CGFloat
+    let lexicon: Lexicon
+    /// "English".
+    let say: String
+    /// "Ukrainian".
+    let other: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            columns {
+                Text("Say · \(say)").foregroundStyle(.tint)
+            } other: {
+                Text(other).foregroundStyle(.secondary)
+            }
+            .font(.system(size: max(size - 4, 10), weight: .semibold))
+            .textCase(.uppercase)
+
+            if let line = answer.sayNow {
+                columns {
+                    SayLine(line: line, answer: answer, size: size)
+                } other: {
+                    Text(answer.firstTranslation ?? " ")
+                        .font(.system(size: size * 1.2, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .opacity(answer.firstTranslation == nil ? 0 : 1)
+                }
+                .padding(.bottom, 6)
+            } else {
+                Thinking(size: size)
+            }
+
+            ForEach(Array(answer.rest.enumerated()), id: \.offset) { _, row in
+                let line = AnswerLine(row.text, lexicon: lexicon)
+                // Until its translation comes, the right side of a row holds its place, so the left doesn't jump.
+                let translation = row.translation.map { line.translated($0) ?? line.text }
+                columns {
+                    DetailRow(symbol: line.symbol, size: size) { Text(line.text) }
+                        .foregroundStyle(line.kind == .plain || line.kind == .point ? .primary : .secondary)
+                } other: {
+                    DetailRow(symbol: line.symbol, size: size) { Text(translation ?? " ") }
+                        .foregroundStyle(.secondary)
+                        .opacity(translation == nil ? 0 : 1)
+                }
+                .font(line.font(size))
             }
         }
     }
 
-    @ViewBuilder private func row(_ line: String) -> some View {
-        if line.hasPrefix("•") || line.hasPrefix("- ") {
-            DetailRow(symbol: nil, size: size) {
-                Text(line.drop(while: { "•- ".contains($0) }))
+    /// One row of the two columns, each half the width, on the same first baseline.
+    private func columns<Say: View, Other: View>(@ViewBuilder _ say: () -> Say, @ViewBuilder other: () -> Other) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 20) {
+            say().frame(maxWidth: .infinity, alignment: .leading)
+            other().frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// Focus: the answer stays as with one language; under a hairline, every translation of it in one compact paragraph after the code of
+/// their language ("UK ·"), for a glance when a word is missing.
+private struct FocusTranslation: View {
+    let language: String
+    let rows: [AnswerRow]
+    let size: CGFloat
+
+    var body: some View {
+        let text = Self.paragraph(rows)
+        if !text.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Divider()
+                let code = Text("\(language.uppercased()) ·").fontWeight(.semibold)
+                Text("\(code) \(text)")
+                    .font(.system(size: max(size - 2, 11)))
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .font(.system(size: size))
-        } else if let detail = strip(line, label: lexicon.numbersLabel) {
-            DetailRow(symbol: "number", size: size) { Text(detail) }
-                .font(.system(size: size - 1).monospacedDigit())
-                .foregroundStyle(.secondary)
-        } else if let detail = strip(line, label: lexicon.sourceLabel) {
-            DetailRow(symbol: "book.closed", size: size) { Text(detail) }
-                .font(.system(size: size - 3))
-                .foregroundStyle(.secondary)
-        } else {
-            DetailRow(symbol: nil, size: size) { Text(line) }
-                .font(.system(size: size))
+            .padding(.top, 2)
         }
     }
 
-    private func strip(_ line: String, label: String) -> String? {
-        guard line.lowercased().hasPrefix(label.lowercased() + ":") else { return nil }
-        return line.dropFirst(label.count + 1).trimmingCharacters(in: .whitespaces)
+    /// The translations, bullets taken off, each ending as a sentence does.
+    static func paragraph(_ rows: [AnswerRow]) -> String {
+        rows.compactMap(\.translation).compactMap { translation -> String? in
+            var line = translation.drop(while: { "•- ".contains($0) }).trimmingCharacters(in: .whitespaces)
+            guard let last = line.last else { return nil }
+            if !".!?…:;".contains(last) { line += "." }
+            return line
+        }
+        .joined(separator: " ")
     }
 }
 

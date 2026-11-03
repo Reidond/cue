@@ -50,9 +50,22 @@ struct CallEvent: Decodable {
     var lines: Int?
     var language: String?
     var name: String?
+    /// A question's, with two languages: the other one, and the question in it.
+    var translation: QuestionTranslation?
     var heard: Bool?
 
     var side: Channel? { channel.flatMap(Channel.init(rawValue:)) }
+}
+
+/// The other of the person's two languages, for a question (`QuestionTranslation`): the answer is in the one the person says, each line followed
+/// by its translation into this one on a line that starts with "» ".
+struct QuestionTranslation: Decodable, Equatable {
+    /// "uk".
+    let language: String
+    /// Its name in English: "Ukrainian".
+    let name: String
+    /// The question in it; nil when it couldn't be told (a question typed, or answered on request).
+    let text: String?
 }
 
 extension CueAPI {

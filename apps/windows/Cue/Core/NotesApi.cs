@@ -27,12 +27,17 @@ public sealed record RemoteTurn(
 
 public sealed record RemoteMeeting(string Title, List<string> Attendees);
 
-/// <summary>A step of the notes Workflow as the note lists it: "transcript", "speakers", "names" or "summary", in a state of "pending", "running", "done" or "failed".</summary>
+/// <summary>A step of the notes Workflow as the note lists it: "transcript", "speakers", "names", "summary" or "translate", in a state of "pending", "running", "done" or "failed".</summary>
 public sealed record RemoteNoteStep(string Id, string Title, string State, string? Detail);
+
+/// <summary>With two languages chosen, the note in the other one: its code and English name, the title, the summary (Markdown) and one string per turn of
+/// the transcript, in the same order (an empty one for a line that couldn't be translated).</summary>
+public sealed record RemoteNoteTranslation(string Language, string Name, string Title, string Summary, List<string> Transcript);
 
 /// <summary>A note as the account holds it. Times are milliseconds since the epoch.</summary>
 /// <param name="Status">"processing" or "ready".</param>
 /// <param name="Audio">The sides still in storage: "me", "others", "mixed".</param>
+/// <param name="Translation">The note in the other of the person's two languages; null with one.</param>
 public sealed record RemoteNote(
     string Id,
     string? CallId,
@@ -51,7 +56,8 @@ public sealed record RemoteNote(
     Dictionary<string, string> Suggestions,
     List<RemoteNoteStep> Steps,
     List<string> Audio,
-    double CreatedAt)
+    double CreatedAt,
+    RemoteNoteTranslation? Translation = null)
 {
     public DateTime Started => DateTimeOffset.FromUnixTimeMilliseconds((long)StartedAt).UtcDateTime;
 }

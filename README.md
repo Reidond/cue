@@ -18,6 +18,10 @@ answers it finds in them, and prepares the rest — what the talk is about, the
 names and terms to listen for, and answers to the questions people are likely
 to ask. There is no language to pick: Cue hears what is spoken.
 
+If you read two languages — say you speak English on the call and think in Ukrainian — pick both in **Settings › General ›
+Languages**: every answer comes in the language you say, each line with its translation (as subtitles, side by side, or with the
+translation folded under it), the question is translated too, and the notes come in both, with a switch between them.
+
 ## How it works
 
 ```

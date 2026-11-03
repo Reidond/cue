@@ -12,6 +12,7 @@ namespace Cue;
 /// <summary>
 /// Renders the Markdown Cue writes (and what people usually add by hand): front matter, headings, paragraphs, bullet / numbered / task lists, quotes,
 /// rules, code blocks and transcript speaker lines, in standard controls on the Fluent type ramp and theme colours. The port of the Mac's MarkdownView.
+/// In a transcript, a "&gt; " line right under a turn's text is its other language: set under it, smaller and secondary, as a subtitle.
 /// </summary>
 internal sealed partial class MarkdownView : UserControl
 {
@@ -59,6 +60,9 @@ internal sealed partial class MarkdownView : UserControl
     private sealed record Code(string Text) : Block;
 
     private sealed record Speaker(string Time, string Name) : Block;
+
+    /// <summary>A transcript turn's line in the other language, under the turn's text.</summary>
+    private sealed record Subtitle(string Text) : Block;
 
     private sealed record Rule : Block;
 
@@ -153,8 +157,11 @@ internal sealed partial class MarkdownView : UserControl
             }
             else if (QuoteLine().Match(line) is { Success: true } quote)
             {
+                var underTurn = paragraph.Count > 0 && blocks.Count > 0 && blocks[^1] is Speaker;
                 Flush();
-                if (blocks.Count > 0 && blocks[^1] is Quote previous) blocks[^1] = new Quote(previous.Text + " " + quote.Groups[1].Value);
+                if (underTurn)
+                    blocks.Add(new Subtitle(quote.Groups[1].Value));
+                else if (blocks.Count > 0 && blocks[^1] is Quote previous) blocks[^1] = new Quote(previous.Text + " " + quote.Groups[1].Value);
                 else blocks.Add(new Quote(quote.Groups[1].Value));
             }
             else if (SpeakerLine().Match(line) is { Success: true } speaker)
@@ -178,6 +185,7 @@ internal sealed partial class MarkdownView : UserControl
             Heading => 28,
             Bullet or TaskItem or Numbered => 6,
             Speaker => 20,
+            Subtitle => 2,
             _ => 12,
         };
 
@@ -250,6 +258,8 @@ internal sealed partial class MarkdownView : UserControl
                 };
             case Speaker speaker:
                 return BuildSpeaker(speaker, onTimestamp, onSpeaker);
+            case Subtitle subtitle:
+                return Text(subtitle.Text, "CaptionTextBlockStyle", "TextFillColorSecondaryBrush");
             default:
                 return new Border { Height = 1, Background = Theme("DividerStrokeColorDefaultBrush") };
         }

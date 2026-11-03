@@ -51,6 +51,13 @@ struct Answer: Identifiable {
     var firstTokenAt: Date?
     var done = false
     var error: String?
+    /// With two languages: the other one, and the question in it. Nil with one, and then nothing is translated.
+    var translation: QuestionTranslation?
+    /// With two languages: the one the answer is in (the one the person says).
+    var sayLanguage: String?
+
+    /// The question in the other language, when the judge could tell it (not for a question typed or answered on request).
+    var questionTranslation: String? { translation?.text.flatMap { $0.isEmpty ? nil : $0 } }
 
     /// Claude's "—": nothing to answer (even when it explains why after the dash).
     var isNotAQuestion: Bool { done && text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("—") }
@@ -69,12 +76,38 @@ struct Answer: Identifiable {
     /// What to say right now: Claude's first line when ready, the instant opener until then.
     var sayNow: String? { firstLine ?? opener }
 
-    var rest: [String] {
-        guard let newline = text.firstIndex(of: "\n") else { return [] }
-        return text[text.index(after: newline)...]
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+    /// The answer's lines so far (the last one may still be coming), each with its translation: with two languages every line is followed by
+    /// its translation on a line that starts with "» ".
+    var rows: [AnswerRow] {
+        var rows: [AnswerRow] = []
+        for piece in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = piece.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("»") {
+                let translation = line.dropFirst().trimmingCharacters(in: .whitespaces)
+                guard !rows.isEmpty, !translation.isEmpty else { continue }
+                let before = rows[rows.count - 1].translation
+                rows[rows.count - 1].translation = before.map { $0 + " " + translation } ?? translation
+            } else if !line.isEmpty {
+                rows.append(AnswerRow(text: line))
+            }
+        }
+        return rows
     }
+
+    /// The lines after the first, once the first is complete, each with its translation.
+    var rest: [AnswerRow] { firstLine == nil ? [] : Array(rows.dropFirst()) }
+
+    /// The first line's translation, once the first line is complete and its translation has begun.
+    var firstTranslation: String? { firstLine == nil ? nil : rows.first?.translation }
+
+    /// Every line, once the first is complete: what Focus joins the translations of.
+    var completeRows: [AnswerRow] { firstLine == nil ? [] : rows }
+}
+
+/// A line of an answer and, with two languages, its translation (the "» " line after it).
+struct AnswerRow: Equatable {
+    var text: String
+    var translation: String?
 }
 
 struct ServiceStatus: Equatable {
@@ -197,6 +230,8 @@ final class AppState: ObservableObject {
     private var heldCommands: [[String: Any]] = []
     /// Questions being answered whose line in the session log waits for the prepared answer that matches (it comes right after the question).
     private var unlogged: Set<String> = []
+    /// The person's languages as the session log last said them (`🌐 Languages: …`); nil while signed out.
+    private var loggedLanguages: [String]?
     let log: SessionLog
     private var meterTimer: Timer?
     private var subscriptions: Set<AnyCancellable> = []
@@ -275,6 +310,9 @@ final class AppState: ObservableObject {
         // Signing out (or losing the session) ends listening: the overlay goes, and so does anything that would answer.
         api.$me.sink { [weak self] me in self?.usageChanged(me) }.store(in: &subscriptions)
         api.$phase.removeDuplicates().sink { [weak self] phase in if phase == .signedOut { self?.stopCue() } }.store(in: &subscriptions)
+        // The languages the person reads Cue in: read at sign-in and again with the account, changed in Settings. The live call follows them.
+        api.$languages.removeDuplicates().receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.languagesChanged() }.store(in: &subscriptions)
         micCapture.onSamples = { [micMeter, audioSink, audioRecorder] samples, time in
             micMeter.add(samples)
             audioSink.push(samples, from: .me, at: time)
@@ -493,8 +531,43 @@ final class AppState: ObservableObject {
     private func sendConfig() {
         liveCall?.send([
             "type": "config", "speaker": preferences.speakerName, "auto": preferences.autoAnswer,
-            "micQuestions": preferences.micQuestions, "questions": cueRunning,
+            "micQuestions": preferences.micQuestions, "questions": cueRunning, "languages": api.languages,
         ])
+    }
+
+    // MARK: - Languages
+
+    /// Settings › General › Languages (and `languages CODE CODE`): the languages the person reads Cue in, in order, two at most, saved to the
+    /// account. With two, answers come in the language the person says with each line's translation, and notes are translated.
+    func setLanguages(_ codes: [String]) async {
+        var chosen: [String] = []
+        for code in codes where !code.isEmpty && !chosen.contains(code) && chosen.count < 2 { chosen.append(code) }
+        guard chosen != api.languages else { return }
+        do {
+            try await api.saveLanguages(chosen)
+            logLanguages(api.languages)
+        } catch {
+            log.write("⚠︎ Couldn't save your languages: \(error.localizedDescription)")
+        }
+    }
+
+    /// The languages changed (signing in, the account read again, Settings): the live call is told, and the session log says so once.
+    private func languagesChanged() {
+        sendConfig()
+        guard api.me != nil else {
+            loggedLanguages = nil
+            return
+        }
+        // A save under way says so itself once the account has them.
+        guard api.savingLanguages == 0 else { return }
+        logLanguages(api.languages)
+    }
+
+    /// `🌐 Languages: English, Ukrainian`, when that isn't what the log said last (none at all isn't said at sign-in).
+    private func logLanguages(_ codes: [String]) {
+        defer { loggedLanguages = codes }
+        guard codes != (loggedLanguages ?? []) else { return }
+        log.write("🌐 Languages: \(CueLanguage.describe(codes))")
     }
 
     /// A command for the call; held when the call is still being made, dropped when there is none to come.
@@ -905,6 +978,9 @@ final class AppState: ObservableObject {
         var answer = Answer(questionID: questionID, question: text, opener: event.opener, requested: requested)
         answer.part = event.index ?? 0
         answer.parts = event.of ?? 1
+        // Two languages: the answer is in the one that isn't the translation's.
+        answer.translation = event.translation
+        answer.sayLanguage = event.translation.map { other in api.languages.first { $0 != other.language } ?? spokenLanguage }
         let index: Int
         if let found = exchanges.firstIndex(where: { $0.serverID == exchangeID }) {
             index = found

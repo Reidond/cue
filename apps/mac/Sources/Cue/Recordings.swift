@@ -100,6 +100,21 @@ struct RecordingFile: Identifiable, Hashable {
 
     static let transcriptMarker = "<!-- transcript -->"
 
+    /// With two languages, the note's title and summary in the other one sit between these two lines, after its own; each line of the transcript
+    /// is followed by its translation on a line that starts with "> ". Whatever reads a note back leaves both out.
+    static func translationStart(_ language: String) -> String { "<!-- cue:translation \(language) -->" }
+    static let translationEnd = "<!-- /cue:translation -->"
+
+    /// A note's text without its translation's block: what it says in its own language.
+    static func withoutTranslation(_ text: String) -> String {
+        guard let start = text.range(of: "<!-- cue:translation "),
+              let end = text.range(of: translationEnd, range: start.upperBound..<text.endIndex)
+        else { return text }
+        var trimmed = text
+        trimmed.removeSubrange(start.lowerBound..<end.upperBound)
+        return trimmed
+    }
+
     /// Folder name of the project the note belongs to (`<project>/Notes/<note>.md`).
     var projectID: String { url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent }
 
@@ -198,6 +213,8 @@ enum NoteStep: String {
     case improvingTranscript = "Improving transcript"
     case findingSpeakers = "Finding speakers"
     case writingSummary = "Writing summary"
+    /// With two languages: the title, the summary and every line of the transcript into the other one.
+    case translatingNotes = "Translating notes"
 
     var title: String { rawValue }
 }
@@ -327,6 +344,8 @@ final class RecordingStore: ObservableObject {
             steps.append(NoteProgress(step: .findingSpeakers, state: .pending))
         }
         if summarize { steps.append(NoteProgress(step: .writingSummary, state: .pending)) }
+        // With two languages the account translates the notes too (the notes it starts say for sure).
+        if api.languages.count == 2 { steps.append(NoteProgress(step: .translatingNotes, state: .pending)) }
 
         let document = """
         ---
@@ -459,6 +478,12 @@ final class RecordingStore: ObservableObject {
             return
         }
         setNoteID(started.id, of: id)
+        // Whether the notes are translated is the account's to say: the languages may have changed since Stop.
+        if started.steps.contains(where: { $0.id == "translate" }) {
+            if !has(.translatingNotes, id) { progress[id]?.append(NoteProgress(step: .translatingNotes, state: .pending)) }
+        } else {
+            progress[id]?.removeAll { $0.step == .translatingNotes }
+        }
 
         let followed = await follow(id, note: started.id)
         guard file(id) != nil else { return }
@@ -533,6 +558,10 @@ final class RecordingStore: ObservableObject {
         case ("names", "running"), ("summary", "running"): set(.writingSummary, of: id, to: .running(nil))
         case ("summary", "done"): set(.writingSummary, of: id, to: .done(nil))
         case ("summary", "failed"): set(.writingSummary, of: id, to: .failed(Self.sentence(detail)))
+        case ("translate", "running"): set(.translatingNotes, of: id, to: .running(nil))
+        case ("translate", "done"): set(.translatingNotes, of: id, to: .done(detail))
+        case ("translate", "failed"):
+            set(.translatingNotes, of: id, to: .failed(Self.sentence(detail) + " The notes are kept in their own language."))
         default: break
         }
     }
@@ -628,8 +657,12 @@ final class RecordingStore: ObservableObject {
     /// Writes a note under its title, which may be new: the front matter and the H1 take it, and the
     /// note and its audio are renamed after it (unless a file by that name is already there).
     private func write(_ text: String, to file: RecordingFile, title: String) throws {
-        var updated = text.replacingOccurrences(of: "title: \(RecordingFile.quoted(file.title))", with: "title: \(RecordingFile.quoted(title))")
-        updated = updated.replacingOccurrences(of: "\n# \(file.title)\n", with: "\n# \(title)\n")
+        // The title is the note's own: the translated one (in its block, after the summary) stays as it is.
+        let translation = text.range(of: "<!-- cue:translation ")?.lowerBound ?? text.endIndex
+        var updated = String(text[..<translation])
+            .replacingOccurrences(of: "title: \(RecordingFile.quoted(file.title))", with: "title: \(RecordingFile.quoted(title))")
+            .replacingOccurrences(of: "\n# \(file.title)\n", with: "\n# \(title)\n")
+            + String(text[translation...])
         let renamed = file.url.deletingLastPathComponent().appendingPathComponent(Self.fileName(date: file.date, title: title))
         let rename = renamed != file.url && !FileManager.default.fileExists(atPath: renamed.path)
         // The audio takes the note's new name too.
