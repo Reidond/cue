@@ -66,7 +66,7 @@ struct RemoteMeeting: Codable, Hashable {
 
 /// A step of the notes Workflow as the note lists it (`NoteStep`).
 struct RemoteNoteStep: Decodable {
-    /// "transcript", "speakers", "names" or "summary".
+    /// "transcript", "speakers", "names", "summary" or "translate".
     let id: String
     let title: String
     /// "pending", "running", "done" or "failed".
@@ -92,6 +92,8 @@ struct RemoteNote: Decodable {
     let summary: String
     let transcriptHeading: String
     let transcript: [RemoteTurn]
+    /// With two languages chosen: the note in the other one.
+    let translation: RemoteNoteTranslation?
     let suggestions: [String: String]
     let steps: [RemoteNoteStep]
     /// The sides still in storage: "me", "others", "mixed".
@@ -101,12 +103,24 @@ struct RemoteNote: Decodable {
     var started: Date { Date(timeIntervalSince1970: startedAt / 1000) }
 }
 
+/// A note in the other of the person's two languages (`NoteTranslation`): its title, its summary (Markdown) and each turn of the transcript, in
+/// the same order (an empty string for a line that couldn't be translated).
+struct RemoteNoteTranslation: Decodable {
+    /// "uk".
+    let language: String
+    /// Its name in English: "Ukrainian".
+    let name: String
+    let title: String
+    let summary: String
+    let transcript: [String]
+}
+
 /// What the Workflow does, one event per line of the session log (`NoteEvent`).
 struct NoteProgressEvent: Decodable {
     let seq: Int
     /// "step", "suggestion" or "note".
     let kind: String
-    /// "transcript", "speakers", "names" or "summary" for a step.
+    /// "transcript", "speakers", "names", "summary" or "translate" for a step.
     let step: String?
     /// "running", "done", "failed" or (the `note` event) "ready".
     let state: String

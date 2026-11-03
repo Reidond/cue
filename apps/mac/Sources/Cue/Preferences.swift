@@ -23,6 +23,12 @@ final class Preferences: ObservableObject {
     @Published var unwatchedCalendars: Set<String> { didSet { defaults.set(unwatchedCalendars.sorted(), forKey: "unwatchedCalendars") } }
     /// Project folder for each calendar event series, picked on the Upcoming page.
     @Published var meetingProjects: [String: String] { didSet { defaults.set(meetingProjects, forKey: "meetingProjects") } }
+    /// With two languages: how the overlay shows an answer in both (the languages themselves are the account's).
+    @Published var answerLayout: AnswerLayout { didSet { defaults.set(answerLayout.rawValue, forKey: "answerLayout") } }
+    /// With two languages: how a note's page shows its translation.
+    @Published var noteLayout: NoteLayout { didSet { defaults.set(noteLayout.rawValue, forKey: "noteLayout") } }
+    /// A translated note's transcript shows each line's translation under it (the Translations switch by its heading).
+    @Published var noteTranslations: Bool { didSet { defaults.set(noteTranslations, forKey: "noteTranslations") } }
 
     init() {
         speakerName = defaults.string(forKey: "speakerName") ?? NSFullUserName()
@@ -38,6 +44,9 @@ final class Preferences: ObservableObject {
         meetingAction = MeetingAction(rawValue: defaults.string(forKey: "meetingAction") ?? "") ?? .ask
         unwatchedCalendars = Set(defaults.stringArray(forKey: "unwatchedCalendars") ?? [])
         meetingProjects = defaults.dictionary(forKey: "meetingProjects") as? [String: String] ?? [:]
+        answerLayout = AnswerLayout(rawValue: defaults.string(forKey: "answerLayout") ?? "") ?? .subtitles
+        noteLayout = NoteLayout(rawValue: defaults.string(forKey: "noteLayout") ?? "") ?? .switching
+        noteTranslations = defaults.object(forKey: "noteTranslations") as? Bool ?? true
     }
 }
 

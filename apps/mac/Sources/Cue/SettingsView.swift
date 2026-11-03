@@ -10,7 +10,7 @@ enum SettingsTab: String, CaseIterable {
     /// Each pane's window size: the window takes it when its tab is picked.
     var size: CGSize {
         switch self {
-        case .general: CGSize(width: 500, height: 660)
+        case .general: CGSize(width: 500, height: 700)
         case .account: CGSize(width: 500, height: 600)
         case .calendar: CGSize(width: 500, height: 440)
         }
@@ -24,15 +24,47 @@ enum SettingsTab: String, CaseIterable {
     }
 }
 
-/// General: who the speaker is, how answers show, what notes keep, where the library is.
+/// General: who the speaker is, the languages Cue is read in, how answers show, what notes keep, where the library is.
 struct GeneralSettings: View {
     @ObservedObject var preferences: Preferences
+    /// The account, which keeps the languages.
+    @ObservedObject var api: CueAPI
+    /// Saves the languages to the account (`AppState.setLanguages`).
+    let setLanguages: ([String]) -> Void
 
     var body: some View {
         Form {
             Section {
                 TextField("Your name", text: $preferences.speakerName, prompt: Text("How notes and answers refer to you"))
             }
+
+            Section {
+                Picker("Read Cue in", selection: firstLanguage) {
+                    Text("None").tag("")
+                    ForEach(CueLanguage.all) { Text($0.native).tag($0.code) }
+                }
+                if let first = api.languages.first {
+                    Picker("Also in", selection: secondLanguage) {
+                        Text("None").tag("")
+                        ForEach(CueLanguage.all.filter { $0.code != first }) { Text($0.native).tag($0.code) }
+                    }
+                }
+                if api.languages.count == 2 {
+                    Picker("Answers", selection: $preferences.answerLayout) {
+                        ForEach(AnswerLayout.allCases) { Text($0.title).tag($0) }
+                    }
+                    Picker("Notes", selection: $preferences.noteLayout) {
+                        ForEach(NoteLayout.allCases) { Text($0.title).tag($0) }
+                    }
+                }
+            } header: {
+                Text("Languages")
+            } footer: {
+                Text(api.languages.count == 2
+                     ? "Answers come in the language you speak, each line with its translation; notes are translated too."
+                     : "Cue answers and takes notes in the language it hears. Add a second language to have both.")
+            }
+            .disabled(!api.isSignedIn)
 
             Section("Answers") {
                 Toggle("Answer questions automatically", isOn: $preferences.autoAnswer)
@@ -74,6 +106,31 @@ struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// The first language: None clears both; the second one picked first swaps them.
+    private var firstLanguage: Binding<String> {
+        Binding {
+            api.languages.first ?? ""
+        } set: { code in
+            let current = api.languages
+            if code.isEmpty {
+                setLanguages([])
+            } else if current.count == 2, current[1] == code {
+                setLanguages([code, current[0]])
+            } else {
+                setLanguages([code] + current.dropFirst().filter { $0 != code })
+            }
+        }
+    }
+
+    private var secondLanguage: Binding<String> {
+        Binding {
+            api.languages.count > 1 ? api.languages[1] : ""
+        } set: { code in
+            guard let first = api.languages.first else { return }
+            setLanguages(code.isEmpty ? [first] : [first, code])
+        }
     }
 
     private func chooseLibrary() {

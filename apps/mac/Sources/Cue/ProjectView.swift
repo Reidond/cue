@@ -30,7 +30,7 @@ struct ProjectView: View {
                 PreparedAnswersView(answers: knowledge?.prepared ?? [], reading: reading, brief: project.brief,
                                     hasMaterials: !project.materials.isEmpty)
             case .notes:
-                ProjectNotesView(store: recordings, state: state, project: project, selection: $model.note)
+                ProjectNotesView(store: recordings, state: state, project: project, selection: $model.note, language: $model.noteLanguage)
             }
         }
         .navigationTitle(project.name)

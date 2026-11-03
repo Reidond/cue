@@ -127,6 +127,7 @@ struct AccountSettings: View {
         case "note_transcript": "Transcript clean-up"
         case "note_names": "Suggested names"
         case "notes_summary": "Summaries"
+        case "note_translation": "Translated notes"
         case "material_text": "Reading files"
         default: feature
         }

@@ -8,6 +8,8 @@ struct ProjectNotesView: View {
     @ObservedObject var state: AppState
     let project: Project
     @Binding var selection: String?
+    /// The language a translated note is shown in (Switch between them); nil, or one the note isn't in: its own.
+    @Binding var language: String?
     @State private var search = ""
 
     private var files: [RecordingFile] { store.files(in: project) }
@@ -51,7 +53,8 @@ struct ProjectNotesView: View {
 
             Group {
                 if let id = selection, let file = store.file(id), file.projectID == project.id {
-                    RecordingDetail(store: store, player: state.player, file: file)
+                    RecordingDetail(store: store, preferences: state.preferences, player: state.player, file: file,
+                                    languages: state.api.languages + [project.language], language: $language)
                 } else {
                     ContentUnavailableView("Select a Note", systemImage: "doc.text",
                                            description: Text("Summaries and transcripts are saved as Markdown in the project’s Notes folder."))
@@ -92,9 +95,13 @@ private struct RecordingRow: View {
 
 private struct RecordingDetail: View {
     @ObservedObject var store: RecordingStore
+    @ObservedObject var preferences: Preferences
     /// Not observed here: only the bar redraws as it plays.
     let player: NotePlayer
     let file: RecordingFile
+    /// The person's languages, then the project's: where a translated note's own language is found.
+    let languages: [String]
+    @Binding var language: String?
     @State private var confirmTrash = false
     /// The person being renamed, and the name being typed.
     @State private var renaming = ""
@@ -102,6 +109,7 @@ private struct RecordingDetail: View {
     @State private var showRename = false
 
     var body: some View {
+        let document = MarkdownDocument(store.contents(file.id))
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if let steps = store.progress[file.id] {
@@ -114,13 +122,17 @@ private struct RecordingDetail: View {
                         store.dismissSuggestion(for: label, in: file.id)
                     }
                 }
-                MarkdownView(markdown: store.contents(file.id),
+                if let translation = document.translation, preferences.noteLayout == .switching {
+                    languageSwitch(other: translation.language)
+                }
+                MarkdownView(blocks: blocks(of: document),
                              onTimestamp: file.hasAudio ? { [player] in player.play(from: $0) } : nil,
                              onSpeaker: store.isProcessing(file.id) ? nil : { name in
                                  renaming = name
                                  newName = name
                                  showRename = true
-                             })
+                             },
+                             transcriptAccessory: document.translation == nil ? nil : AnyView(translationsSwitch))
             }
             // A comfortable reading measure, centred in wide windows.
             .frame(maxWidth: 720, alignment: .leading)
@@ -175,6 +187,50 @@ private struct RecordingDetail: View {
         } message: {
             Text("You can restore it from the Trash in Finder.")
         }
+    }
+
+    // MARK: Two languages
+
+    /// The language a note translated into `other` is in: the person's other one (the account translated it into the one it isn't in), else
+    /// the project's.
+    private func ownLanguage(besides other: String) -> String {
+        (languages + ["en", "uk"]).first { $0 != other } ?? "en"
+    }
+
+    /// Switch between them: the note's own language first, then the one it was translated into, by their names in themselves.
+    private func languageSwitch(other: String) -> some View {
+        let own = ownLanguage(besides: other)
+        let selection = Binding(get: { language == other ? other : own }, set: { (picked: String) in language = picked })
+        return Picker("Language", selection: selection) {
+            Text(CueLanguage.native(of: own)).tag(own)
+            Text(CueLanguage.native(of: other)).tag(other)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("Read the note in either of your languages")
+        .accessibilityLabel("Note language")
+    }
+
+    /// The note as the layout chosen in Settings shows it; a note without a translation is as it was written.
+    private func blocks(of document: MarkdownDocument) -> [MarkdownBlock] {
+        guard let translation = document.translation else { return document.blocks }
+        let shown = preferences.noteTranslations
+        switch preferences.noteLayout {
+        case .both:
+            return document.oneAfterAnother(language: CueLanguage.native(of: translation.language), translations: shown)
+        case .switching:
+            guard language == translation.language else { return document.original(translations: shown) }
+            return document.translated(translations: shown, heading: Lexicon.load(translation.language).transcriptHeading)
+        }
+    }
+
+    /// By the transcript's heading: hides the lines' translations (in either language).
+    private var translationsSwitch: some View {
+        Toggle("Translations", isOn: $preferences.noteTranslations)
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .help(preferences.noteTranslations ? "Hide each line's translation" : "Show each line's translation under it")
     }
 }
 
