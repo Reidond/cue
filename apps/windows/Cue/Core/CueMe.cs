@@ -2,9 +2,18 @@ using System.Globalization;
 
 namespace Cue;
 
-/// <summary>What `GET /v1/me` says (packages/contract: `Me`): who is signed in, the plan, its limits and the usage this month.</summary>
-public sealed record CueMe(CueMe.AccountInfo Account, CueMe.PlanInfo Plan, CueMe.LimitsInfo Limits, CueMe.UsageInfo Usage)
+/// <summary>What `GET /v1/me` says (packages/contract: `Me`): who is signed in, the plan, its limits and the usage this month, and the languages the
+/// person reads Cue in.</summary>
+public sealed record CueMe(
+    CueMe.AccountInfo Account,
+    CueMe.PlanInfo Plan,
+    CueMe.LimitsInfo Limits,
+    CueMe.UsageInfo Usage,
+    IReadOnlyList<string>? Languages = null)
 {
+    /// <summary>The person's languages, in order: none, one, or two (with two, answers and notes come in both).</summary>
+    public IReadOnlyList<string> Chosen => Languages ?? [];
+
     public sealed record AccountInfo(string Id, string Email, string Name, string Role);
 
     public sealed record PlanInfo(string Id, string Name);

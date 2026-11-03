@@ -49,9 +49,9 @@ public partial class App : Application
         {
             snapshots = new Snapshots(State, path);
             var main = window;
-            snapshots.Add("Dashboard", () => main.Handle, "-dashboard.png");
+            snapshots.Add("Dashboard", () => main.Handle, "-dashboard.png", () => main.Content, "SolidBackgroundFillColorBaseBrush");
             var floating = overlay;
-            snapshots.Add("Overlay", () => floating.Handle, ".png");
+            snapshots.Add("Overlay", () => floating.Handle, ".png", () => floating.Content, "AcrylicBackgroundFillColorDefaultBrush");
         }
     }
 

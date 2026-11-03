@@ -36,6 +36,8 @@ public sealed class DashboardModel : Observable
     private string? projectId;
     private ProjectTab section = ProjectTab.Overview;
     private string? noteId;
+    private string? noteLanguage;
+    private bool noteTranslations = true;
 
     public DashboardPage Page
     {
@@ -67,7 +69,28 @@ public sealed class DashboardModel : Observable
     public string? NoteId
     {
         get => noteId;
-        set => Set(ref noteId, value);
+        set
+        {
+            // Another note opens in its own language.
+            if (Set(ref noteId, value)) NoteLanguage = null;
+        }
+    }
+
+    /// <summary>
+    /// The language the open note is read in, when it has a translation (the switch above it; `note-language CODE`): its translation's code, or
+    /// null (or any other) for the note's own language.
+    /// </summary>
+    public string? NoteLanguage
+    {
+        get => noteLanguage;
+        set => Set(ref noteLanguage, value);
+    }
+
+    /// <summary>The "Translations" switch by a translated note's transcript: off, the transcript shows one language.</summary>
+    public bool NoteTranslations
+    {
+        get => noteTranslations;
+        set => Set(ref noteTranslations, value);
     }
 
     /// <summary>The project on screen: null unless the dashboard is on a project's page.</summary>
@@ -178,6 +201,7 @@ public sealed class AppState : Observable
         ProjectCommands.Register(this);
         RecordingCommands.Register(this);
         MeetingCommands.Register(this);
+        LanguageCommands.Register(this);
         // After the projects: it follows the one Cue answers from.
         Live = new LiveModel(this);
     }
@@ -220,7 +244,9 @@ public sealed class AppState : Observable
         Log.Write("🗣 Speech recognition: Cue plan");
         Api.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(CueApi.Me)) UsageChanged(Api.Me);
+            if (e.PropertyName != nameof(CueApi.Me)) return;
+            UsageChanged(Api.Me);
+            LanguagesChanged(Api.Me);
         };
         // Before the account is restored: the live call watches for it to be signed in.
         Live.Start();
@@ -260,6 +286,27 @@ public sealed class AppState : Observable
         if (PlanLimit is null) return;
         PlanLimit = null;
         Log.Write("🔓 Cue plan has room again");
+    }
+
+    // MARK: Languages
+
+    /// <summary>The languages the account had the last time it was read; null while signed out.</summary>
+    private string? languagesKnown;
+
+    /// <summary>The account's languages, read at sign-in and on every look at the account (and after Settings saved them): the session log says
+    /// what they are whenever they change (`🌐 Languages: English, Ukrainian`), and at sign-in when there are any.</summary>
+    private void LanguagesChanged(CueMe? me)
+    {
+        if (me is null)
+        {
+            languagesKnown = null;
+            return;
+        }
+        var now = string.Join(",", me.Chosen);
+        if (now == languagesKnown) return;
+        var first = languagesKnown is null;
+        languagesKnown = now;
+        if (!first || me.Chosen.Count > 0) Log.Write($"🌐 Languages: {Languages.Describe(me.Chosen)}");
     }
 
     /// <summary>What `/v1/me` says about the allowance: it ran out between calls, or it has room again (a new month, a raised limit).</summary>

@@ -124,7 +124,11 @@ public sealed record CallTranscript(DateTime StartedAt, DateTime EndedAt, IReadO
 
 /// <summary>
 /// A saved recording: Markdown with YAML front matter, the summary, and the transcript after an HTML comment marker so the summary can be replaced later.
+/// With two languages chosen it also has the note in the other one (`translation: CODE`): the translated title and summary between
+/// <see cref="TranslationStart"/> and <see cref="TranslationEnd"/> after the summary, and each turn of the transcript followed by its translation on a
+/// line that starts with "&gt; ". What reads a note back leaves both out.
 /// </summary>
+/// <param name="Translation">The code of the language the note is translated into, or null.</param>
 public sealed record RecordingFile(
     string Path,
     string Id,
@@ -134,9 +138,24 @@ public sealed record RecordingFile(
     string? Audio,
     IReadOnlyDictionary<string, string> Suggestions,
     string? NoteId,
-    bool StreamsAudio)
+    bool StreamsAudio,
+    string? Translation = null)
 {
     public const string TranscriptMarker = "<!-- transcript -->";
+
+    /// <summary>`&lt;!-- cue:translation uk --&gt;`: the translated title and summary follow, to <see cref="TranslationEnd"/>.</summary>
+    public const string TranslationStart = "<!-- cue:translation";
+
+    public const string TranslationEnd = "<!-- /cue:translation -->";
+
+    /// <summary>`text` without the translated title and summary (the block after the summary).</summary>
+    public static string WithoutTranslation(string text)
+    {
+        var start = text.IndexOf(TranslationStart, StringComparison.Ordinal);
+        if (start < 0) return text;
+        var end = text.IndexOf(TranslationEnd, start, StringComparison.Ordinal);
+        return end < 0 ? text[..start] : text[..start] + text[(end + TranslationEnd.Length)..].TrimStart('\n');
+    }
 
     public bool HasAudio => Audio is not null || StreamsAudio;
 
@@ -176,7 +195,8 @@ public sealed record RecordingFile(
             audio is not null && File.Exists(audio) ? audio : null,
             Names(front.GetValueOrDefault("suggestions")),
             front.GetValueOrDefault("note"),
-            front.GetValueOrDefault("audio-online") == "yes");
+            front.GetValueOrDefault("audio-online") == "yes",
+            front.GetValueOrDefault("translation") is { Length: > 0 } translation ? translation : null);
     }
 
     public static string Quoted(string value) => "\"" + value.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
@@ -272,6 +292,9 @@ public enum NoteStep
     ImprovingTranscript,
     FindingSpeakers,
     WritingSummary,
+
+    /// <summary>With two languages chosen: the title, the summary and the transcript put into the other one.</summary>
+    TranslatingNotes,
 }
 
 public static class NoteSteps
@@ -283,6 +306,7 @@ public static class NoteSteps
             NoteStep.UploadingRecording => "Uploading recording",
             NoteStep.ImprovingTranscript => "Improving transcript",
             NoteStep.FindingSpeakers => "Finding speakers",
+            NoteStep.TranslatingNotes => "Translating notes",
             _ => "Writing summary",
         };
 }

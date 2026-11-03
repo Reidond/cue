@@ -256,6 +256,15 @@ public sealed partial class LiveModel : Observable
         {
             if (e.PropertyName == nameof(AppState.PlanLimit)) Touch();
         };
+        // The person's languages, changed in Settings (or on another PC): the call answers in them from the next question on.
+        var languagesSent = "";
+        Api.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(CueApi.Me) || Api.Me is not { } me || string.Join(",", me.Chosen) == languagesSent) return;
+            languagesSent = string.Join(",", me.Chosen);
+            SendConfig();
+            Touch();
+        };
         // What the server does with the questions follows these.
         Prefs.PropertyChanged += (_, e) =>
         {
@@ -619,16 +628,22 @@ public sealed partial class LiveModel : Observable
         if (capturing) StartCall();
     }
 
-    /// <summary>The settings the server follows while it listens for questions.</summary>
-    private void SendConfig() =>
-        liveCall?.Send(new Dictionary<string, object?>
+    /// <summary>The settings the server follows while it listens for questions; the person's languages too, once the account is read (with two,
+    /// answers come in both).</summary>
+    private void SendConfig()
+    {
+        if (liveCall is not { } call) return;
+        var config = new Dictionary<string, object?>
         {
             ["type"] = "config",
             ["speaker"] = Prefs.SpeakerName,
             ["auto"] = Prefs.AutoAnswer,
             ["micQuestions"] = Prefs.MicQuestions,
             ["questions"] = CueRunning,
-        });
+        };
+        if (Api.Me is { } me) config["languages"] = me.Chosen.ToArray();
+        call.Send(config);
+    }
 
     /// <summary>A command for the call; held when the call is still being made, dropped when there is none to come.</summary>
     private void SendCommand(Dictionary<string, object?> command)
@@ -804,6 +819,7 @@ public sealed partial class LiveModel : Observable
             QuestionId = questionId,
             Question = text,
             Opener = e.Opener,
+            Translation = e.Translation,
             Requested = requested,
             Part = e.Index ?? 0,
             Parts = e.Of ?? 1,
