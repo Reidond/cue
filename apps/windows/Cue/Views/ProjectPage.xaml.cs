@@ -108,14 +108,23 @@ public sealed partial class ProjectPage : Page
         Scroller.Visibility = onNotes ? Visibility.Collapsed : Visibility.Visible;
         NotesHost.Visibility = onNotes ? Visibility.Visible : Visibility.Collapsed;
         // The notes page is only there while it is shown: leaving it stops the player.
-        NotesHost.Child = onNotes ? notes : null;
-        TabHost.Child = section switch
+        Place(NotesHost, onNotes ? notes : null);
+        Place(TabHost, section switch
         {
             ProjectTab.Answers => answers,
             ProjectTab.Notes => null,
             _ => overview,
-        };
+        });
         if (onNotes) notes!.Update(project);
+    }
+
+    /// <summary>
+    /// Puts a page in its place unless it is there already: set again, a child is taken out and put back, and WinUI may tell it Unloaded after the Loaded
+    /// of its return (Stop Cue redraws this page while a note is made: its Notes page then stopped following the note).
+    /// </summary>
+    private static void Place(Border host, UIElement? child)
+    {
+        if (!ReferenceEquals(host.Child, child)) host.Child = child;
     }
 
     /// <summary>Asks the account what it read from the project's files, when its files or language changed.</summary>
