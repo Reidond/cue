@@ -6,7 +6,11 @@ import {
     e2eCase,
     fail,
     fixture,
+    needOverlaySnapshots,
     needWindowsOcr,
+    ocr,
+    sleep,
+    windowsOf,
     windowText,
     type Control,
 } from '../harness/index.ts';
@@ -54,11 +58,17 @@ e2eCase(
                 );
         }
 
-        // And the snapshot shows the whole status, neither cut off nor shortened to “…”.
-        await cue.waitFor('the whole status in the snapshot', 30, async () => {
-            const text = await cue.snapshotText(cue.path('cue.png'));
-            cue.save('overlay-snapshot.txt', text);
-            return /\bListening\b/.test(text);
+        // And the snapshot shows the whole status, neither cut off nor shortened to “…”: read in the bar alone, as the empty list below it has a
+        // “Listening” heading of its own. The snapshot is the window's own pixels, so the bar is where UI Automation has it, less the window's corner.
+        needOverlaySnapshots();
+        const overlay = (await windowsOf(cue.pid)).windows.find((window) => window.title === 'Cue overlay') ?? fail('no overlay window');
+        const bar = { left: 0, top: project.top - overlay.top - 8, width: overlay.width, height: project.height + 16 };
+        await cue.waitFor('the project and the whole status in the snapshot’s bar', 30, async () => {
+            // A snapshot taken since the timer showed (one every 2 s).
+            await sleep(2.5);
+            const text = await ocr(cue.path('cue.png'), bar);
+            cue.save('overlay-bar.txt', text);
+            return /\bRooftop Hives\b/.test(text) && /\bListening\b/.test(text);
         });
     },
 );

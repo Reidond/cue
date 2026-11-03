@@ -84,6 +84,7 @@ export {
     typeText,
     windowText,
     windowsOf,
+    type Area,
     type AppWindows,
     type Control,
     type WindowsOfApp,
