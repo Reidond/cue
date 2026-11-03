@@ -14,6 +14,7 @@ export type Provider = (typeof PROVIDERS)[number];
 /** What the Worker's bindings give the auth server. Nothing in this file may import `cloudflare:workers`, so the same config runs under Node (tools/gen-schema.ts). */
 export interface AuthEnv {
     PUBLIC_URL: string;
+    ADMIN_URL: string;
     BETTER_AUTH_SECRET: string;
     ADMIN_EMAILS: string;
     ACCESS_TOKEN_SECONDS: string;
@@ -100,6 +101,8 @@ export function createAuth(env: AuthEnv, database: Parameters<typeof betterAuth>
     };
     return betterAuth({
         baseURL: env.PUBLIC_URL,
+        // The admin SPA's own host, where its sign-in ends (`callbackURL`).
+        trustedOrigins: [new URL(env.ADMIN_URL).origin],
         secret: env.BETTER_AUTH_SECRET,
         database,
         disabledPaths: ['/token'],

@@ -55,8 +55,11 @@ export const signIn = new Elysia({ name: 'sign-in' })
                     headers: { 'content-type': 'application/json', origin: env.PUBLIC_URL, accept: 'application/json' },
                     body: JSON.stringify({
                         provider: params.provider,
-                        // The admin SPA signs in through the same pages and ends back in itself; the app's sign-in resumes the authorization.
-                        callbackURL: query.next === 'admin' ? '/admin/' : `/api/auth/oauth2/authorize?${resumeOf(query).toString()}`,
+                        // The admin SPA signs in through the same pages and ends back on its own host; the app's sign-in resumes the authorization.
+                        callbackURL:
+                            query.next === 'admin'
+                                ? new URL('/', env.ADMIN_URL).toString()
+                                : `/api/auth/oauth2/authorize?${resumeOf(query).toString()}`,
                     }),
                 }),
             );

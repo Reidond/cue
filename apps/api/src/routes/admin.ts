@@ -35,8 +35,10 @@ import { ApiError } from '../errors.ts';
 import { readSettings, writeSettings } from '../settings.ts';
 import { fillDays, monthOf, monthRange } from '../usage.ts';
 
-// The owner's admin API (docs/backend.md › Admin API): same origin as the SPA, authorized by a Better Auth session cookie whose user has the
-// `admin` role. It shows usage and money, never what anyone said.
+// The owner's admin API (docs/backend.md › Admin API): called by the SPA from its own host (`ADMIN_URL`, the cue-admin Worker), authorized by
+// a Better Auth session cookie whose user has the `admin` role. It shows usage and money, never what anyone said.
+
+const adminOrigin = () => new URL(env.ADMIN_URL).origin;
 
 const run = (statements: Statement[]) =>
     env.DB.batch(statements.map((statement) => env.DB.prepare(statement.sql).bind(...statement.params)));
@@ -122,9 +124,31 @@ const monthOfQuery = (query: { month?: string }) => query.month ?? monthOf();
 
 /** Admin API: overview, users, invites and settings. */
 export const admin = new Elysia({ name: 'admin', prefix: '/admin/v1' })
-    // A cookie is sent with any request the browser makes; a write must come from this origin (Better Auth's cookies are SameSite=Lax as well).
+    // The SPA's host and this one are one site, so its requests carry the session cookie (SameSite=Lax); CORS lets that origin, and no other,
+    // read the answers, errors included (set before validation, which can fail).
+    .onTransform(({ request, set }) => {
+        set.headers.vary = 'Origin';
+        if (request.headers.get('origin') !== adminOrigin()) return;
+        set.headers['access-control-allow-origin'] = adminOrigin();
+        set.headers['access-control-allow-credentials'] = 'true';
+    })
+    // The browser asks before a write (JSON, PATCH, DELETE). The question carries no cookie, so it is answered before the session is looked up.
+    .options(
+        '/*',
+        () =>
+            new Response(null, {
+                status: 204,
+                headers: {
+                    'access-control-allow-methods': 'GET, POST, PATCH, DELETE',
+                    'access-control-allow-headers': 'content-type',
+                    'access-control-max-age': '600',
+                },
+            }),
+        { detail: { hide: true } },
+    )
+    // A cookie is sent with any request the browser makes; a write must come from the admin (Better Auth's cookies are SameSite=Lax as well).
     .onBeforeHandle(({ request }) => {
-        if (request.method !== 'GET' && request.headers.get('origin') !== new URL(env.PUBLIC_URL).origin) {
+        if (request.method !== 'GET' && request.headers.get('origin') !== adminOrigin()) {
             throw new ApiError('forbidden', 'This request did not come from the admin.');
         }
     })
@@ -149,6 +173,20 @@ export const admin = new Elysia({ name: 'admin', prefix: '/admin/v1' })
         response: { 200: AdminSession, 401: ApiErrorBody },
         detail: { summary: 'Who the session cookie belongs to (any signed-in account)' },
     })
+    // Better Auth's sign-out, here so that the SPA has one origin to talk to (a member's "Not allowed" page signs out too).
+    .delete(
+        '/session',
+        async ({ request }) => {
+            const signedOut = await authFor().api.signOut({ headers: request.headers, asResponse: true });
+            const headers = new Headers({ 'content-type': 'application/json' });
+            for (const cookie of signedOut.headers.getSetCookie()) headers.append('set-cookie', cookie);
+            return new Response(JSON.stringify({ ok: true }), { headers });
+        },
+        {
+            response: { 200: Done, 401: ApiErrorBody, 403: ApiErrorBody },
+            detail: { summary: 'Signs the session cookie out' },
+        },
+    )
     // Everything below is for the owner.
     .onBeforeHandle(({ self }) => {
         if (self.role !== 'admin') throw new ApiError('forbidden', 'This account is not allowed to use the admin.');

@@ -8,6 +8,9 @@ import * as entrypoint from './src/index.ts' with { type: 'cf-worker' };
 // (apps/mac/scripts/build.sh). `PUBLIC_URL` in the environment overrides it (a case's backend, a dry run elsewhere).
 const productionUrl = readFileSync(join(import.meta.dirname, 'production-url.txt'), 'utf8').trim();
 
+// The admin SPA's address (apps/admin/production-url.txt): a Worker of its own (cue-admin) that calls /admin/v1 from that origin.
+const adminUrl = readFileSync(join(import.meta.dirname, '..', 'admin', 'production-url.txt'), 'utf8').trim();
+
 // The deployed denylist (the KV namespace "cue-api-denylist" the first deploy made; `cf kv namespaces list`).
 const DENYLIST_ID = '4dd0de7bfe4e47578c46fb3fa972f3b7';
 
@@ -49,26 +52,6 @@ export default defineConfig(({ mode }) => ({
         workersDev: false,
         previewUrls: false,
         observability: { enabled: true },
-        // The admin SPA (apps/admin) is Vite's client build, served under /admin with the single-page-app fallback (from the root: no `basePath`,
-        // which Cloudflare refuses to an account without it; apps/admin/vite.preset.ts puts the files where /admin finds them). The fallback is
-        // not limited to /admin, so everything the Worker itself answers is listed here: a navigation to it must never get the SPA's index.html,
-        // and under `cf dev` an unlisted path gets Vite's own 404. Every new Worker route needs its prefix in this list.
-        assets: {
-            notFoundHandling: 'single-page-application',
-            htmlHandling: 'auto-trailing-slash',
-            runWorkerFirst: [
-                '/',
-                '/admin/v1/*',
-                '/v1/*',
-                '/api/*',
-                '/login',
-                '/login/*',
-                '/consent',
-                '/invite-only',
-                '/sign-in-failed',
-                '/.well-known/*',
-            ],
-        },
         // One Call per live call: Deepgram's streams, the question judge and Claude's answers live in it (src/call/).
         exports: {
             Call: exports.durableObject({ storage: 'sqlite' }),
@@ -130,6 +113,9 @@ export default defineConfig(({ mode }) => ({
             ADMIN_EMAILS: bindings.text(process.env.ADMIN_EMAILS ?? ''),
             // The issuer of the OAuth server, the origin the sign-in pages and the app's links go to.
             PUBLIC_URL: bindings.text(process.env.PUBLIC_URL ?? (mode === 'development' ? 'http://127.0.0.1:5173' : productionUrl)),
+            // The admin SPA's origin (apps/admin): the one other site whose pages may call /admin/v1 with the session cookie, and where its
+            // sign-in ends. Under `cf dev` the admin's own `cf dev` (its default port).
+            ADMIN_URL: bindings.text(process.env.ADMIN_URL ?? (mode === 'development' ? 'http://127.0.0.1:5174' : adminUrl)),
             // Seconds; 15 minutes in production, shorter in a case that waits for one to run out.
             ACCESS_TOKEN_SECONDS: bindings.text(process.env.ACCESS_TOKEN_SECONDS ?? '900'),
             GOOGLE_AUTHORIZE_URL: bindings.text(endpoints.GOOGLE_AUTHORIZE_URL),

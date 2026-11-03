@@ -18,7 +18,7 @@ vite.config.ts                      # the one lint (oxlint) and fmt (oxfmt) conf
 apps/mac/                           # the Swift app: Package.swift, Sources/Cue, Resources, scripts/build.sh
 apps/windows/                       # the Windows app: Cue.slnx, Cue/ (WinUI 3), Installer/ (WiX MSI), scripts/{build,setup}.ps1
 apps/api/                           # the Cue API: an Elysia Worker on Cloudflare (cloudflare.config.ts, src/, migrations/, scripts/)
-apps/admin/                         # the owner's admin SPA (React): built as the api Worker's client assets, served at /admin
+apps/admin/                         # the owner's admin SPA (React): a Worker of its own (cue-admin), static assets on its own host
 packages/contract/                  # TypeBox schemas of the API's requests and responses
 tests/e2e/                          # the end-to-end suite, a workspace package
 scripts/changelog.sh                # release notes; repo-wide, used by the release workflow
@@ -58,10 +58,10 @@ the only way to use the app. Work on it in a Boat sandbox like everything else (
   `pnpm --filter api types` before `vp check` in a fresh checkout (CI does).
 - Secrets and endpoints are in `apps/api/cloudflare.config.ts`. Under `cf dev` the secrets are text bindings read from the environment
   (`BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, …) with throwaway defaults, so there is no `.dev.vars` to keep apart; `IDP_URL` repoints both
-  identity providers at a stand-in, `PUBLIC_URL` is the issuer, `ACCESS_TOKEN_SECONDS` the access token's life (900), `PORT` and
+  identity providers at a stand-in, `PUBLIC_URL` is the issuer, `ADMIN_URL` the admin SPA's origin, `ACCESS_TOKEN_SECONDS` the access token's life (900), `PORT` and
   `CUE_STATE_DIR` the dev server's port and persisted state. Nothing is deployed from here: `pnpm --filter api deploy:dry` only (`docs/deploy.md` is the owner's checklist; `.github/workflows/deploy.yml`
-  deploys on pushes to `main`). The backend's production address is kept in `apps/api/production-url.txt`: the Worker's issuer (`PUBLIC_URL` outside `cf dev`) and, stamped into `Info.plist` by
-  `apps/mac/scripts/build.sh`, the Mac app's default (`CUE_API_URL` overrides it). In a deploy the `AI` binding is always on, `ADMIN_EMAILS` comes from the environment `cf deploy` runs in, and
+  deploys both Workers on pushes to `main`). The backend's production address is kept in `apps/api/production-url.txt`: the Worker's issuer (`PUBLIC_URL` outside `cf dev`) and, stamped into `Info.plist` by
+  `apps/mac/scripts/build.sh`, the Mac app's default (`CUE_API_URL` overrides it); the admin's in `apps/admin/production-url.txt` (`ADMIN_URL` outside `cf dev`). In a deploy the `AI` binding is always on, `ADMIN_EMAILS` comes from the environment `cf deploy` runs in, and
   `scripts/migrate-remote.ts` applies the migrations to the deployed D1 (found by name; `--if-exists` for the run before the first deploy).
 - The owner's script: `pnpm --filter api invite EMAIL` (invite), `… EMAIL --disable` (disable: banned, tokens revoked, on the KV
   denylist so access tokens stop working at once), `… --list`. It works on the local database (`pnpm --filter api migrate` first); with
@@ -141,13 +141,15 @@ What a person may spend, and what stops them. `docs/backend.md` › Limits has t
 - **In a case** (`9d-…`, all but `9d-limit-app` and `9d-limit-overlay` run with `--no-app`): `backend.setLimit(owner, email, usd | null)` (the admin API; the backend needs
   `adminEmails`) and `backend.seedUsage` put a person over or under; `cue.backend({ env: { RATE_LIMIT_REQUESTS: '6', RATE_LIMIT_PERIOD: '10', … } })` makes `rate_limited` easy to see.
 
-## The admin (`apps/api` `/admin/v1`, `apps/admin`)
+## The admin (`apps/api` `/admin/v1`, `apps/admin`: the `cue-admin` Worker)
 
 The owner's admin: usage and money, never content (no transcripts, no notes). `docs/backend.md` › Admin API says what it covers.
 
 - **API**: `src/routes/admin.ts`, a plugin under `/admin/v1`, authorized by a Better Auth session cookie whose user is an owner (`admin` role or
-  `ADMIN_EMAILS`): no session `401`, a member `403` (`GET /admin/v1/session` alone answers a member, so the SPA can say "Not allowed"). A write
-  must carry this origin's `Origin` header. Schemas are in `packages/contract/src/admin.ts`; money is dollars in the contract and millionths of a
+  `ADMIN_EMAILS`): no session `401`, a member `403` (`GET /admin/v1/session` alone answers a member, so the SPA can say "Not allowed";
+  `DELETE /admin/v1/session` signs either out). The SPA calls it from its own origin, `ADMIN_URL`: the plugin answers that origin's CORS preflight
+  (`OPTIONS /admin/v1/*`, before the session is looked up) and lets it, and no other, read the answers; a write must carry its `Origin` header.
+  The two hosts are one site (`admin.cue.sands.red`, `cue.sands.red`), so the API's SameSite=Lax session cookie goes with the SPA's requests. Schemas are in `packages/contract/src/admin.ts`; money is dollars in the contract and millionths of a
   dollar in the `usage` table; times are milliseconds. Settings (default monthly limit, audio retention, pausing the plan) are rows of `setting`;
   `src/routes/v1.ts` is the `/v1` group (the plan gate, then each feature's plugin: `me`, PR 4's projects, …), and a paused plan makes every route in
   it answer `plan_paused` (503). `/v1/me` reads the limit (`user_limit`, else the default) and the month's usage from `usage` (see Limits and usage).
@@ -155,11 +157,12 @@ The owner's admin: usage and money, never content (no transcripts, no notes). `d
   `cloudflare:workers`); the admin API runs it through `env.DB.batch`, the owner's script (`scripts/invite.ts`) through `cf d1 raw`. Disabling also
   puts the user on the KV denylist (`denylistKey`).
 - **The SPA** (`apps/admin`: React 19 with the React Compiler, TanStack Router file routes and Query, Eden typed from the api's `App`, Base UI, plain
-  CSS tokens in `src/styles/tokens.css`) is the *client environment* of the api's Vite project: `apps/api/index.html` and `admin-entry.ts` are the
-  entry, `apps/admin/vite.preset.ts` the plugins, `assets` in `cloudflare.config.ts` serve it under `/admin` with the SPA fallback. The fallback
-  is not limited to `/admin`: **every prefix the Worker itself answers must be in `assets.runWorkerFirst`** (`/`, `/v1/*`, `/admin/v1/*`, `/api/*`,
-  `/login*`, …), or a navigation gets the SPA's `index.html` (and `cf dev` Vite's own 404). `src/routeTree.gen.ts` is generated (by `cf dev` or
-  `cf build`) and committed. Signing in is the Worker's `/login/PROVIDER?next=admin`, which comes back to `/admin/`.
+  CSS tokens in `src/styles/tokens.css`) is a Worker of its own, `cue-admin` (`apps/admin/cloudflare.config.ts`): no code, Vite's client build as static
+  assets with the SPA fallback, at the root of its own host (`apps/admin/production-url.txt`, `https://admin.cue.sands.red`), deployed after the API.
+  `apps/admin/vite.config.ts` stamps the API's origin in (`import.meta.env.CUE_API_URL`: `CUE_API_URL`, else `apps/api/production-url.txt` in a build
+  and `http://127.0.0.1:5173` under `cf dev`, whose own port is `PORT`, 5174 by default); Eden sends the cookie (`credentials: 'include'`).
+  `pnpm --filter admin dev` beside `pnpm --filter api dev` is the pair. `src/routeTree.gen.ts` is generated (by `cf dev` or `cf build`) and committed.
+  Signing in is the API's `/login/PROVIDER?next=admin` (Better Auth trusts `ADMIN_URL`'s origin), which comes back to the admin's `/`.
 - Eden turns date-looking strings into `Date`s; the client is made with `parseDate: false`. Toggles are optimistic (`src/lib/queries.ts`: snapshot,
   patch, roll back on error, invalidate): a case that checks the server after one must wait for it (`cue.waitFor`), not read it at once.
 - Lint: oxlint's `react` (with the react-hooks rules) and `jsx-a11y` plugins are on for everything in the root `vite.config.ts`.
@@ -541,7 +544,8 @@ local D1 and KV, started by the case.
   Linux (a Boat sandbox) too (all of `9a-` but `9a-admin-disable-app`, which signs the Mac app out). They use `backend.tokensFor(email)`, `backend.signInAs(email, { provider, verified })`,
   `backend.refresh(token)`, `backend.revoke(token)`, `backend.get(path, accessToken)`, `backend.invite(email)` and
   `backend.disable(email)` (the owner's script), the stand-in `backend.idp` and `backend.log` (the Worker's output). The admin's:
-  `backend.adminAs(email)` (an `AdminClient` with the session cookie a browser would get: `get`, `call(method, path, body, origin)`),
+  `backend.adminAs(email)` (an `AdminClient` with the session cookie a browser would get: `get`, `call(method, path, body, origin)`, the origin the admin's),
+  `backend.admin()` (starts the case's admin SPA under `cf dev`, talking to its backend, and returns its origin, `backend.adminUrl`; `AdminPage` calls it),
   `backend.seedUsage(email, rows)` (rows of the `usage` table, as the backend writes them) and `AdminPage.signIn(backend, email, { scheme, viewport,
   shots })` (`harness/browser.ts`: the SPA in a browser, signed in through the stand-in provider; `.page` is Playwright's, `.shot(name)` writes a
   screenshot into the case's sandbox, `.assertClean()` fails on console errors, exceptions and 5xx, `.navigate('Users')` follows the navigation).

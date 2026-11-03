@@ -81,8 +81,9 @@ export class AdminPage {
         });
     }
 
-    /** The admin SPA in a fresh browser, signed out. */
+    /** The admin SPA (started for the backend if it isn't yet) in a fresh browser, signed out. */
     static async open(backend: Backend, options: AdminOptions): Promise<AdminPage> {
+        const base = await backend.admin();
         const context = await (
             await browser()
         ).newContext({
@@ -92,9 +93,9 @@ export class AdminPage {
             reducedMotion: 'reduce',
         });
         await mkdir(options.shots, { recursive: true });
-        const admin = new AdminPage(await context.newPage(), backend.url, options.shots, options.scheme ?? 'light');
+        const admin = new AdminPage(await context.newPage(), base, options.shots, options.scheme ?? 'light');
         opened.add(admin);
-        await admin.page.goto(`${backend.url}/admin/`);
+        await admin.page.goto(`${base}/`);
         return admin;
     }
 
@@ -103,13 +104,14 @@ export class AdminPage {
         const admin = await AdminPage.open(backend, options);
         backend.idp.approveAs(email);
         await admin.page.getByRole('link', { name: 'Continue with Google' }).click();
-        await admin.page.waitForURL(/\/admin\//);
+        // The sign-in goes through the backend's host and ends back on the admin's.
+        await admin.page.waitForURL((url) => url.origin === admin.#base);
         return admin;
     }
 
     /** Opens a page of the admin (`/users`, `/invites?…`) and waits for it to load. */
     async go(path: string): Promise<void> {
-        await this.page.goto(`${this.#base}/admin${path}`);
+        await this.page.goto(`${this.#base}${path}`);
     }
 
     /** Waits until the SPA's navigation shows (the person is an owner). */

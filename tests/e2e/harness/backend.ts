@@ -9,7 +9,7 @@ import { basename, extname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Note } from '../../../packages/contract/src/notes.ts';
-import { cfBin, cfEnv } from '../../../apps/api/scripts/cf.ts';
+import { cfBin, cfBinOf, cfEnv } from '../../../apps/api/scripts/cf.ts';
 import { E2E_ROOT } from './config.ts';
 import { type FakeIdp, startFakeIdp } from './fake-idp.ts';
 import {
@@ -29,6 +29,7 @@ import { fail } from './results.ts';
 import { sleep, within } from './time.ts';
 
 const API = join(E2E_ROOT, '..', '..', 'apps', 'api');
+const ADMIN = join(E2E_ROOT, '..', '..', 'apps', 'admin');
 // `cf` and `vp` are Node scripts: run by node itself (with the NODE_PATH pnpm's shims would add: scripts/cf.ts), so the same on Windows, where a
 // package manager's shims are .cmd files.
 const CF = [process.execPath, cfBin] as const;
@@ -79,30 +80,36 @@ async function freePort(): Promise<number> {
     });
 }
 
-export class Backend {
-    /** The backend's origin, as the app is told it (CUE_API_URL) and as the OAuth issuer. */
+/** Runs `command` detached (its own process group: `cf dev` leaves `cf-vite` and `workerd` behind when only it is killed), its output in `log`. */
+function spawnLogged(command: readonly string[], cwd: string, env: NodeJS.ProcessEnv, log: string): ChildProcess {
+    const out = openSync(log, 'a');
+    const [file = '', ...args] = command;
+    const child = spawn(file, args, { cwd, env, stdio: ['ignore', out, out], detached: true, windowsHide: true });
+    closeSync(out);
+    return child;
+}
+
+/** A dev server of the case (the backend's Worker, the admin's), on its own port, its output in `log`. */
+class DevServer {
     readonly url: string;
-    readonly idp: FakeIdp;
     readonly log: string;
-    readonly state: string;
-    #child: ChildProcess;
+    readonly #what: string;
     readonly #spawn: () => ChildProcess;
+    #child: ChildProcess;
     #stopping = false;
     #restarts = 0;
 
-    private constructor(url: string, idp: FakeIdp, log: string, state: string, spawnChild: () => ChildProcess) {
+    constructor(what: string, url: string, log: string, spawnChild: () => ChildProcess) {
+        this.#what = what;
         this.url = url;
-        this.idp = idp;
         this.log = log;
-        this.state = state;
         this.#spawn = spawnChild;
         this.#child = this.#launch();
     }
 
     /**
-     * Starts the backend's process. Vite+ now and then panics, as it starts or a little later as it bundles dependencies ("entered
-     * unreachable code", a bug of its own, seen on CI's Windows runners): the process is started again then, on the same port and state,
-     * twice at most.
+     * Starts the process. Vite+ now and then panics, as it starts or a little later as it bundles dependencies ("entered unreachable code", a bug
+     * of its own, seen on CI's Windows runners): the process is started again then, on the same port and state, twice at most.
      */
     #launch(): ChildProcess {
         const before = statSync(this.log, { throwIfNoEntry: false })?.size ?? 0;
@@ -115,6 +122,57 @@ export class Backend {
         return child;
     }
 
+    async waitUntilReady(): Promise<void> {
+        // The first start of a checkout optimizes dependencies, which takes a while.
+        const deadline = Date.now() + 180_000;
+        for (;;) {
+            // A process that panicked is started again (#launch): a moment for that before giving up.
+            if (this.#child.exitCode !== null) await sleep(1);
+            if (this.#child.exitCode !== null) fail(`${this.#what} exited while starting`, readFileSync(this.log, 'utf8').slice(-3000));
+            const ready = await fetch(`${this.url}/`).then(
+                (response) => response.ok,
+                () => false,
+            );
+            if (ready) return;
+            if (Date.now() > deadline) fail(`${this.#what} did not start in 180 s`, readFileSync(this.log, 'utf8').slice(-3000));
+            await sleep(0.3);
+        }
+    }
+
+    async stop(): Promise<void> {
+        this.#stopping = true;
+        const child = this.#child;
+        if (child.pid !== undefined && child.exitCode === null) {
+            const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+            await killTree(child, false);
+            if (!(await within(exited, 8))) await killTree(child, true);
+        }
+    }
+}
+
+export class Backend {
+    /** The backend's origin, as the app is told it (CUE_API_URL) and as the OAuth issuer. */
+    readonly url: string;
+    /** The admin SPA's origin (the backend's `ADMIN_URL`), whether or not the case has started it (`admin()`). */
+    readonly adminUrl: string;
+    readonly idp: FakeIdp;
+    readonly log: string;
+    readonly state: string;
+    readonly #dir: string;
+    readonly #server: DevServer;
+    #admin: DevServer | undefined;
+    #adminReady: Promise<void> | undefined;
+
+    private constructor(dir: string, server: DevServer, adminUrl: string, idp: FakeIdp, state: string) {
+        this.#dir = dir;
+        this.#server = server;
+        this.url = server.url;
+        this.log = server.log;
+        this.adminUrl = adminUrl;
+        this.idp = idp;
+        this.state = state;
+    }
+
     /** Starts the backend with `dir` as its folder (database, logs) and waits until it answers. */
     static async start(dir: string, options: BackendOptions = {}): Promise<Backend> {
         const state = join(dir, 'backend-state');
@@ -122,11 +180,14 @@ export class Backend {
         const idp = await startFakeIdp();
         const port = await freePort();
         const url = `http://127.0.0.1:${port}`;
+        // The admin's port is chosen now, as the backend must know its origin; its server starts only if the case opens it.
+        const adminUrl = `http://127.0.0.1:${await freePort()}`;
         const env: NodeJS.ProcessEnv = {
             ...cfEnv(),
             PORT: String(port),
             CUE_STATE_DIR: state,
             PUBLIC_URL: url,
+            ADMIN_URL: adminUrl,
             IDP_URL: idp.url,
             ACCESS_TOKEN_SECONDS: String(options.accessTokenSeconds ?? 900),
             ADMIN_EMAILS: (options.adminEmails ?? []).join(','),
@@ -151,23 +212,15 @@ export class Backend {
                 const built = await exec(CF[0], [CF[1], 'build', '--mode', 'development'], { env, cwd: API, timeout: 300 });
                 if (built.code !== 0) fail('building the backend failed', built.output);
             }
-            const spawnChild = () => {
-                const out = openSync(log, 'a');
-                // Its own process group: `cf dev` leaves `cf-vite` and `workerd` behind when only it is killed.
-                const child = preview
-                    ? spawn(VP[0], [VP[1], 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
-                          cwd: API,
-                          env,
-                          stdio: ['ignore', out, out],
-                          detached: true,
-                          windowsHide: true,
-                      })
-                    : spawn(CF[0], [CF[1], 'dev'], { cwd: API, env, stdio: ['ignore', out, out], detached: true, windowsHide: true });
-                closeSync(out);
-                return child;
-            };
-            backend = new Backend(url, idp, log, state, spawnChild);
-            await backend.#waitUntilReady();
+            const command = preview ? [...VP, 'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'] : [...CF, 'dev'];
+            backend = new Backend(
+                dir,
+                new DevServer('the backend', url, log, () => spawnLogged(command, API, env, log)),
+                adminUrl,
+                idp,
+                state,
+            );
+            await backend.#server.waitUntilReady();
             return backend;
         } catch (error) {
             if (backend) await backend.stop();
@@ -176,31 +229,27 @@ export class Backend {
         }
     }
 
-    async #waitUntilReady(): Promise<void> {
-        // The first start of a checkout optimizes dependencies, which takes a while.
-        const deadline = Date.now() + 180_000;
-        for (;;) {
-            // A process that panicked is started again (#launch): a moment for that before giving up.
-            if (this.#child.exitCode !== null) await sleep(1);
-            if (this.#child.exitCode !== null) fail('the backend exited while starting', readFileSync(this.log, 'utf8').slice(-3000));
-            const ready = await fetch(`${this.url}/`).then(
-                (response) => response.ok,
-                () => false,
+    /**
+     * Starts the admin SPA (apps/admin under `cf dev`, a Worker of its own as in production) at `adminUrl`, talking to this backend, the first
+     * time a case asks for it; returns its origin once it answers.
+     */
+    async admin(): Promise<string> {
+        if (!this.#adminReady) {
+            const log = join(this.#dir, 'admin.log');
+            const env = cfEnv({ PORT: new URL(this.adminUrl).port, CUE_API_URL: this.url }, 'admin');
+            delete env['NODE_TEST_CONTEXT'];
+            this.#admin = new DevServer('the admin', this.adminUrl, log, () =>
+                spawnLogged([process.execPath, cfBinOf('admin'), 'dev'], ADMIN, env, log),
             );
-            if (ready) return;
-            if (Date.now() > deadline) fail('the backend did not start in 180 s', readFileSync(this.log, 'utf8').slice(-3000));
-            await sleep(0.3);
+            this.#adminReady = this.#admin.waitUntilReady();
         }
+        await this.#adminReady;
+        return this.adminUrl;
     }
 
     async stop(): Promise<void> {
-        this.#stopping = true;
-        const child = this.#child;
-        if (child.pid !== undefined && child.exitCode === null) {
-            const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
-            await killTree(child, false);
-            if (!(await within(exited, 8))) await killTree(child, true);
-        }
+        await this.#admin?.stop();
+        await this.#server.stop();
         await this.idp.close();
     }
 
@@ -347,9 +396,9 @@ export class Backend {
     /** Signs `email` in to the admin (the session cookie a browser would get) and returns a client for `/admin/v1`; fails the case if the sign-in does not end there. */
     async adminAs(email: string, options: { provider?: 'google' | 'github' } = {}): Promise<AdminClient> {
         this.idp.approveAs(email);
-        const result = await signInToAdmin(this.url, options.provider);
+        const result = await signInToAdmin(this.url, this.adminUrl, options.provider);
         if (result.kind !== 'session') return fail(`signing in to the admin as ${email} did not end in a session`, JSON.stringify(result));
-        return new AdminClient(this.url, result.cookie);
+        return new AdminClient(this.url, this.adminUrl, result.cookie);
     }
 
     /** The owner (an `adminEmails` address) changes `email`'s monthly limit in the admin, or puts them back on the default (`null`). */
@@ -378,18 +427,20 @@ export class Backend {
     }
 }
 
-/** `/admin/v1` with a session cookie, as the admin SPA's `fetch` sends it (a write also carries the `Origin` of the page). */
+/** `/admin/v1` with a session cookie, as the admin SPA's `fetch` sends it (a write also carries the `Origin` of the page, the admin's host). */
 export class AdminClient {
     readonly #base: string;
+    readonly #admin: string;
     readonly #cookie: string;
 
-    constructor(base: string, cookie: string) {
+    constructor(base: string, admin: string, cookie: string) {
         this.#base = base;
+        this.#admin = admin;
         this.#cookie = cookie;
     }
 
     /** `origin` is the page the request comes from (the admin's own, unless a case plays another site). */
-    async call(method: string, path: string, body?: unknown, origin = this.#base): Promise<{ status: number; body: unknown }> {
+    async call(method: string, path: string, body?: unknown, origin = this.#admin): Promise<{ status: number; body: unknown }> {
         const response = await fetch(new URL(`/admin/v1${path}`, this.#base), {
             method,
             headers: {
