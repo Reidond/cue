@@ -88,4 +88,4 @@ export {
     type AppWindows,
     type WindowsOfApp,
 } from './screen.ts';
-export { minutesFromNow, sleep, tomorrowAt } from './time.ts';
+export { clearOfMidnight, minutesFromNow, sleep, tomorrowAt } from './time.ts';
