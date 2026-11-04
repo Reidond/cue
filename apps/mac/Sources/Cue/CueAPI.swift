@@ -46,6 +46,8 @@ struct CueMe: Decodable, Equatable {
     let plan: Plan
     /// The languages the person reads Cue in, in order (none, one or two); nil from a backend that doesn't know them yet.
     let languages: [String]?
+    /// The person's settings (their name, Auto, …); nil from a backend that doesn't keep them yet.
+    let settings: PersonalSettings?
     let limits: Limits
     let usage: Usage
 
@@ -198,6 +200,10 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
     @Published private(set) var languages: [String] = []
     /// Saves of the languages under way: meanwhile what `/v1/me` read before them doesn't put the old ones back.
     private(set) var savingLanguages = 0
+    /// The person's settings as the account has them (`/v1/me`), and what was saved since (`SettingsSync`); none while signed out.
+    @Published private(set) var settings = PersonalSettings()
+    /// Saves of the settings under way: meanwhile what `/v1/me` read before them doesn't put the old ones back.
+    private var savingSettings = 0
 
     var isSignedIn: Bool { phase == .signedIn }
 
@@ -294,6 +300,7 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
         refreshAt = .distantPast
         me = nil
         languages = []
+        settings = PersonalSettings()
         problem = nil
         phase = .signedOut
     }
@@ -343,6 +350,19 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
         }
         me = read
         if savingLanguages == 0, let codes = read.languages, codes != languages { languages = codes }
+        if savingSettings == 0, let read = read.settings, read != settings { settings = read }
+    }
+
+    /// Saves settings to the account (`PATCH /v1/me/settings`: the ones that are set); it answers with all of them.
+    func saveSettings(_ changes: PersonalSettings) async throws {
+        savingSettings += 1
+        defer { savingSettings -= 1 }
+        let data = try await request("PATCH", "v1/me/settings", json: try JSONEncoder().encode(changes))
+        do {
+            settings = try JSONDecoder().decode(PersonalSettings.self, from: data)
+        } catch {
+            throw CueAPIError.server("Cue answered something unexpected: \(error.localizedDescription)")
+        }
     }
 
     /// Saves the languages the person reads Cue in to the account (`PUT /v1/me/languages`): they take effect here at once, and are put back

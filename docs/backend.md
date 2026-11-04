@@ -87,11 +87,13 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
 
 | Route | Does |
 |---|---|
-| `GET /v1/me` | Account, plan, limits, usage this month |
+| `GET /v1/me` | Account, plan, limits, usage this month, the person's languages and settings |
+| `PUT /v1/me/languages` | The languages the person reads Cue in (two: answers and notes in both) |
+| `PATCH /v1/me/settings` | The person's settings (see Settings below): the ones named change, and their calls under way follow |
 | `GET/POST/PATCH/DELETE /v1/projects[/:id]` | Projects, the brief Cue wrote from their materials, and the person's own occasion and terms over it |
 | `POST /v1/projects/:id/brief` | Writes the brief again (it is written by itself whenever a file is added or removed) |
 | `POST /v1/projects/:id/materials`, `DELETE …/:materialId` | Upload a file (to R2), its text extracted and its prepared answers parsed |
-| `POST /v1/calls` | Starts a call for a project (calendar event, speaker, Auto, questions optional) → `callId` |
+| `POST /v1/calls` | Starts a call for a project (calendar event, questions optional; the speaker and Auto are the account's) → `callId` |
 | `GET /v1/live?call=ID[&after=SEQ]` (WebSocket) | In: binary audio frames (a channel byte, `me` / `others`, then PCM16 mono 16 kHz) and commands (`config`, `ask`, `answerNow`, `prepare`). Out, each with a `seq`: `ready`, `status {part, state, detail}`, `speaking`, `transcript.partial/final {channel, speaker, text, start, end}`, `question {id, exchange, text, opener, requested, forced}`, `prepared {questionId, answer, source, score}`, `answer.delta/done {questionId}`, `error`, `ended`. `after` replays what a reconnecting client missed. At a fixed path rather than `/v1/calls/:id/live`: Elysia drops a route's 101 under `cf dev`, so the socket is `.mount`ed and has no params |
 | `POST /v1/calls/:id/questions` | Ask from the Ask field (also over the socket); SSE of the same events |
 | `POST /v1/calls/:id/end` | Ends the call: the live transcript is saved in D1 |
@@ -105,7 +107,6 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
 | `DELETE /v1/notes/:id` | Move to trash: gone from lists, audio deleted from R2 |
 | `GET /v1/notes/:id/audio/:side` | Audio for playing from a timestamp (R2, range requests) |
 | `PUT /v1/notes/:id/audio/mixed`, `POST /v1/notes/import` | A note the Mac had before it had an account (its Markdown taken apart) and its audio |
-| `GET/PUT /v1/calendar/assignments` | Which calendar series records into which project |
 
 - **Call Durable Object** (`apps/api/src/call/`, PR 5): builds the system prompt from the project's materials, writes the prompt
   cache and keeps it warm with alarms, holds the Deepgram live streams (Nova-3 multilingual, `diarize` on the call side: the language is heard, and
@@ -142,6 +143,24 @@ with a sentence the app shows as it is. A call under way finishes the answer it 
 that would spend money are marked failed with the limit as the reason, and the note says so (`⚠︎ Cue plan limit reached: the summary wasn't written …`). A call made only to hang a recording's
 notes on (`notesOnly`) starts over already and is never stopped. Every authenticated request is also counted per user by a Rate Limiting binding (600 a minute; 30 a minute for what starts
 a call or a question): over it `429 rate_limited`. The Mac shows the usage in Settings › Account, alerts once when the limit is reached, and says so in the overlay.
+
+### Settings
+
+The settings that are the person's, not a device's, are kept in the account beside their languages (the `preference` table, `Me.settings`,
+`PATCH /v1/me/settings`): the name answers and notes call them by, Auto, questions from the room, summaries, and keeping the audio. The server
+reads them: a call's prompts and question rules, a running call when they change (on any device: the route tells the person's calls under way), a
+note's steps and whether its audio stays. Each is null until the account has it. The first app to sign in sends its own (Settings › General as it
+was on that Mac or PC) once, and from then on every app shows the account's, saves its changes there and stops sending them. Apps from before the
+account kept them send them with every call (`speaker`, `auto`, `micQuestions`, the socket's `config`) and note (`speaker`, `summarize`,
+`keepAudio`): the server goes by those only where the account has none.
+
+They stay on each device: what Cue does when a meeting starts and which project a calendar series records into, which calendars are watched, the
+library, the text size and transcript, the layouts of two languages (they depend on the screen and the overlay's width), and updates. A calendar
+series has no identity both platforms share — the Mac's is EventKit's `calendarItemExternalIdentifier` (which Apple says differs even between iOS
+and macOS for Exchange, and may change on a sync), Windows' the appointment store's `RoamingId` (the sync provider's) or its per-device `LocalId` —
+so a pick made on one device would never match on the other; the planned `GET/PUT /v1/calendar/assignments` is not built. What to do when a
+meeting starts goes with them: it is about this device's calendar and microphone (two devices that both record automatically would record the same
+meeting twice).
 
 ### Materials
 

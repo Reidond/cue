@@ -95,7 +95,8 @@ On the project's page:
    in whatever language is spoken.
 
 Your name, text size, the library folder and what Cue does
-when a meeting starts are in **Settings** (⌘,). The overlay's top bar shows the current project; click it to
+when a meeting starts are in **Settings** (⌘,). Your name, Auto, questions from the room and what notes keep
+are kept in your Cue account, so every Mac and PC you sign in to has them; the rest are this Mac's. The overlay's top bar shows the current project; click it to
 switch project or open the dashboard. Cue also keeps a menu bar item for quick
 actions.
 
@@ -425,7 +426,7 @@ more except for the last), `CUE_UPLOAD_BREAK=n` cuts the upload's connection onc
 (`new NAME`, `add PATH`, `start NAME`, `project NAME`, `page NAME/answers`,
 `ask TEXT`, `timestamp 00:00:12`, `assign EVENT | PROJECT`,
 `notification record|dismiss`, `rename NAME | NEW`, `apply LABEL`,
-`show TEXT`, `newest`, `prepare`, `record`, `settings account`, `signin`, `signout`,
+`show TEXT`, `newest`, `prepare`, `record`, `settings account`, `setting autoAnswer | off`, `signin`, `signout`,
 `size 820 700`, `update check|restart`; see `AGENTS.md`) and keeps notifications in the
 session log (`🔔 Record “Title”?`). `CUE_CALENDAR_EVENTS=events.json` reads the
 calendar from a JSON file and `CUE_MIC_APPS=file` the bundle IDs (on Windows the

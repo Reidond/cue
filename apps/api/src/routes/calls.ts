@@ -6,6 +6,7 @@ import { callOf } from '../call/stub.ts';
 import { authFor } from '../context.ts';
 import { ApiError } from '../errors.ts';
 import { limitRate, mayStartCostlyWork } from '../limits.ts';
+import { settingsOf } from '../preferences.ts';
 import { findProject } from '../projects.ts';
 import { planPaused } from '../settings.ts';
 import { authenticate } from '../token.ts';
@@ -63,15 +64,18 @@ export const calls = new Elysia({ name: 'calls', prefix: '/calls' })
             await env.DB.prepare('INSERT INTO call (id, user_id, project_id, event_id, event_title, started_at) VALUES (?, ?, ?, ?, ?, ?)')
                 .bind(callId, userId, project.id, body.eventId ?? null, body.eventTitle ?? null, startedAt)
                 .run();
+            // The person's settings are the account's; what the request says counts only where the account has none (an app from before it).
+            const settings = await settingsOf(env.DB, userId);
             await callOf(callId).begin({
                 callId,
                 userId,
                 projectId: project.id,
                 startedAt,
-                speaker: body.speaker ?? '',
-                auto: body.auto ?? true,
-                micQuestions: body.micQuestions ?? false,
+                speaker: settings.speakerName ?? body.speaker ?? '',
+                auto: settings.autoAnswer ?? body.auto ?? true,
+                micQuestions: settings.micQuestions ?? body.micQuestions ?? false,
                 questions: body.questions ?? true,
+                account: settings,
             });
             return status(201, { callId, projectId: project.id, startedAt });
         },

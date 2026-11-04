@@ -144,6 +144,10 @@ public sealed class AppState : Observable
     public ControlCommands Control { get; }
     public DispatcherQueue Queue { get; }
 
+    /// <summary>The settings that are the person's (their name, Auto, questions from the room, what notes keep): kept in the account, followed by
+    /// <see cref="Preferences"/> while someone is signed in.</summary>
+    public AccountSettings Settings { get; }
+
     /// <summary>The live call: listening, the overlay's lists, the reading rules.</summary>
     public LiveModel Live { get; }
 
@@ -172,15 +176,18 @@ public sealed class AppState : Observable
         Queue = queue;
         Api = new CueApi(Log);
         Control = new ControlCommands(this);
+        Settings = new AccountSettings(Api, Log, Preferences);
         Projects = new ProjectStore(Api, Log, Preferences);
         Recordings = new RecordingStore(this);
         Player = new NotePlayer(this);
         Calendar = new MeetingCalendar(Preferences);
         Meetings = new MeetingMonitor(this);
         Updates = new Updater(this);
-        // The projects are the account's: once someone is signed in they are loaded (and the ones found in the library imported), and one is chosen.
+        // The person's settings first (a call or a recording goes by them). The projects are the account's: once someone is signed in they are loaded
+        // (and the ones found in the library imported), and one is chosen.
         Api.OnSignedIn = async () =>
         {
+            await Settings.SyncWithAccount();
             try
             {
                 await Projects.SyncWithAccount();
@@ -206,6 +213,7 @@ public sealed class AppState : Observable
         RecordingCommands.Register(this);
         MeetingCommands.Register(this);
         LanguageCommands.Register(this);
+        SettingCommands.Register(this);
         // After the projects: it follows the one Cue answers from.
         Live = new LiveModel(this);
     }

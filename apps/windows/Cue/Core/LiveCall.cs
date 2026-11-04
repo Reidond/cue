@@ -7,17 +7,15 @@ namespace Cue;
 
 public sealed partial class CueApi
 {
-    /// <summary>Starts a call for a project. The settings can change later with a `config` command. `notesOnly`: a call just for a recording's notes, which
-    /// starts over already (nothing listens or answers) and is not stopped by the plan's limit.</summary>
-    public async Task<CallInfo> CreateCall(string projectId, string speaker, bool auto, bool micQuestions, bool questions, bool notesOnly = false)
+    /// <summary>Starts a call for a project; whether it listens for questions can change later with a `config` command (the person's name, Auto and
+    /// questions from the room are the account's: <see cref="AccountSettings"/>). `notesOnly`: a call just for a recording's notes, which starts over
+    /// already (nothing listens or answers) and is not stopped by the plan's limit.</summary>
+    public async Task<CallInfo> CreateCall(string projectId, bool questions, bool notesOnly = false)
     {
         var body = JsonSerializer.SerializeToUtf8Bytes(
             new Dictionary<string, object>
             {
                 ["projectId"] = projectId,
-                ["speaker"] = speaker,
-                ["auto"] = auto,
-                ["micQuestions"] = micQuestions,
                 ["questions"] = questions,
                 ["notesOnly"] = notesOnly,
             });

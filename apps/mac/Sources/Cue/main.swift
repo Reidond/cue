@@ -402,6 +402,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// `languages CODE CODE` (Settings › General › Languages: the languages Cue is read in, in order, saved to the account; `languages` alone
     /// clears them), `answer-layout subtitles|mirror|focus` and `note-layout switch|both` (the Answers and Notes pickers there, shown with two
     /// languages), `note-language CODE` (the language switch of the open note),
+    /// `setting speakerName|autoAnswer|micQuestions|summarize|keepAudio | VALUE` (that setting changed in Settings › General: text for the name,
+    /// on or off for the rest; kept in the account),
     /// `signin` (Sign In on the sign-in screen), `signout` (Sign Out in Settings › Account) and `update check|restart` (Check for Updates…,
     /// Restart to Update). Until someone is signed in, only these, `page`, `size` and the Settings ones do anything.
     private func startControl(from path: String) {
@@ -429,7 +431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func control(_ line: String) async {
         let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
         let command = parts.first ?? "", argument = parts.count > 1 ? parts[1] : ""
-        if !state.api.isSignedIn, !["signin", "signout", "settings", "page", "size", "update"].contains(command) {
+        if !state.api.isSignedIn, !["signin", "signout", "settings", "setting", "page", "size", "update"].contains(command) {
             state.log.write("⚠︎ Sign in to Cue first (\(command) ignored)")
             return
         }
@@ -501,6 +503,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             showSettings(SettingsTab(rawValue: argument))
         case "languages":
             await state.setLanguages(argument.split(separator: " ").map(String.init))
+        case "setting":
+            let sides = argument.components(separatedBy: " | ")
+            guard sides.count == 2 else { break }
+            let on = ["on", "true"].contains(sides[1])
+            switch sides[0] {
+            case "speakerName": preferences.speakerName = sides[1]
+            case "autoAnswer": preferences.autoAnswer = on
+            case "micQuestions": preferences.micQuestions = on
+            case "summarize": preferences.summarizeRecordings = on
+            case "keepAudio": preferences.keepAudio = on
+            default: break
+            }
         case "answer-layout":
             if let layout = AnswerLayout(rawValue: argument) { preferences.answerLayout = layout }
         case "note-layout":

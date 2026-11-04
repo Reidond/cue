@@ -265,11 +265,10 @@ public sealed partial class LiveModel : Observable
             SendConfig();
             Touch();
         };
-        // What the server does with the questions follows these.
+        // (The person's name, Auto and questions from the room reach the call from the account when they change: see AccountSettings.)
         Prefs.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName is nameof(Preferences.SpeakerName) or nameof(Preferences.AutoAnswer) or nameof(Preferences.MicQuestions)) SendConfig();
-            else if (e.PropertyName == nameof(Preferences.ActiveProject)) ProjectChanged();
+            if (e.PropertyName == nameof(Preferences.ActiveProject)) ProjectChanged();
         };
         WatchRecorder();
         StartRehearsalIfRequested();
@@ -556,7 +555,7 @@ public sealed partial class LiveModel : Observable
     {
         try
         {
-            var info = await Api.CreateCall(projectId, Prefs.SpeakerName, Prefs.AutoAnswer, Prefs.MicQuestions, CueRunning);
+            var info = await Api.CreateCall(projectId, CueRunning);
             if (generation != callGeneration)
             {
                 await Api.EndCall(info.CallId);
@@ -628,17 +627,14 @@ public sealed partial class LiveModel : Observable
         if (capturing) StartCall();
     }
 
-    /// <summary>The settings the server follows while it listens for questions; the person's languages too, once the account is read (with two,
-    /// answers come in both).</summary>
+    /// <summary>Whether the server listens for questions (while Cue runs, not while a call is only recorded); the person's languages too, once the
+    /// account is read (with two, answers come in both). Their name, Auto and questions from the room the server has from the account.</summary>
     private void SendConfig()
     {
         if (liveCall is not { } call) return;
         var config = new Dictionary<string, object?>
         {
             ["type"] = "config",
-            ["speaker"] = Prefs.SpeakerName,
-            ["auto"] = Prefs.AutoAnswer,
-            ["micQuestions"] = Prefs.MicQuestions,
             ["questions"] = CueRunning,
         };
         if (Api.Me is { } me) config["languages"] = me.Chosen.ToArray();

@@ -2,17 +2,22 @@ using System.Globalization;
 
 namespace Cue;
 
-/// <summary>What `GET /v1/me` says (packages/contract: `Me`): who is signed in, the plan, its limits and the usage this month, and the languages the
-/// person reads Cue in.</summary>
+/// <summary>What `GET /v1/me` says (packages/contract: `Me`): who is signed in, the plan, its limits and the usage this month, the languages the
+/// person reads Cue in, and their settings.</summary>
 public sealed record CueMe(
     CueMe.AccountInfo Account,
     CueMe.PlanInfo Plan,
     CueMe.LimitsInfo Limits,
     CueMe.UsageInfo Usage,
-    IReadOnlyList<string>? Languages = null)
+    IReadOnlyList<string>? Languages = null,
+    CueMe.SettingsInfo? Settings = null)
 {
     /// <summary>The person's languages, in order: none, one, or two (with two, answers and notes come in both).</summary>
     public IReadOnlyList<string> Chosen => Languages ?? [];
+
+    /// <summary>The settings that are the person's, not a device's (packages/contract: `AccountSettings`; see <see cref="Cue.AccountSettings"/>): each
+    /// null until the account has it.</summary>
+    public sealed record SettingsInfo(string? SpeakerName, bool? AutoAnswer, bool? MicQuestions, bool? Summarize, bool? KeepAudio);
 
     public sealed record AccountInfo(string Id, string Email, string Name, string Role);
 

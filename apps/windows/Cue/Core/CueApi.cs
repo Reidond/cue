@@ -252,6 +252,9 @@ public sealed partial class CueApi : Observable
     /// <summary>The languages the person reads Cue in, as the account has them (none while signed out).</summary>
     public IReadOnlyList<string> Languages => Me?.Chosen ?? [];
 
+    /// <summary>The person's settings, as the account has them (null while signed out, or from a backend that keeps none).</summary>
+    public CueMe.SettingsInfo? Settings => Me?.Settings;
+
     /// <summary>
     /// Settings › General › Languages: the account's languages become these (`PUT /v1/me/languages`: two at most, each once, codes of
     /// <see cref="Cue.Languages.All"/>), and the account is read again so everything that follows <see cref="Me"/> has them. A refusal is logged.
@@ -273,22 +276,49 @@ public sealed partial class CueApi : Observable
         }
     }
 
-    private byte[] lastMe = [];
-
-    private async Task LoadMe()
+    /// <summary>
+    /// Settings › General (and the overlay's Auto, its hot key, `setting`): the account's settings named in `changes`, by their names in the contract
+    /// (`speakerName`, `autoAnswer`, `micQuestions`, `summarize`, `keepAudio`), become these (`PATCH /v1/me/settings`); the answer is all of them.
+    /// </summary>
+    public async Task<CueMe.SettingsInfo> SaveSettings(IReadOnlyDictionary<string, object> changes)
     {
-        var data = await Get("v1/me");
-        // What the account says changes rarely: the UI is told when it does, not on every read.
-        if (Me is not null && data.AsSpan().SequenceEqual(lastMe)) return;
+        var data = await Request("PATCH", "v1/me/settings", json: JsonSerializer.SerializeToUtf8Bytes(changes, Json));
         try
         {
-            Me = JsonSerializer.Deserialize<CueMe>(data, Json) ?? throw new JsonException("empty");
-            lastMe = data;
+            return JsonSerializer.Deserialize<CueMe.SettingsInfo>(data, Json) ?? throw new JsonException("empty");
         }
         catch (JsonException e)
         {
             throw CueApiException.Server($"Cue answered something unexpected: {e.Message}");
         }
+    }
+
+    /// <summary>How many times the account has been read (`/v1/me`), the read under way included.</summary>
+    public long MeReads { get; private set; }
+
+    /// <summary>Which of those reads <see cref="Me"/> came from: a setting saved after a read was asked for may not be in its answer.</summary>
+    public long MeRead { get; private set; }
+
+    private byte[] lastMe = [];
+
+    private async Task LoadMe()
+    {
+        var read = ++MeReads;
+        var data = await Get("v1/me");
+        // What the account says changes rarely: the UI is told when it does, not on every read.
+        if (Me is not null && data.AsSpan().SequenceEqual(lastMe)) return;
+        CueMe me;
+        try
+        {
+            me = JsonSerializer.Deserialize<CueMe>(data, Json) ?? throw new JsonException("empty");
+        }
+        catch (JsonException e)
+        {
+            throw CueApiException.Server($"Cue answered something unexpected: {e.Message}");
+        }
+        lastMe = data;
+        MeRead = read;
+        Me = me;
     }
 
     // MARK: Requests
