@@ -11,11 +11,12 @@ final class OverlayPanel: NSPanel {
 }
 
 extension NSAlert {
-    /// Shows the alert and writes it to the session log (`⚠︎ …`); under CUE_BACKGROUND only there,
-    /// as a modal alert would come to the front and hold up a test run until someone answers it.
+    /// Shows the alert and writes it to the session log (`⚠︎ …`); in a test run (CUE_CONTROL, CUE_BACKGROUND) only there,
+    /// as a modal alert would hold the run up until someone answers it.
     func show(logging log: SessionLog) {
         log.write("⚠︎ \(messageText)" + (informativeText.isEmpty ? "" : ": \(informativeText)"))
-        guard ProcessInfo.processInfo.environment["CUE_BACKGROUND"] != "1" else { return }
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["CUE_CONTROL"] == nil, environment["CUE_BACKGROUND"] != "1" else { return }
         runModal()
     }
 }
@@ -364,10 +365,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                // The overlay is all glass, which caches as a blank window: drawn by the app, it is its view rendered.
+                // The overlay is all glass, which caches as a blank window: drawn by the app, it is its view rendered (with its lists
+                // and Ask field as plain views, which ImageRenderer draws).
                 let state = self.state, preferences = self.preferences, size = self.panel.frame.size
                 var targets = [Snapshots.Target(name: "Overlay", window: self.panel, path: path) {
-                    let renderer = ImageRenderer(content: OverlayView(state: state, preferences: preferences).frame(width: size.width, height: size.height))
+                    let overlay = OverlayView(state: state, preferences: preferences).environment(\.offscreenSnapshot, true)
+                    let renderer = ImageRenderer(content: overlay.frame(width: size.width, height: size.height))
                     renderer.scale = 2
                     return renderer.cgImage
                 }]

@@ -7,6 +7,8 @@ packages:
 allowBuilds:
   esbuild: true
   workerd: true
+  # Its postinstall only asks for donations.
+  tesseract.js: false
 
 # Vite+ replaces Vite everywhere, including the copy `cf` and @cloudflare/vite-plugin spawn
 # (docs/backend.md; the backend spike's FINDINGS § 1). Keep all three settings: the override here,
