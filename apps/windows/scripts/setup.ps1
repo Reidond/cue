@@ -30,6 +30,12 @@ function Update-Path {
 function Test-Tool([string]$name) { return [bool](Get-Command $name -ErrorAction SilentlyContinue) }
 
 function Install-Package([string]$id, [string[]]$extra = @()) {
+    # A fresh Windows (a new VM) has App Installer, winget's package, but registers it for the account only later, from the Store.
+    if (-not (Test-Tool winget)) {
+        Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
+        $apps = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+        if (($env:Path -split ';') -notcontains $apps) { $env:Path = "$env:Path;$apps" }
+    }
     if (-not (Test-Tool winget)) { throw "winget is missing, and $id is not installed: install App Installer from the Microsoft Store, or git, .NET 10, Node.js 26 (x64) and pnpm by hand." }
     Write-Host "Installing $id..."
     & winget install --id $id --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity @extra

@@ -30,8 +30,13 @@ func flattened(on color: CGColor) -> CGImage? {
 /// Text and position of each block. Read the candidates right away: an observation's
 /// text can come back empty once another request has run.
 func read(_ image: CGImage) -> [(text: String, box: CGRect)] {
+    // In a VM (the Cue macOS VM) the accurate recognizer fails with nilError on every device; the fast one reads.
+    read(image, level: .accurate) ?? read(image, level: .fast) ?? []
+}
+
+func read(_ image: CGImage, level: VNRequestTextRecognitionLevel) -> [(text: String, box: CGRect)]? {
     let request = VNRecognizeTextRequest()
-    request.recognitionLevel = .accurate
+    request.recognitionLevel = level
     request.usesLanguageCorrection = false
     let supported = (try? request.supportedRecognitionLanguages()) ?? []
     request.recognitionLanguages = ["en-US", "uk-UA"].filter(supported.contains)
@@ -40,7 +45,7 @@ func read(_ image: CGImage) -> [(text: String, box: CGRect)] {
     for (stage, devices) in (try? request.supportedComputeStageDevices) ?? [:] {
         if let cpu = devices.first(where: { if case .cpu = $0 { true } else { false } }) { request.setComputeDevice(cpu, for: stage) }
     }
-    try? VNImageRequestHandler(cgImage: image).perform([request])
+    guard (try? VNImageRequestHandler(cgImage: image).perform([request])) != nil else { return nil }
     return (request.results ?? []).compactMap { block in block.topCandidates(1).first.map { ($0.string, block.boundingBox) } }
 }
 

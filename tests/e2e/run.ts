@@ -92,6 +92,16 @@ for (const arg of process.argv.slice(2)) {
     } else prefixes.push(arg);
 }
 
+// Cases run in a VM (tests/e2e/remote.ts) or on CI, never on a Mac someone works at: macOS says it is a VM's.
+if (
+    process.platform === 'darwin' &&
+    !process.env['CI'] &&
+    spawnSync('sysctl', ['-n', 'kern.hv_vmm_present'], { encoding: 'utf8' }).stdout.trim() !== '1'
+) {
+    console.log(`Cases don't run on this Mac: node tests/e2e/remote.ts mac e2e ${process.argv.slice(2).join(' ')}`.trimEnd());
+    process.exit(1);
+}
+
 if (build && withApp) {
     console.log('Building Cue…');
     const built = windows

@@ -64,9 +64,11 @@ for the live call. (`docs/backend.md` is the design.)
 
 ## Setup
 
+Download `Cue-VERSION.zip` from the [Releases](https://github.com/Reidond/cue/releases) page and move Cue.app to Applications. Cue is
+built in a VM, not on the Mac you work at (see `AGENTS.md` › Where work runs):
+
 ```bash
-./apps/mac/scripts/build.sh
-open apps/mac/build/Cue.app
+node tests/e2e/remote.ts mac apps/mac/scripts/build.sh   # apps/mac/build/Cue.app, in the Cue macOS VM
 ```
 
 Cue opens its dashboard. Cue is for invited people: **Home** first shows **Sign In**, with Google or GitHub (the account your invitation
@@ -322,7 +324,8 @@ nothing: Settings › Calendar), and stops recording a minute after the app lets
   powershell -ExecutionPolicy Bypass -File apps\windows\scripts\build.ps1 -Msi   # apps\windows\build\ARCH\Cue.exe and Cue-VERSION-ARCH.msi
   ```
 
-- **Test**: `node tests\e2e\run.ts` on Windows runs the `w…` cases (the app and its installer) and the backend's own cases; see `AGENTS.md`.
+- **Test**: `node tests\e2e\run.ts` on Windows runs the `w…` cases (the app and its installer) and the backend's own cases; from the Mac,
+  `node tests/e2e/remote.ts windows e2e` runs it in the Cue Windows VM, building first; see `AGENTS.md`.
 
 ## Releases
 
@@ -357,11 +360,15 @@ windows. They are TypeScript, run by Node 26 or later as they are (Node strips
 the types; there is nothing to build to run them, and `pnpm install` is needed
 only for the type check):
 
+They run in VMs, never on the Mac you work at (`run.ts` refuses to): `tests/e2e/remote.ts` makes the Cue macOS and Cue Windows VMs
+with VMPal the first time, copies the checkout into them and runs the cases there; the backend is built and checked in a Boat sandbox.
+
 ```bash
-node tests/e2e/run.ts                 # build, then run every case
-node tests/e2e/run.ts --no-build 1    # only cases whose name starts with 1
-node tests/e2e/run.ts --no-app 95-    # the backend's own cases: no app needed, they run on Linux too
-pnpm install && vp check              # format, lint and type-check the TypeScript (Vite+)
+node tests/e2e/remote.ts mac e2e                   # build in the Cue macOS VM, then run every case
+node tests/e2e/remote.ts mac e2e --no-build 1      # only cases whose name starts with 1
+node tests/e2e/remote.ts mac e2e --no-app 95-      # the backend's own cases: no app needed
+node tests/e2e/remote.ts windows e2e               # Cue for Windows' cases, in the Cue Windows VM
+node tests/e2e/remote.ts boat check                # format, lint and type-check the TypeScript (Vite+), in Boat
 ```
 
 Every case that launches Cue runs against its own copy of the backend (`apps/api` under `cf dev`, local D1) with a stand-in for Google
