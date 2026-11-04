@@ -269,10 +269,11 @@ function vmFor(target: 'mac' | 'windows'): VmRow {
     if (vm.state !== 'running') {
         say(`Starting ${spec.name}`);
         if (vmpal(['start', vm.id, '--background', '--timeout', '10m']) !== 0) die(`Couldn't start ${spec.name}`);
-    } else if (vm.pendingSettings.length > 0) {
-        // A new VM is put on the network VMPal's settings give every VM only once it is set up, at its next start.
+    } else if (vm.pendingSettings.some((setting) => /network/i.test(setting))) {
+        // A new VM is put on the network VMPal's settings give every VM only once it is set up, at its next start. Other settings someone
+        // changed (the microphone, say) wait for the VM's own next start: restarting it under them would take it away.
         say(`Restarting ${spec.name} for its new settings (${vm.pendingSettings.join(', ')})`);
-        if (vmpal(['restart', vm.id, '--apply-settings', '--timeout', '10m']) !== 0) die(`Couldn't restart ${spec.name}`);
+        if (vmpal(['restart', vm.id, '--apply-settings', '--wait', '--timeout', '10m']) !== 0) die(`Couldn't restart ${spec.name}`);
     }
     let ready = vmpal(['wait', vm.id, '--until', 'ready', '--timeout', target === 'mac' ? '5m' : '15m']) === 0;
     if (!ready && target === 'mac' && !toolsConnected(vm)) {
@@ -542,7 +543,7 @@ async function prepare(machine: Machine): Promise<void> {
     const packagesMarker = `${machine.dir}.packages`;
     if (readMarker(machine, packagesMarker) !== packages) {
         say('Installing the packages');
-        // As setup.ps1 -Install (CI's Windows jobs) does: pnpm 12 adds the lockfile's packageManagerDependencies whenever it resolves, which
+        // As setup.ps1 -Install does: pnpm 12 adds the lockfile's packageManagerDependencies whenever it resolves, which
         // --frozen-lockfile refuses.
         // The copy's lockfile is the checkout's again at the next command, and nothing brings it back here.
         const installed = await machine.script(

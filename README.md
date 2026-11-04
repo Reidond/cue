@@ -377,12 +377,10 @@ and GitHub sign-in, and signs in first (see `AGENTS.md` › The backend in a cas
 Anthropic and Deepgram have stand-ins too, served from the case itself: they are the upstreams of the case's backend, which holds the
 owner's keys (the stand-ins take only the throwaway ones the harness gives it), so the Mac app never talks to either of them.
 
-`pnpm test` in `tests/e2e` is `node run.ts`. A run stays out of your way, so you
-can keep working while it goes: each case's Cue has `CUE_BACKGROUND=1`, which
-keeps it from ever coming to the front or taking focus, hides its Dock and menu
-bar icons, turns off its hot keys, puts its windows behind every other window
-(just above the desktop picture, in every Space, where snapshots still capture
-them) and writes alerts to the session log instead of showing them.
+`pnpm test` in `tests/e2e` is `node run.ts`, which runs in the Cue VMs (`tests/e2e/remote.ts`), one run at a time. They are
+nobody's desktop, so a case's Cue is in front there as in normal use; `CUE_BACKGROUND=1` keeps it behind instead (no focus, no Dock or
+menu bar icon, no hot keys, its windows just above the desktop picture, where snapshots still capture them). Under `CUE_CONTROL` alerts
+go only to the session log, so nothing waits for a click.
 
 The same hooks work by hand:
 

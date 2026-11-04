@@ -4,14 +4,14 @@ e2eCase(
     'Kept behind every other window, the dashboard, Settings and the overlay still snapshot, each one alone — ' +
         'even with the windows of a Cue from another checkout down there too.',
     async (cue) => {
-        await cue.launch({ CUE_SNAPSHOT: cue.path('cue.png'), CUE_SHOW_SETTINGS: '1' });
+        await cue.launch({ CUE_BACKGROUND: '1', CUE_SNAPSHOT: cue.path('cue.png'), CUE_SHOW_SETTINGS: '1' });
         cue.control('new Behind');
         cue.control('start Behind');
         await cue.waitLog(/🎤 Listening/, 20);
         // Another checkout's case: its dashboard and overlay open where these do, in front of them at the same level.
         const other = await Cue.open('05-other-checkout');
         try {
-            await other.launch();
+            await other.launch({ CUE_BACKGROUND: '1' });
             other.control('new Elsewhere');
             other.control('start Elsewhere');
             await other.waitLog(/🎤 Listening/, 20);

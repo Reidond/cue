@@ -1,23 +1,36 @@
 #!/usr/bin/env node
 // Runs Cue's end-to-end cases against the built app: Cue.app on macOS, Cue.exe on Windows.
 //
-//   node tests/e2e/run.ts [--no-build] [--no-app] [--real-deepgram] [--keep] [--shard=K/N] [--except=PREFIX…] [PREFIX…]
+//   node tests/e2e/run.ts [--no-build] [--no-app] [--real-deepgram] [--keep] [--except=PREFIX…] [PREFIX…]
 //
 //   --no-build        use the existing build: apps/mac/build/Cue.app, or apps/windows/build/ARCH/Cue.exe
 //   --no-app          don't build or need the app: only the cases about the backend run (no Swift tools; any case that launches Cue fails)
 //   --real-deepgram   the backend talks to the real Deepgram (its key from the keychain) instead of the stand-in
 //   --keep            keep every case's sandbox (failed cases are always kept)
-//   --shard=K/N       run the K-th of N parts of the cases, split so that N machines finish together (CI)
 //   --except=PREFIX   leave out the cases whose file name starts with this (as often as you like)
 //   PREFIX…           run only cases whose file name starts with one of these
 //
 // On Windows the cases are the w… ones (about Cue.exe and its installer) and the ones about the backend only, which never launch the app;
 // on macOS everything but the w… ones. Backend-only cases run anywhere with --no-app.
 //
+// One run at a time on a machine (the cases share its desktop, its audio and its processor): a run that finds another under way waits for it,
+// and says whose it is. CI doesn't run the cases: they run in the Cue VMs (tests/e2e/remote.ts).
+//
 // Exit status: 0 when nothing failed (skips are fine), 1 otherwise.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { accessSync, appendFileSync, constants, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+    accessSync,
+    appendFileSync,
+    constants,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { run } from 'node:test';
@@ -63,8 +76,7 @@ function modified(path: string): number {
 let build = true,
     withApp = true,
     deepgram = 'fake',
-    keep = false,
-    shard = { part: 1, of: 1 };
+    keep = false;
 const prefixes: string[] = [],
     except: string[] = [];
 for (const arg of process.argv.slice(2)) {
@@ -72,14 +84,7 @@ for (const arg of process.argv.slice(2)) {
     else if (arg === '--no-app') withApp = false;
     else if (arg === '--real-deepgram') deepgram = 'real';
     else if (arg === '--keep') keep = true;
-    else if (arg.startsWith('--shard=')) {
-        const [, part = 0, of = 0] = /^--shard=(\d+)\/(\d+)$/.exec(arg)?.map(Number) ?? [];
-        if (!(part >= 1 && part <= of)) {
-            console.log(`No such shard: ${arg}`);
-            process.exit(1);
-        }
-        shard = { part, of };
-    } else if (arg.startsWith('--except=')) {
+    else if (arg.startsWith('--except=')) {
         // An empty prefix would leave out every case.
         if (arg === '--except=') {
             console.log('--except needs a prefix');
@@ -92,15 +97,55 @@ for (const arg of process.argv.slice(2)) {
     } else prefixes.push(arg);
 }
 
-// Cases run in a VM (tests/e2e/remote.ts) or on CI, never on a Mac someone works at: macOS says it is a VM's.
-if (
-    process.platform === 'darwin' &&
-    !process.env['CI'] &&
-    spawnSync('sysctl', ['-n', 'kern.hv_vmm_present'], { encoding: 'utf8' }).stdout.trim() !== '1'
-) {
+// Cases run in a VM (tests/e2e/remote.ts), never on a Mac someone works at: macOS says it is a VM's.
+if (process.platform === 'darwin' && spawnSync('sysctl', ['-n', 'kern.hv_vmm_present'], { encoding: 'utf8' }).stdout.trim() !== '1') {
     console.log(`Cases don't run on this Mac: node tests/e2e/remote.ts mac e2e ${process.argv.slice(2).join(' ')}`.trimEnd());
     process.exit(1);
 }
+
+/** Whether a process is running (one of another user's, which this one may not signal, counts). */
+function alive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error) {
+        return (error as NodeJS.ErrnoException).code === 'EPERM';
+    }
+}
+
+// One run at a time on this machine, whatever its checkout or user (an elevated one on Windows too): the run holds a lock file, and one that
+// finds it waits until that run is over, or gone without removing it.
+const lock = join(
+    windows ? (process.env['PUBLIC'] ?? tmpdir()) : process.platform === 'darwin' ? '/Users/Shared' : tmpdir(),
+    'cue-e2e.lock',
+);
+const mine = JSON.stringify({ pid: process.pid, checkout: ROOT, since: new Date().toISOString() });
+for (let said = false; ; await new Promise((resolve) => setTimeout(resolve, 5000))) {
+    try {
+        writeFileSync(lock, mine, { flag: 'wx' });
+        break;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+    let holder: { pid: number; checkout: string; since: string } | undefined;
+    try {
+        holder = JSON.parse(readFileSync(lock, 'utf8')) as typeof holder;
+    } catch {
+        // Being written this moment, or left half written long ago.
+        const written = statSync(lock, { throwIfNoEntry: false })?.mtimeMs;
+        if (written !== undefined && Date.now() - written < 60_000) continue;
+    }
+    if (holder === undefined || !alive(holder.pid)) {
+        rmSync(lock, { force: true });
+        continue;
+    }
+    if (!said)
+        console.log(`Waiting for the run of ${holder.checkout} (process ${holder.pid}, since ${holder.since}) to end: one run at a time`);
+    said = true;
+}
+process.on('exit', () => {
+    if (existsSync(lock) && readFileSync(lock, 'utf8') === mine) rmSync(lock, { force: true });
+});
 
 if (build && withApp) {
     console.log('Building Cue…');
@@ -158,31 +203,11 @@ const matching = readdirSync(join(E2E, 'cases'))
     .filter((name) => !except.some((prefix) => name.startsWith(prefix)))
     .sort();
 
-/**
- * The cases of this shard: each case, longest first, goes to the part that has the least to do so far, by how long it took on CI
- * (durations.json, seconds; a case not in it counts as 30). Every shard works this out alike, so the parts never overlap.
- */
-function shardOf(names: string[]): string[] {
-    if (shard.of === 1) return names;
-    const durations = JSON.parse(readFileSync(join(E2E, 'durations.json'), 'utf8')) as Record<string, number>;
-    const seconds = (name: string): number => durations[basename(name, '.test.ts')] ?? 30;
-    const parts = Array.from({ length: shard.of }, () => ({ seconds: 0, names: [] as string[] }));
-    for (const name of [...names].sort((a, b) => seconds(b) - seconds(a) || a.localeCompare(b))) {
-        const part = parts.reduce((least, part) => (part.seconds < least.seconds ? part : least));
-        part.seconds += seconds(name);
-        part.names.push(name);
-    }
-    return (parts[shard.part - 1]?.names ?? []).sort();
-}
 if (matching.length === 0) {
     console.log(`No cases match: ${[...prefixes, ...except.map((prefix) => `--except=${prefix}`)].join(' ')}`);
     process.exit(1);
 }
-const cases = shardOf(matching);
-if (cases.length === 0) {
-    console.log(`No cases in shard ${shard.part}/${shard.of}`);
-    process.exit(0);
-}
+const cases = matching;
 
 // What every case reads (see harness/config.ts).
 Object.assign(process.env, {
@@ -269,9 +294,7 @@ function finish(file: string, seconds: number, outcome: Outcome): void {
     }
 }
 
-console.log(
-    `Running ${cases.length} case(s)${shard.of > 1 ? ` (shard ${shard.part}/${shard.of} of ${matching.length})` : ''}, Deepgram: ${deepgram}`,
-);
+console.log(`Running ${cases.length} case(s), Deepgram: ${deepgram}`);
 const done = new Set<string>();
 for await (const event of run({ files, concurrency: 1, signal: stop.signal })) {
     if (

@@ -1,4 +1,4 @@
-# Installs what building Cue for Windows and running its end-to-end cases needs, on a fresh Windows 11 (the Windows VM, a CI runner):
+# Installs what building Cue for Windows and running its end-to-end cases needs, on a fresh Windows 11 (the Cue Windows VM):
 # git, the .NET 10 SDK, Node.js 26 and pnpm. Whatever is there already is kept. Run it from an elevated PowerShell (winget installs
 # these machine-wide); `-Install` also runs `pnpm install` for the repository (the cases need the backend's packages).
 #

@@ -293,11 +293,11 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   an element set again is taken out and put back, and WinUI may tell it Unloaded after the Loaded of its return, which left the Notes page deaf to the note being made); `SettingsFile`/`Preferences` for settings (`settings.json`).
 - **Where it is built and tested**: never on this Mac. In the Cue Windows VM (VMPal's, Windows 11 for Arm: see Where work runs), through `tests/e2e/remote.ts`:
   `node tests/e2e/remote.ts windows e2e w --except=w1- 9e-`. Never build on a VMPal shared folder (`Z:`): `remote.ts` copies the checkout to `C:\cue\ID`.
-  `w1-installer` installs per machine, so it needs an elevated process (`remote.ts windows --admin e2e w1-`, `vmpal_exec_admin`; a CI runner is one) and skips without.
+  `w1-installer` installs per machine, so it needs an elevated process (`remote.ts windows --admin e2e w1-`, `vmpal_exec_admin`) and skips without.
 - **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks), `w1-…` (the installer), `w2-…` (projects and materials: `w2-projects`, `w2-materials`, `w2-import-projects`,
   `w2-account-projects`, `w2-active-project`, `w2-brief` (the Overview: Materials, how Cue read them, the Advanced `Expander`; Try Again); they read the window with `windowText`, open an `Expander` with `expand(pid, name)` (UI Automation's expand pattern: its header is no button to `press`), the account with `backend.accountOf(cue.email)`), `w3-…` (the live call: see Live call on Windows), `w4-…` (recordings and notes: see Recordings and notes on Windows) and `w6-…` (meetings, the calendar and notifications: see Meetings, the calendar and notifications on Windows) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
   them together with the cases that never launch the app (the source has no `.launch(`, `.cli(` or `.control(`: the backend's own, `9a-…` to `9e-…`, `95`–`99`). `9e-windows-sign-in` signs in as `cue-windows` end to end
-  and runs anywhere with `--no-app`. Every later `wN-…` case is the app's too (CI runs all `w` cases but `w1-`; see CI and releases). A case reads what the window shows with `windowText(pid)` (`tools/uia.ps1`: the text of its UI Automation tree, exact (no recognition errors); a XAML `ScrollViewer`'s content scrolled out of view is not in it),
+  and runs anywhere with `--no-app`. Every later `wN-…` case is the app's too. A case reads what the window shows with `windowText(pid)` (`tools/uia.ps1`: the text of its UI Automation tree, exact (no recognition errors); a XAML `ScrollViewer`'s content scrolled out of view is not in it),
   and `windowsOf(pid)` is `tools/windows.ps1` (the foreground, the windows' sizes and styles: the twin of `appWindows`); `ocr` is `tools/ocr.ps1` (Windows' own `Windows.Media.Ocr`; it needs the English recognizer,
   `Language.OCR~~~en-US~0.0.1.0`, which `setup.ps1` adds) for what a snapshot shows; `cue.defaults()` edits `settings.json`; `cue.stop()` sends `quit` through the control file and kills the tree after 10 s.
 - **Hooks that differ** (the rest of the table below applies as it reads; `CUE_REHEARSE_PARTICIPANT` / `CUE_REHEARSE_ME` play a WAV, `CUE_NO_LIVE_AUDIO` and `CUE_ALLOW_CAPTURE` as on the Mac; `CUE_REHEARSE_RECORD=1` records the rehearsal into notes, `CUE_UPLOAD_PART_BYTES` / `CUE_UPLOAD_BREAK` as on the Mac): `CUE_HOME` has the Mac's layout (`CUE_HOME/Application Support/Cue`, `CUE_HOME/Documents`, sessions in
@@ -427,7 +427,7 @@ two places the rest of the app finds them; the monitor starts with the app, and 
 This Mac edits the code and drives the machines (VMPal, the `boat` CLI); it builds and tests nothing. **Cue for macOS is built and every Mac case
 runs in the Cue macOS VM, Cue for Windows is built and every Windows case runs in the Cue Windows VM** (both VMPal's), **the backend is built and
 checked in Boat** (`vp check`, `cf build`, `deploy:dry`, installs), and the backend's own cases, being tests, run in a VM too (`--no-app`).
-`run.ts` and `build.sh` refuse to run on a Mac that isn't a VM (unless `CI` is set). `tests/e2e/remote.ts` is the way there, for agents and
+`run.ts` refuses to run on a Mac that isn't a VM, and `build.sh` too (unless `CI` is set: CI builds the apps). `tests/e2e/remote.ts` is the way there, for agents and
 people alike:
 
 ```bash
@@ -458,8 +458,9 @@ node tests/e2e/remote.ts status                      # the machines; `remote.ts 
   `node_modules`, `build`, `.build`, `obj`, `bin` and `.cloudflare` alone; the toolchain is installed again when one of its scripts changes, the packages
   (`pnpm install`, `pnpm --filter api types`) when `pnpm-lock.yaml` or `cloudflare.config.ts` do.
 - **`e2e`** is `node tests/e2e/run.ts ARGS…` there. The cases' logs come back to `$TMPDIR/cue-remote-ID/TARGET-logs`; their sandboxes stay in the
-  VM, in `E2E_WORK` (the copy's folder plus `.e2e`). A VM runs two commands at a time, so two checkouts' runs fill it; cases that use its desktop
-  (`overlay`, `hot-keys`, real keys) may disturb each other then. `--real-deepgram` reads the key from the VM's own login keychain: add it there.
+  VM, in `E2E_WORK` (the copy's folder plus `.e2e`). **One run at a time on a machine**: `run.ts` holds a lock file (`/Users/Shared/cue-e2e.lock`,
+  `%PUBLIC%\cue-e2e.lock`), and a run that finds another's waits for it to end (`Waiting for the run of CHECKOUT (process N, since …) to end`), so
+  checkouts never share the desktop, the audio or the processor; a run gone without removing it is noticed. `--real-deepgram` reads the key from the VM's own login keychain: add it there.
 - **By hand**: the `vmpal_*` tools work in the same VMs (`vmpal_exec` with `cwd` the copy; VMPal's command line is `vmpal`, once `vmpal help setup`'s
   link is made, else `remote.ts` uses the one inside VMPal.app). A process `vmpal_exec` starts ends with the command: to look at a window yourself,
   start Cue so it outlives it (`Invoke-CimMethod -ClassName Win32_Process -MethodName Create` in Windows, `open` or `nohup` in the Mac) and read the
@@ -499,8 +500,14 @@ This rule is strict and has no exceptions.
   (and the real backend under `cf dev`), and checks what a user would see:
   the notes on disk, the audio files, the session log, the rendered windows.
 - **The suite's browser is Playwright** (`playwright-core` in `tests/e2e`; it downloads nothing): `harness/browser.ts` drives the machine's Chrome
-  headless (`E2E_BROWSER=path` names another; macOS CI has Chrome, and the Cue macOS VM (`setup.sh` installs it); a machine without one skips the
+  headless (`E2E_BROWSER=path` names another; the Cue macOS VM has it (`setup.sh` installs it); a machine without one skips the
   case) for the cases that use the admin SPA as its owner does. Never for the Mac app, which is driven by `CUE_CONTROL`.
+- **The suite reads images with macOS Vision** (`tools/ocr.swift`, its accurate recognizer), **or Tesseract where that can't run**: in the Cue
+  macOS VM it fails on every device (and the fast one reads neither Cyrillic nor small text), so `ocr` exits with 3 and `harness/tesseract.ts` reads
+  the images `ocr --prepare` writes (over white, and over black inverted) with `tesseract.js` (WebAssembly, in `tests/e2e` with the English and
+  Ukrainian data of `@tesseract.js-data`: it downloads nothing). The probe says which reads (`read by Tesseract (…)`). Its misreads that can be
+  told from the rest are corrected (`corrected` there); two can't: `→` is read as another character and a bold title's "Sign in" as "Signin",
+  so a case looks for those with `.` and ` ?`.
 - Stand-ins are allowed only at the outer boundary, never for Cue's own code:
   - the paid cloud providers the backend calls: `harness/fake-providers.ts` serves the Anthropic Messages API and Deepgram's live speech-to-text
     (live and recorded files) from the case's own process, as the backend's upstreams (`ANTHROPIC_URL`, `DEEPGRAM_URL`), and takes only the owner's keys in `FAKE_KEYS`
@@ -540,7 +547,7 @@ This rule is strict and has no exceptions.
   description.
 - A case that needs something the machine lacks (a voice, a permission, the network, Chrome) calls `skip('reason')` or a `need…` helper; it
   never fakes the missing piece.
-- Some Macs can't do what certain cases need: GitHub's runners may not draw the overlay readably. Before the
+- Some Macs can't do what certain cases need: GitHub's runners drew the overlay blank. Before the
   cases, `run.ts` probes the machine once (`harness/capabilities.ts`): the dashboard's snapshot must read as text, and so must the overlay's once Start
   Cue shows it. A case that depends on what's missing skips with that reason: the snapshot helpers
   (`snapshotText`, `dashboardPage`, `dashboardShows`) for windows and the
@@ -592,7 +599,7 @@ local D1 and KV, started by the case.
 The suite is TypeScript run by Node 26 or later, which strips the types
 itself: no build step, no transpiler, no runtime packages.
 
-`run.ts` runs in a VM (or on CI): from this Mac, `node tests/e2e/remote.ts mac e2e ARGS…` and `… windows e2e ARGS…` run it there (see Where work runs).
+`run.ts` runs in a VM, one run at a time: from this Mac, `node tests/e2e/remote.ts mac e2e ARGS…` and `… windows e2e ARGS…` run it there (see Where work runs).
 
 ```bash
 node tests/e2e/run.ts                  # build the app, then run every case
@@ -602,7 +609,6 @@ node tests/e2e/run.ts --real-deepgram 83 84   # the backend's Deepgram is the re
 node tests/e2e/run.ts --keep           # keep every sandbox (a failed case always keeps its own)
 node tests\e2e\run.ts                  # on Windows: build apps/windows (build.ps1), then the w… cases and the backend's own (no app launched)
 node tests\e2e\run.ts --no-build w0-  # on Windows: the app already built (apps\windows\build\ARCH\Cue.exe)
-node tests\e2e\run.ts --no-build w --except=w1- --shard=2/5  # on Windows: what one of CI's app jobs runs (every w case but the installer's, one part of five)
 node tests/e2e/remote.ts boat check    # format, lint, type-check (vp check, in Boat; `check --fix` brings fixes back); run it before you commit
 ```
 
@@ -610,11 +616,12 @@ The runner compiles the Swift tools in `tests/e2e/tools/` that need Apple's
 frameworks (`ocr`, `dialogue`, `audio-sync`, `windows`) when their source
 changes, runs the cases one at a time (each a `node:test` test in its own
 process), and prints one line per case with the failing output. Everything a run makes —
-sandboxes, each case's log, the tools, the dialogue and speaker-model caches
+sandboxes, each case's log, the tools, the dialogue and speaker-model caches, Tesseract's data
 — is in `E2E_WORK` (by default one folder per checkout under `$TMPDIR`).
-A run stays out of the way of whoever is using the Mac: every Cue it launches
-has `CUE_BACKGROUND=1`, so it never comes to the front or takes focus, and its
-windows stay behind all others, where snapshots still capture them. Every
+Cases run in the VMs, which are nobody's desktop, so on the Mac every Cue a case launches is in front as in normal use: it activates, has
+its Dock and menu bar icons and its hot keys, and its windows come up over the others (only `04-background` and `05-background-snapshots` set
+`CUE_BACKGROUND=1`, the hook they are about). Under `CUE_CONTROL` an alert goes only to the session log, so nothing waits for a click. On
+Windows `cue.launch` still sets `CUE_BACKGROUND`. Every
 Cue it launches is in US English too (`-AppleLocale en_US`), whatever the
 Mac's region, so cases can look for `$2.50` and `Nov 1`. A window
 captured on screen shows only what is scrolled into view: a case that reads
@@ -728,7 +735,7 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_ME_TICK=s` | Read the account (`/v1/me`: usage, still allowed?) every `s` seconds instead of 300; a signed-out Cue with a saved refresh token tries again at the same pace. |
 | `CUE_ALLOW_CAPTURE=1` | Let screenshots see the overlay. |
 | `CUE_SHOW_SETTINGS=1` | Open Settings at launch. |
-| `CUE_BACKGROUND=1` | Stay out of the way of whoever is using the Mac (`cue.launch` sets it for every case): Cue never activates itself or takes keyboard focus, and has no Dock icon, menu bar icon or hot keys; its windows sit behind every other window — just above the desktop picture, under the desktop's icons, in every Space — where `CUE_SNAPSHOT` still captures each one alone (drawn as an inactive app's window). An alert goes only to the session log (`⚠︎ …`) instead of waiting for a click. |
+| `CUE_BACKGROUND=1` | Stay out of the way of whoever is using the Mac (a case's Cue is in front, as the VM is nobody's desktop; `04-background` and `05-background-snapshots` set it): Cue never activates itself or takes keyboard focus, and has no Dock icon, menu bar icon or hot keys; its windows sit behind every other window — just above the desktop picture, under the desktop's icons, in every Space — where `CUE_SNAPSHOT` still captures each one alone (drawn as an inactive app's window). An alert goes only to the session log (`⚠︎ …`) instead of waiting for a click. |
 
 To look at a design you changed, run the app in the Cue macOS VM in a sandbox with snapshots on, show the page,
 copy the PNGs out and read them as images — then the same in the other appearance:
@@ -812,26 +819,13 @@ checked before anything is installed. A newer version is one whose tag (`vMAJOR.
 
 ## CI and releases
 
-- `.github/workflows/ci.yml` runs on pull requests only: it builds the app
-  (new warnings in `apps/mac/Sources/Cue` fail it), runs `vp check`
-  and the end-to-end suite with the latest Node, split across four of
-  GitHub's hosted macOS runners (`run.ts --shard=K/N`, balanced by each
-  case's seconds in `tests/e2e/durations.json`: update them from a CI run
-  when cases are added or get much slower). `build-and-test`, the check
-  `main` requires, passes when `vp check` and every shard did. Speech needs nothing from that runner (the live transcript and the notes' second pass are the backend's, with the stand-ins), so only overlay or window
-  snapshot cases skip there, with the probe's reason, if the probe finds those unreadable: CI covers the build, the
-  command-line modes, the dashboard and the speech cases. **Run the
-  whole suite in the Cue macOS VM before merging** (`node tests/e2e/remote.ts mac e2e`) and put its summary
-  in the PR. Keep CI green; never fake what's missing. The `windows` jobs are parallel and each about eight minutes or less
-  (they must never be the slowest check): a small `windows-plan` job makes their matrix from two numbers at its top, `WINDOWS_APP_SHARDS` (5) and `WINDOWS_BACKEND_SHARDS` (3). Per
-  architecture, `ARCH-app-1`…`-N` build the app and run **every `w` case but the installer's** (`run.ts w --except=w1- --shard=K/N`: a slice's new `w2-`, `w3-`, … cases join by their
-  name, with no edit to the workflow), balanced by `durations.json`; `ARCH-installer` builds the app and the MSI and runs `w1-`. On x64 (`windows-latest`) `x64-backend-1`…`-M` also
-  run the backend's own cases without building anything (`run.ts --no-app --shard=K/M`; setup.ps1 `-Backend` skips the .NET SDK and OCR). Each app job pays about three minutes for
-  the toolchain and the build, so raise `WINDOWS_APP_SHARDS` (it applies to both architectures) when one nears ten minutes; the arm64 jobs are the slow ones, about two and a half
-  times the x64 case time. **arm64 CI covers the Arm build, the app's cases and the installer, not the backend's cases**: Node.js, workerd and Vite+ run emulated there, and the
-  backend does not differ by processor; the whole suite on Arm is the Cue Windows VM's run in each PR (`node tests/e2e/remote.ts windows e2e`). `build-and-test` requires every one of them; each keeps its logs on failure,
-  the installer jobs keep the MSI as an artifact. A new push cancels the run it replaces (`concurrency`). No NuGet cache: restoring one from the cache took longer than restoring
-  from nuget.org (50 s against 35 on arm64). Add a case's seconds to `durations.json` from a CI run (a case not in it counts as 30).
+- `.github/workflows/ci.yml` runs on pull requests only, and checks the code, nothing more: `vp check` (with `check-vite.ts`), Cue.app built
+  (new warnings in `apps/mac/Sources/Cue` fail it) and Cue for Windows with its installers for x64 and arm64 (one `windows-latest` runner,
+  arm64 cross-built; warnings fail `build.ps1`). **No case runs on CI**: the end-to-end suite runs in the Cue VMs only, one run at a time (see
+  Where work runs). `build-and-test`, the check `main` requires, passes when the check and both builds did. **Run the whole suite in both VMs
+  before merging** (`node tests/e2e/remote.ts mac e2e`, `… windows e2e` and `… windows --admin e2e w1-`) and put their summaries in the PR. Keep CI
+  green; never fake what's missing. A new push cancels the run it replaces (`concurrency`). No NuGet cache: restoring one from the cache took longer
+  than restoring from nuget.org.
 - `.github/workflows/deploy.yml` runs on pushes to `main` that touch `apps/api`, `apps/admin`, `packages/contract` or their build (and on demand), never on a fork: `vp check`, the remote
   migrations, `cf deploy`, the migrations again, a check that the Worker answers. It needs the secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` and the variable `ADMIN_EMAILS`. Do not
   run it, or `cf deploy` without `--dry-run`, from here.

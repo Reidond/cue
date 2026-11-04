@@ -316,8 +316,8 @@ export class Cue {
     }
 
     /**
-     * Starts the app in the background with live audio off (pass CUE_NO_LIVE_AUDIO: '0' to override),
-     * out of the user's way (CUE_BACKGROUND: never in front, never taking focus), the calendar read
+     * Starts the app with live audio off (pass CUE_NO_LIVE_AUDIO: '0' to override), in front as in normal use on the Mac (the Cue macOS
+     * VM is nobody's desktop; CUE_BACKGROUND: '1' keeps it behind) and behind on Windows (CUE_BACKGROUND), the calendar read
      * from `events` and the microphone users from `micAppsFile`, and waits for its session log. Its
      * output goes to cue.out.
      *
@@ -338,7 +338,7 @@ export class Cue {
         this.#launched = {
             ...this.env,
             CUE_NO_LIVE_AUDIO: '1',
-            CUE_BACKGROUND: '1',
+            ...(IS_WINDOWS ? { CUE_BACKGROUND: '1' } : {}),
             CUE_CONTROL: this.path('control'),
             CUE_CALENDAR_EVENTS: this.events,
             CUE_MIC_APPS: this.micAppsFile,

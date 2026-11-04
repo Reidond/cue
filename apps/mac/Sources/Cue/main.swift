@@ -11,11 +11,12 @@ final class OverlayPanel: NSPanel {
 }
 
 extension NSAlert {
-    /// Shows the alert and writes it to the session log (`⚠︎ …`); under CUE_BACKGROUND only there,
-    /// as a modal alert would come to the front and hold up a test run until someone answers it.
+    /// Shows the alert and writes it to the session log (`⚠︎ …`); in a test run (CUE_CONTROL, CUE_BACKGROUND) only there,
+    /// as a modal alert would hold the run up until someone answers it.
     func show(logging log: SessionLog) {
         log.write("⚠︎ \(messageText)" + (informativeText.isEmpty ? "" : ": \(informativeText)"))
-        guard ProcessInfo.processInfo.environment["CUE_BACKGROUND"] != "1" else { return }
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["CUE_CONTROL"] == nil, environment["CUE_BACKGROUND"] != "1" else { return }
         runModal()
     }
 }
