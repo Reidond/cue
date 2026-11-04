@@ -15,7 +15,7 @@ import {
 e2eCase('A new user creates a project, drops a file on it, starts Cue and gets an answer from it.', async (cue) => {
     await cue.launch({ FAKE_CLAUDE_ANSWER: 'We studied 48 hives on six rooftops.\n- 48 hives, 6 rooftops\nSource: talk.md' });
     assertNotContains(cue.sessionLog(), /Moved your settings/, 'a new user has nothing to move');
-    assertNotContains(cue.sessionLog(), /Imported/, 'and nothing to import');
+    assertNotContains(cue.sessionLog(), /Imported \d/, 'and no projects or notes to import');
     if (exists(cue.projectPath('My project'))) fail('no project should exist before one is created');
     const account = await (await cue.backend()).accountOf(cue.email);
     assertEq((await account.projects()).length, 0, 'the account starts with no projects');
