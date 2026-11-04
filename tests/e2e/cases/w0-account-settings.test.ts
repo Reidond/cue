@@ -128,7 +128,8 @@ e2eCase(
         await cue.stop();
         await cue.defaults('speakerName', 'Stale Name');
         await cue.defaults('autoAnswer', false);
-        await cue.launch({ CUE_ME_TICK: '2' });
+        // (The account is read at sign-in only now, so what follows comes from the saves' answers alone.)
+        await cue.launch({ CUE_ME_TICK: '600' });
         await cue.waitLog(said('name “Ann Other”, Auto on, questions from the room on, summaries off, audio kept'), 30);
         assertEq(cue.logCount(/📦 Imported your settings/), 0, 'imported once, at the first sign-in');
         assertEq(local()['speakerName'], 'Ann Other');
@@ -140,5 +141,13 @@ e2eCase(
             summarize: false,
             keepAudio: true,
         });
+
+        // A name saved, then one the account refuses before it is read again: the saved one is back, not the one the sign-in read.
+        cue.control('setting speakerName | PC Again');
+        await cue.waitLog(said('name “PC Again”, Auto on, questions from the room on, summaries off, audio kept'), 30);
+        cue.control(`setting speakerName | ${'B'.repeat(201)}`);
+        await cue.waitFor('the refusal', 30, () => cue.logCount(/⚠︎ Couldn't save your settings: /) === 1);
+        await cue.waitFor('the saved name to be back', 10, () => local()['speakerName'] === 'PC Again');
+        assertEq((await account())['speakerName'], 'PC Again');
     },
 );

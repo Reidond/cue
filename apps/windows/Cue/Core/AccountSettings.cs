@@ -41,6 +41,10 @@ public sealed class AccountSettings
     /// </summary>
     private readonly Dictionary<string, long> unsaved = [];
 
+    /// <summary>What the account has of each setting as far as this PC knows: from the reads that know of the saves made here, and from those saves'
+    /// answers. A save the account refuses puts it back.</summary>
+    private readonly Dictionary<string, object> known = [];
+
     private CancellationTokenSource? nameSave;
 
     /// <summary>Someone is signed in and the sign-in's look at the settings is done: the account's are followed, and changes go to it.</summary>
@@ -159,8 +163,9 @@ public sealed class AccountSettings
             var edit = edits.GetValueOrDefault(field.Key);
             try
             {
-                await api.SaveSettings(new Dictionary<string, object> { [field.Key] = field.Local(preferences) });
+                var saved = await api.SaveSettings(new Dictionary<string, object> { [field.Key] = field.Local(preferences) });
                 if (!following) return;
+                if (field.Account(saved) is { } value) known[field.Key] = value;
                 if (edits.GetValueOrDefault(field.Key) == edit) unsaved[field.Key] = api.MeReads;
                 log.Write("☁️ Saved your settings to your account");
                 Say();
@@ -172,7 +177,7 @@ public sealed class AccountSettings
                 if (edits.GetValueOrDefault(field.Key) != edit) return;
                 // The account still has what it had: so does this PC.
                 unsaved.Remove(field.Key);
-                if (api.Settings is { } account && field.Account(account) is { } was) Apply(field, was);
+                if (known.TryGetValue(field.Key, out var was)) Apply(field, was);
             }
         }
         finally
@@ -186,7 +191,11 @@ public sealed class AccountSettings
     {
         foreach (var field in Fields)
         {
-            if (field.Account(account) is { } value && api.MeRead > unsaved.GetValueOrDefault(field.Key)) Apply(field, value);
+            if (field.Account(account) is { } value && api.MeRead > unsaved.GetValueOrDefault(field.Key))
+            {
+                known[field.Key] = value;
+                Apply(field, value);
+            }
         }
     }
 
@@ -225,6 +234,7 @@ public sealed class AccountSettings
         nameSave?.Cancel();
         nameSave = null;
         unsaved.Clear();
+        known.Clear();
     }
 }
 

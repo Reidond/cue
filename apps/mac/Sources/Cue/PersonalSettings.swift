@@ -25,6 +25,10 @@ final class SettingsSync {
     private var seen = PersonalSettings()
     /// The account's values are being put into the preferences: those are no changes to save.
     private var applying = false
+    /// Changes made here, counted per setting, and the count each one's last finished save carried: a setting changed here and not saved yet
+    /// (its save waiting or under way) keeps its value whatever the account says meanwhile, an earlier save's answer included.
+    private var edits: [String: Int] = [:]
+    private var settled: [String: Int] = [:]
     /// The name is saved a moment after the last keystroke.
     private var nameSave: Task<Void, Never>?
     /// Saves go one after another, so the account ends with the last change.
@@ -41,13 +45,13 @@ final class SettingsSync {
         api.$phase.removeDuplicates().sink { [weak self] phase in if phase == .signedOut { self?.logged = nil } }.store(in: &subscriptions)
         preferences.$speakerName.dropFirst().removeDuplicates().sink { [weak self] name in self?.nameChanged(name) }.store(in: &subscriptions)
         preferences.$autoAnswer.dropFirst().removeDuplicates()
-            .sink { [weak self] on in self?.changed(PersonalSettings(autoAnswer: on)) }.store(in: &subscriptions)
+            .sink { [weak self] on in self?.changed("autoAnswer", PersonalSettings(autoAnswer: on)) }.store(in: &subscriptions)
         preferences.$micQuestions.dropFirst().removeDuplicates()
-            .sink { [weak self] on in self?.changed(PersonalSettings(micQuestions: on)) }.store(in: &subscriptions)
+            .sink { [weak self] on in self?.changed("micQuestions", PersonalSettings(micQuestions: on)) }.store(in: &subscriptions)
         preferences.$summarizeRecordings.dropFirst().removeDuplicates()
-            .sink { [weak self] on in self?.changed(PersonalSettings(summarize: on)) }.store(in: &subscriptions)
+            .sink { [weak self] on in self?.changed("summarize", PersonalSettings(summarize: on)) }.store(in: &subscriptions)
         preferences.$keepAudio.dropFirst().removeDuplicates()
-            .sink { [weak self] on in self?.changed(PersonalSettings(keepAudio: on)) }.store(in: &subscriptions)
+            .sink { [weak self] on in self?.changed("keepAudio", PersonalSettings(keepAudio: on)) }.store(in: &subscriptions)
     }
 
     /// At sign-in, before the projects: the settings the account has none of yet are this Mac's, sent once. Then the account's are in effect.
@@ -70,52 +74,63 @@ final class SettingsSync {
         logSettings()
     }
 
-    /// The account's settings changed (signing in, another device, a save here): what changed is put into the preferences.
+    /// The account's settings changed (signing in, another device, a save here): what changed is put into the preferences, but not over a
+    /// change made here that isn't saved yet.
     private func accountChanged(_ settings: PersonalSettings) {
         let before = seen
         seen = settings
         applying = true
         defer { applying = false }
-        if settings.speakerName != before.speakerName, let name = settings.speakerName {
-            nameSave?.cancel()
-            preferences.speakerName = name
-        }
-        if settings.autoAnswer != before.autoAnswer, let on = settings.autoAnswer { preferences.autoAnswer = on }
-        if settings.micQuestions != before.micQuestions, let on = settings.micQuestions { preferences.micQuestions = on }
-        if settings.summarize != before.summarize, let on = settings.summarize { preferences.summarizeRecordings = on }
-        if settings.keepAudio != before.keepAudio, let on = settings.keepAudio { preferences.keepAudio = on }
+        if settings.speakerName != before.speakerName, !pending("speakerName"), let name = settings.speakerName { preferences.speakerName = name }
+        if settings.autoAnswer != before.autoAnswer, !pending("autoAnswer"), let on = settings.autoAnswer { preferences.autoAnswer = on }
+        if settings.micQuestions != before.micQuestions, !pending("micQuestions"), let on = settings.micQuestions { preferences.micQuestions = on }
+        if settings.summarize != before.summarize, !pending("summarize"), let on = settings.summarize { preferences.summarizeRecordings = on }
+        if settings.keepAudio != before.keepAudio, !pending("keepAudio"), let on = settings.keepAudio { preferences.keepAudio = on }
         if api.isSignedIn { logSettings() }
     }
 
+    private func pending(_ key: String) -> Bool { edits[key, default: 0] != settled[key, default: 0] }
+
+    /// The name: pending from the first keystroke, saved a moment after the last.
     private func nameChanged(_ name: String) {
         guard !applying, api.isSignedIn else { return }
+        edits["speakerName", default: 0] += 1
+        let edit = edits["speakerName"]!
         nameSave?.cancel()
         nameSave = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(800))
             guard !Task.isCancelled, let self else { return }
             nameSave = nil
-            changed(PersonalSettings(speakerName: name))
+            save("speakerName", edit, PersonalSettings(speakerName: name))
         }
     }
 
     /// A setting changed here: saved to the account while someone is signed in (signed out, it stays this Mac's).
-    private func changed(_ changes: PersonalSettings) {
+    private func changed(_ key: String, _ changes: PersonalSettings) {
         guard !applying, api.isSignedIn else { return }
+        edits[key, default: 0] += 1
+        save(key, edits[key]!, changes)
+    }
+
+    private func save(_ key: String, _ edit: Int, _ changes: PersonalSettings) {
         let previous = saving
         saving = Task { [weak self] in
             await previous?.value
-            await self?.save(changes)
+            await self?.send(key, edit, changes)
         }
     }
 
-    private func save(_ changes: PersonalSettings) async {
+    private func send(_ key: String, _ edit: Int, _ changes: PersonalSettings) async {
+        guard api.isSignedIn else { return }
         do {
             try await api.saveSettings(changes)
+            settled[key] = edit
             log.write("☁️ Saved your settings to your account")
             logSettings()
         } catch {
+            settled[key] = edit
             log.write("⚠︎ Couldn't save your settings: \(error.localizedDescription)")
-            // The account's value is back in effect.
+            // The account's value is back in effect, unless the setting was changed here again meanwhile.
             seen = PersonalSettings()
             accountChanged(api.settings)
         }

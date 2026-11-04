@@ -202,8 +202,10 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
     private(set) var savingLanguages = 0
     /// The person's settings as the account has them (`/v1/me`), and what was saved since (`SettingsSync`); none while signed out.
     @Published private(set) var settings = PersonalSettings()
-    /// Saves of the settings under way: meanwhile what `/v1/me` read before them doesn't put the old ones back.
+    /// Saves of the settings under way, and begun so far: a read of `/v1/me` that began while one was under way, or saw one begin, may have been
+    /// answered before it, so its settings don't put the old ones back.
     private var savingSettings = 0
+    private var settingsSaves = 0
 
     var isSignedIn: Bool { phase == .signedIn }
 
@@ -341,6 +343,7 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
     }
 
     private func loadMe() async throws {
+        let saves = savingSettings == 0 ? settingsSaves : nil
         let data = try await get("v1/me")
         let read: CueMe
         do {
@@ -350,11 +353,12 @@ final class CueAPI: NSObject, ObservableObject, ASWebAuthenticationPresentationC
         }
         me = read
         if savingLanguages == 0, let codes = read.languages, codes != languages { languages = codes }
-        if savingSettings == 0, let read = read.settings, read != settings { settings = read }
+        if saves == settingsSaves, let read = read.settings, read != settings { settings = read }
     }
 
     /// Saves settings to the account (`PATCH /v1/me/settings`: the ones that are set); it answers with all of them.
     func saveSettings(_ changes: PersonalSettings) async throws {
+        settingsSaves += 1
         savingSettings += 1
         defer { savingSettings -= 1 }
         let data = try await request("PATCH", "v1/me/settings", json: try JSONEncoder().encode(changes))
