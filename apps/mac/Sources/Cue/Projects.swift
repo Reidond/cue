@@ -354,22 +354,26 @@ final class ProjectStore: ObservableObject {
 
     private func follow(_ serverID: String) async {
         let started = Date()
-        var over = false
+        var over = false, followed = false
         while !over, Date().timeIntervalSince(started) < 600, projects.contains(where: { $0.serverID == serverID }) {
             do {
-                let streamed = try await api.followBriefEvents(serverID) { brief in
+                let found = try await api.followBriefEvents(serverID) { brief in
                     over = brief.state != .working
                     show(brief, of: serverID)
                 }
-                if !streamed { await poll(serverID, since: started) }
-                // Otherwise the account ended the stream: the brief is written, failed or gone, or the project is.
-                return
+                if !found {
+                    // An account from before the brief's events; or, once they were followed, the project is gone from it.
+                    if !followed { await poll(serverID, since: started) }
+                    return
+                }
+                followed = true
             } catch CueAPIError.ended {
                 return
             } catch {
-                // The stream dropped, or the account is out of reach for a moment: it is opened again, and says the brief as it is now.
-                try? await Task.sleep(for: .milliseconds(1500))
+                // The stream dropped, or the account is out of reach for a moment.
             }
+            // Ended before the brief was written (or failed): it is opened again, and says the brief as it is now.
+            if !over { try? await Task.sleep(for: .milliseconds(1500)) }
         }
     }
 

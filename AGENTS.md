@@ -104,8 +104,8 @@ A person's projects and their materials live in D1 and R2; `docs/backend.md` ›
   account's projects, makes a folder for the ones this Mac hasn't seen, and uploads every folder without a `serverID` once (`📦 Imported N projects from this Mac`).
   Create, rename, delete and adding or removing a file wait for the server; field edits are saved here at once and to the account after 0.8 s (`☁️ Saved “NAME” to your account`).
   `CUE_CONTROL` commands run one after another, so `new` and `add` finish before the next line. `KnowledgeBase` builds Claude's prompt from the server's text.
-  After a file is added or removed (and at sync, for a brief still `working`) `followBrief` follows the brief's events (opened again when the stream drops; a server
-  without them, a 404 from one deployed before them, is read every 1.5 s instead, as apps before them still do) until the brief is written: `✨ Prepared “NAME” from its
+  After a file is added or removed (and at sync, for a brief still `working`) `followBrief` follows the brief's events (opened again when the stream drops or ends before
+  the brief is written; a 404 at the first try is a server deployed before them, read every 1.5 s instead, as apps before them still do, and a 404 later is the project gone) until the brief is written: `✨ Prepared “NAME” from its
   materials: N answers, M names and terms` or `⚠︎ Couldn't prepare “NAME” from its materials: WHY`. The Overview (`ProjectView`) is the materials first, then how Cue's reading
   went (Show Answers, Try Again, Prepare), then **Advanced**, collapsed: Occasion and Names and terms, whose placeholders are the brief's. Prepared Answers has "From Your Files"
   and "Prepared by Cue".

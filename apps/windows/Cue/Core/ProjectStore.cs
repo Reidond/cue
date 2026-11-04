@@ -424,19 +424,24 @@ public sealed class ProjectStore : Observable
         {
             var started = DateTime.UtcNow;
             var over = false;
+            var followed = false;
             // Deleted meanwhile, or signed out.
             while (!over && DateTime.UtcNow - started < TimeSpan.FromMinutes(10) && projects.Any(project => project.ServerId == serverId))
             {
                 try
                 {
-                    var streamed = await api.FollowBriefEvents(serverId, brief =>
+                    var found = await api.FollowBriefEvents(serverId, brief =>
                     {
                         over = !brief.Working;
                         Show(serverId, brief, null);
                     });
-                    if (!streamed) await Poll(serverId, started);
-                    // Otherwise the account ended the stream: the brief is written, failed or gone, or the project is.
-                    return;
+                    if (!found)
+                    {
+                        // An account from before the brief's events; or, once they were followed, the project is gone from it.
+                        if (!followed) await Poll(serverId, started);
+                        return;
+                    }
+                    followed = true;
                 }
                 catch (CueApiException e) when (e.Kind == CueApiError.Ended)
                 {
@@ -444,9 +449,10 @@ public sealed class ProjectStore : Observable
                 }
                 catch (CueApiException)
                 {
-                    // The stream dropped, or the account is out of reach for a moment: it is opened again, and says the brief as it is now.
-                    await Task.Delay(TimeSpan.FromMilliseconds(1500));
+                    // The stream dropped, or the account is out of reach for a moment.
                 }
+                // Ended before the brief was written (or failed): it is opened again, and says the brief as it is now.
+                if (!over) await Task.Delay(TimeSpan.FromMilliseconds(1500));
             }
         }
         finally
