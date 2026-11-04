@@ -52,6 +52,13 @@ e2eCase(
         const live = await LiveClient.connect(backend, call.token, call.callId);
         await live.next('status', (status) => status.part === 'claude' && status.state === 'ready', 30);
 
+        // The project says so, for its page: what Claude reads for each question, out of what the files hold.
+        const project = await backend.call('GET', `/v1/projects/${call.projectId}`, call.token);
+        const reading = (project.body as { reading: { tokens: number; totalTokens: number; passages: boolean } }).reading;
+        assertEq(reading.passages, true, 'too long to read whole');
+        if (reading.totalTokens < 100_000) fail('the files hold over 100k tokens', JSON.stringify(reading));
+        if (reading.tokens < 5_000 || reading.tokens > 8_000) fail('a question reads about 6k of them', JSON.stringify(reading));
+
         // The cached system prompt names the files and their sections, not their 240,000 characters.
         const system = cue.claudeRequests('answer-system').at(-1) ?? fail('the answer prompt should be warmed');
         writeFileSync(cue.path('system.txt'), system);

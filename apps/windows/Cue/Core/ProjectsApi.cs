@@ -18,7 +18,11 @@ public sealed record RemoteProject(
     string NamesAndTerms,
     ProjectBrief? Brief,
     double CreatedAt,
-    double? LastUsedAt);
+    double? LastUsedAt,
+    ProjectReading? Reading = null);
+
+/// <summary>How much of a project's materials Claude reads for each question: all of them, or for long ones the passages that match it best.</summary>
+public sealed record ProjectReading(int Tokens, int TotalTokens, bool Passages);
 
 /// <summary>
 /// What Cue wrote from a project's materials: the occasion, the names and terms, answers to the likely questions. Written again (after a few seconds of
@@ -69,7 +73,6 @@ public sealed record Material(string Id, string Name, long Size, string? Error, 
 }
 
 /// <summary>A material with the text the server extracted from it.</summary>
-public sealed record RemoteMaterialText(string Name, string? Error, string Summary, string Text);
 
 /// <param name="From">`materials`: written in the file; `cue`: prepared by Cue from the materials.</param>
 public sealed record RemotePreparedAnswer(string Question, string Answer, string? Who, string Source, string MaterialId, string? From);
@@ -127,8 +130,6 @@ public static class ProjectsApi
     public static async Task<List<Material>> Materials(this CueApi api, string project) =>
         Decode<MaterialList>(await api.Get($"v1/projects/{project}/materials")).Materials;
 
-    public static async Task<RemoteMaterialText> MaterialText(this CueApi api, string id, string project) =>
-        Decode<RemoteMaterialText>(await api.Get($"v1/projects/{project}/materials/{id}"));
 
     public static async Task<List<RemotePreparedAnswer>> PreparedAnswers(this CueApi api, string project) =>
         Decode<AnswerList>(await api.Get($"v1/projects/{project}/prepared-answers")).Answers;

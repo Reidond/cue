@@ -18,6 +18,17 @@ const EMBED_BATCH = 32;
 /** How long a question waits for its own vector before it goes with the word ranking alone. */
 const QUERY_VECTOR_MS = 1_000;
 
+/**
+ * About how many tokens of a project's materials Claude reads for each question, and how many they hold, from their characters and UTF-8 bytes
+ * (Claude's tokenizer averages about 3.9 bytes a token on mixed text): all of them up to MATERIALS_INLINE_CHARS, else the passages a question
+ * brings. What the projects' pages show.
+ */
+export function readingOf(chars: number, bytes: number): { tokens: number; totalTokens: number; passages: boolean } {
+    const tokens = (count: number) => Math.round((count * 10) / 39);
+    const passages = chars > MATERIALS_INLINE_CHARS;
+    return { tokens: tokens(passages ? (EXCERPT_CHARS * bytes) / chars : bytes), totalTokens: tokens(bytes), passages };
+}
+
 export interface Material {
     name: string;
     text: string;

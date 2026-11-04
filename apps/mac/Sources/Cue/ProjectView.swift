@@ -224,9 +224,7 @@ private struct ProjectOverview: View {
     }
 
     private func summary(_ knowledge: KnowledgeBase) -> String {
-        let tokens = knowledge.estimatedTokens
-        let size = tokens >= 1000 ? "\(tokens / 1000)k" : "\(tokens)"
-        return "~\(size) tokens · \(knowledge.prepared.count) prepared answers"
+        [knowledge.tokens, "\(knowledge.prepared.count) prepared answers"].compactMap { $0 }.joined(separator: " · ")
     }
 
     private func chooseFiles() {

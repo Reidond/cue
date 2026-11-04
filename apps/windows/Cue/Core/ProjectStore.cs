@@ -478,23 +478,22 @@ public sealed class ProjectStore : Observable
     }
 
     /// <summary>
-    /// What the account read from the project's files, for the project's page: their texts, and the prepared answers (the files' own first, then the ones
-    /// Cue wrote from them). Null when it couldn't be asked.
+    /// What the account read from the project's files, for the project's page: the files, the prepared answers (the files' own first, then the ones
+    /// Cue wrote from them) and how much Claude reads for each question. Null when it couldn't be asked.
     /// </summary>
     public async Task<KnowledgeBase?> Knowledge(string? serverId)
     {
         if (serverId is null) return new KnowledgeBase([], []);
         try
         {
-            var materials = await api.Materials(serverId);
-            var answers = await api.PreparedAnswers(serverId);
-            var documents = new List<MaterialDocument>();
-            foreach (var material in materials)
-            {
-                var text = material.Error is null ? (await api.MaterialText(material.Id, serverId)).Text : "";
-                documents.Add(new MaterialDocument(material.Name, material.Summary, material.Error, text));
-            }
-            return new KnowledgeBase(documents, [.. answers.Select(answer => new PreparedAnswer(answer.Question, answer.Answer, answer.Who, answer.Source, answer.From == "cue"))]);
+            var project = api.Project(serverId);
+            var materials = api.Materials(serverId);
+            var answers = api.PreparedAnswers(serverId);
+            await Task.WhenAll(project, materials, answers);
+            return new KnowledgeBase(
+                [.. materials.Result.Select(material => new MaterialDocument(material.Name, material.Summary, material.Error))],
+                [.. answers.Result.Select(answer => new PreparedAnswer(answer.Question, answer.Answer, answer.Who, answer.Source, answer.From == "cue"))],
+                project.Result.Reading);
         }
         catch (CueApiException e)
         {

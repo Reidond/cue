@@ -1,4 +1,4 @@
-import { assertEq, e2eCase, fixture, LiveClient, startCall } from '../harness/index.ts';
+import { assertEq, e2eCase, fail, fixture, LiveClient, startCall } from '../harness/index.ts';
 
 e2eCase(
     'Each question goes to the Claude it needs: Haiku for one a prepared answer covers or a plain fact, Sonnet for reasoning, and Sonnet for all when Haiku is down.',
@@ -8,6 +8,14 @@ e2eCase(
         const call = await startCall(backend, 'ann@cue.test', { materials: [fixture('materials', 'talk.md')], call: { auto: false } });
         const live = await LiveClient.connect(backend, call.token, call.callId);
         await live.next('status', (status) => status.part === 'claude' && status.state === 'ready', 30);
+        // A short file is read whole: what each question reads is all of it.
+        const project = await backend.call('GET', `/v1/projects/${call.projectId}`, call.token);
+        const reading = (project.body as { reading: { tokens: number; totalTokens: number; passages: boolean } }).reading;
+        assertEq(
+            JSON.stringify(reading),
+            JSON.stringify({ tokens: reading.totalTokens, totalTokens: reading.totalTokens, passages: false }),
+        );
+        if (reading.tokens < 100 || reading.tokens > 1_000) fail('talk.md is a few hundred tokens', JSON.stringify(reading));
         await cue.waitFor('Haiku to be warmed too', 30, () =>
             cue
                 .serviceRequests('anthropic-request')
