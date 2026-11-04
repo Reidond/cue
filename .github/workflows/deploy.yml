@@ -1,12 +1,12 @@
-# Deploys the Cue backend (the API Worker, with the admin app as its assets) to Cloudflare when a push to main changes it. The first deploy is
-# made by hand: docs/deploy.md is the owner's checklist (the API token, the OAuth apps, the Worker secrets). Release (release.yml) builds the Mac
+# Deploys the Cue backend to Cloudflare when a push to main changes it: the API Worker (cue-api) and the admin's (cue-admin, the SPA as static
+# assets on its own host). The first deploy is made by hand: docs/deploy.md is the owner's checklist (the API token, the OAuth apps, the Worker secrets). Release (release.yml) builds the Mac
 # app and never deploys.
 name: Deploy backend
 
 on:
   push:
     branches: [main]
-    # The Worker with its prompts (apps/api/prompts), the admin app, the contract, and what builds them.
+    # The API Worker with its prompts (apps/api/prompts), the admin's, the contract, and what builds them.
     paths:
       - apps/api/**
       - apps/admin/**
@@ -56,12 +56,12 @@ jobs:
           node-version: latest
           cache: true
 
-      # The checks of ci.yml that decide whether the Worker builds: the toolchain, the types, format, lint, type-check. The end-to-end suite
+      # The checks of ci.yml that decide whether the Workers build: the toolchain, the types, format, lint, type-check. The end-to-end suite
       # has run on the pull request.
       - name: Install
         run: vp install
 
-      - name: Worker toolchain (cf must build with Vite+)
+      - name: Workers' toolchain (cf must build with Vite+)
         run: node apps/api/scripts/check-vite.ts
 
       - name: Worker types
@@ -75,20 +75,28 @@ jobs:
       - name: Migrations
         run: node apps/api/scripts/migrate-remote.ts --if-exists
 
-      - name: Deploy
+      - name: Deploy the API
         working-directory: apps/api
+        run: ./node_modules/.bin/cf deploy --message "$GITHUB_SHA"
+
+      # After the API, which must already allow the admin's origin (ADMIN_URL) when the new admin calls it.
+      - name: Deploy the admin
+        working-directory: apps/admin
         run: ./node_modules/.bin/cf deploy --message "$GITHUB_SHA"
 
       # The first deploy created the database; any other run finds nothing to apply.
       - name: Migrations (after the first deploy)
         run: node apps/api/scripts/migrate-remote.ts
 
-      - name: Is it up?
+      - name: Are they up?
         run: |
-          url=$(tr -d '[:space:]' < apps/api/production-url.txt)
-          for attempt in 1 2 3 4 5 6; do
-            if curl -fsS "$url/v1/openapi.json" -o /dev/null; then echo "$url answers"; exit 0; fi
-            sleep 10
-          done
-          echo "::error::$url did not answer /v1/openapi.json"
-          exit 1
+          answers() {
+            for attempt in 1 2 3 4 5 6; do
+              if curl -fsS "$1" -o /dev/null; then echo "$1 answers"; return 0; fi
+              sleep 10
+            done
+            echo "::error::$1 did not answer"
+            return 1
+          }
+          answers "$(tr -d '[:space:]' < apps/api/production-url.txt)/v1/openapi.json"
+          answers "$(tr -d '[:space:]' < apps/admin/production-url.txt)/"

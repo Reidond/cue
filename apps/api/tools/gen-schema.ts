@@ -10,6 +10,7 @@ database.exec('CREATE TABLE invite (email TEXT PRIMARY KEY, disabled INTEGER NOT
 const auth = createAuth(
     {
         PUBLIC_URL: 'http://localhost:5173',
+        ADMIN_URL: 'http://localhost:5174',
         BETTER_AUTH_SECRET: 'x'.repeat(32),
         ADMIN_EMAILS: '',
         ACCESS_TOKEN_SECONDS: '900',

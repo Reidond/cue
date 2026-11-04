@@ -41,7 +41,7 @@ package.json, pnpm-workspace.yaml   # apps/*, packages/*, tests/e2e; packageMana
 vite.config.ts                      # root `lint` (oxlint, typeAware + typeCheck on tsgo) and `fmt` (oxfmt), overrides per package
 apps/mac/                           # Package.swift, Sources/Cue, Resources, scripts
 apps/api/                           # Elysia Worker: cloudflare.config.ts, src/, prompts/, migrations/
-apps/admin/                         # the owner's admin SPA (Vite + React), served by the api Worker at /admin
+apps/admin/                         # the owner's admin SPA (Vite + React), its own Worker on admin.cue.sands.red
 packages/contract/                  # TypeBox schemas: the Cue API's requests, responses and call events
 tests/e2e/                          # the end-to-end suite as a workspace package
 ```
@@ -160,7 +160,7 @@ allowance is not bought. Its tokens are `materials_brief` usage. There is no lan
 
 ### Admin API
 
-`/admin/v1/*`, same origin as the SPA, Better Auth session cookie with the `admin` role: overview
+`/admin/v1/*` on the API's host, called by the SPA from its own (CORS for that origin alone), Better Auth session cookie with the `admin` role: overview
 (spend this month, by user, by feature, per day), users (usage, limit, last active, disable / enable,
 change limit), invites (add, list pending / accepted, revoke), settings (default limit, audio
 retention, pause the whole plan). No transcripts or notes: the admin sees usage, not content.
@@ -168,13 +168,14 @@ retention, pause the whole plan). No transcripts or notes: the admin sees usage,
 | Route | Does |
 |---|---|
 | `GET /admin/v1/session` | Who the cookie belongs to (any signed-in account: the SPA shows "Not allowed" to a member) |
+| `DELETE /admin/v1/session` | Signs that session out (Better Auth's sign-out, so the SPA talks to one origin) |
 | `GET /admin/v1/overview[?month]` | The month's spend against the sum of everyone's limits, per day, per feature, top ten spenders |
 | `GET /admin/v1/users[?q&status&sort&page]`, `GET …/users/:id[?month]` | Users with spend, limit, last activity and status; one user with spend per day and per feature |
 | `POST …/users/:id/disable`, `…/enable`, `PATCH …/users/:id/limit` | Disable (ban, tokens revoked, KV denylist) and enable; a monthly limit, or `null` for the default |
 | `GET/POST /admin/v1/invites`, `DELETE …/invites/:email` | Pending, accepted and disabled invites; add; withdraw one nobody has used |
 | `GET/PATCH /admin/v1/settings` | Default monthly limit (20 USD), audio retention (30 days), pausing the plan |
 
-Writes need this origin's `Origin` header. Money is millionths of a dollar in the `usage` table
+Writes need the admin's `Origin` header (`ADMIN_URL`). Money is millionths of a dollar in the `usage` table
 (`user_id, feature, provider, model, units, unit, cost_micros, created_at`; PR 5 and 6 fill it: `answer`, `question_judge`, `live_transcript`, `note_transcript`, `note_names`, `notes_summary`), and the
 limits are dollars: `user_limit` per person, else the `default_monthly_limit_usd` setting. A paused plan
 (`plan_paused`, 503) is checked once per `/v1` request (`src/routes/v1.ts`); the admin is not under `/v1`.
@@ -183,8 +184,10 @@ API and the owner's script.
 
 ## Admin SPA (`apps/admin`)
 
-For the owner only, served by the api Worker as static assets at `/admin` (SPA fallback), so the
-admin API is same-origin.
+For the owner only, a Worker of its own (`cue-admin`, no code: static assets with the SPA fallback) on its own host,
+`admin.cue.sands.red`, so that it deploys apart from the API and the API's host serves nothing but the API. It calls the admin
+API on `cue.sands.red` across origins: the hosts are one site, so the session cookie (SameSite=Lax, the API's host) goes along,
+and the API allows the admin's origin (`ADMIN_URL`) by CORS.
 
 - React 19 with the React Compiler, Vite through Vite+, TypeScript 7 strict.
 - TanStack Router (file-based, typed search params) and TanStack Query; Eden Treaty client typed from
@@ -193,10 +196,10 @@ admin API is same-origin.
   `prefers-reduced-motion`; oxlint's react, react-hooks and jsx-a11y plugins.
 - Designed with the `better-ui` and `emil-design-eng` skills: concentric radii, optical alignment,
   real hit areas, restrained purposeful motion with proper easing, no layout shift.
-- Pages: Overview, Users (and one user), Invites, Settings. Sign in with Google / GitHub (`/login/PROVIDER?next=admin`
-  comes back to `/admin/`); a signed-in member sees "Not allowed".
-- Built as the *client environment* of the api's Vite project (`apps/api/index.html` → `admin-entry.ts` → the SPA); `assets` in
-  `cloudflare.config.ts` serves it at `/admin` with the SPA fallback, so every prefix the Worker answers is listed in `runWorkerFirst`.
+- Pages: Overview, Users (and one user), Invites, Settings. Sign in with Google / GitHub on the API's pages (`/login/PROVIDER?next=admin`
+  comes back to the admin's `/`; Better Auth trusts that origin); a signed-in member sees "Not allowed".
+- Its own Vite project (`apps/admin/vite.config.ts`, `cloudflare.config.ts`, `index.html`), the API's origin stamped in at build time
+  (`apps/api/production-url.txt`, or `CUE_API_URL`).
 
 ## The Mac app becomes a client
 
@@ -238,7 +241,7 @@ They form GitHub Stack #21 (https://github.com/Reidond/cue/stack/21). Each new P
 6. After the call: recording upload, the notes Workflow (second pass, speakers, names, summary), notes
    on the backend; whisper-cli, FluidAudio and the local summarizer go.
 7. Limits and the usage display.
-8. Deploy workflow on pushes to `main` touching `apps/api` or `apps/admin`.
+8. Deploy workflow on pushes to `main` touching `apps/api` or `apps/admin` (both Workers).
 
 ## Risks (checked by the spike before PR 2)
 

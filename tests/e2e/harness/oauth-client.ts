@@ -141,11 +141,12 @@ export async function revokeToken(base: string, token: string, client: OAuthClie
 }
 
 /**
- * Signing in to the admin as a browser does it (`/login/PROVIDER?next=admin`, the provider's page, the callback): the session cookie of the
- * admin SPA's API, or why it did not come. A cookie jar stands in for the browser, as in `signInThroughBrowser`.
+ * Signing in to the admin as a browser does it (`/login/PROVIDER?next=admin`, the provider's page, the callback, back to the admin's host
+ * `admin`): the session cookie of the admin SPA's API, or why it did not come. A cookie jar stands in for the browser, as in `signInThroughBrowser`.
  */
 export async function signInToAdmin(
     base: string,
+    admin: string,
     provider: 'google' | 'github' = 'google',
 ): Promise<{ kind: 'session'; cookie: string } | { kind: 'not_invited'; email: string | null } | { kind: 'failed'; detail: string }> {
     const jar = new Map<string, string>();
@@ -169,7 +170,7 @@ export async function signInToAdmin(
         const landed = new URL(next);
         if (landed.pathname === '/invite-only') return { kind: 'not_invited', email: landed.searchParams.get('email') };
         if (landed.pathname === '/sign-in-failed') return { kind: 'failed', detail: next };
-        if (landed.pathname.startsWith('/admin'))
+        if (landed.origin === new URL(admin).origin)
             return { kind: 'session', cookie: [...jar].map(([name, value]) => `${name}=${value}`).join('; ') };
     }
     return { kind: 'failed', detail: 'too many redirects' };
