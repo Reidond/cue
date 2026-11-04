@@ -47,7 +47,8 @@ export function pieces(text: string): string[] {
 export function answer(content: string, env: Env): string {
     if (content.startsWith('Connection check')) return '—';
     const answers = Object.entries(JSON.parse(env['FAKE_CLAUDE_ANSWERS'] ?? '{}') as Record<string, string>);
-    const question = /^Question: (.*)$/m.exec(content)?.[1] ?? '';
+    // The last one: passages of long materials, which go before it, may have questions of their own.
+    const question = [...content.matchAll(/^Question: (.*)$/gm)].at(-1)?.[1] ?? '';
     const own = answers.find(([pattern]) => new RegExp(pattern, 'i').test(question))?.[1];
     const text = own ?? env['FAKE_CLAUDE_ANSWER'] ?? 'Fake answer from the end-to-end tests.\n- A supporting point\nSource: tests';
     // Asked for each line in a second language too: an answer that has no "» " lines of its own gets them.

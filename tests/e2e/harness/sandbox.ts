@@ -15,6 +15,7 @@ import {
     type AnthropicRequest,
     type DeepgramFileRequest,
     type DeepgramRequest,
+    type EmbeddingsRequest,
     type FakeProviders,
     type MarkdownRequest,
 } from './fake-providers.ts';
@@ -73,6 +74,7 @@ export interface ServiceRequests {
     'deepgram-live': DeepgramRequest;
     'deepgram-file': DeepgramFileRequest;
     'markdown-request': MarkdownRequest;
+    'embeddings-request': EmbeddingsRequest;
 }
 
 type DefaultsValue = string | boolean | number | readonly string[];
@@ -274,6 +276,7 @@ export class Cue {
                       ANTHROPIC_URL: providers.url,
                       ANTHROPIC_API_KEY: FAKE_KEYS.anthropic,
                       MARKDOWN_URL: `${providers.url}/markdown`,
+                      EMBEDDINGS_URL: `${providers.url}/embeddings`,
                       ...(DEEPGRAM === 'fake'
                           ? { DEEPGRAM_URL: providers.url, DEEPGRAM_API_KEY: FAKE_KEYS.deepgram }
                           : { DEEPGRAM_API_KEY: await keychainKey('deepgram') }),

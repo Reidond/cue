@@ -20,16 +20,20 @@ const speakerOf = (speaker: string) => (speaker.trim() === '' ? 'the speaker' : 
 const occasionOf = (occasion: string) => (occasion.trim() === '' ? 'a talk followed by questions.' : occasion.trim());
 
 /**
- * Claude's system prompt: prompt.md filled in, then the prepared answers, then the materials' texts. It holds no language: the call's is heard
- * while it goes, and each question says what to answer in (call.ts), so the prompt stays one the cache keeps.
+ * Claude's system prompt: prompt.md filled in, then the prepared answers, then the materials' texts, or for materials too long to read for every
+ * question (excerpts.ts) the list of files, each question bringing its passages. It holds no language: the call's is heard while it goes, and each
+ * question says what to answer in (call.ts), so the prompt stays one the cache keeps.
  */
-export function answerPrompt(who: Speaker, prepared: PreparedAnswer[], texts: string[]): string {
+export function answerPrompt(who: Speaker, prepared: PreparedAnswer[], materials: { texts: string[] } | { outline: string }): string {
     let prompt = promptTemplate.replaceAll('{{speaker}}', speakerOf(who.speaker)).replaceAll('{{occasion}}', occasionOf(who.occasion));
     if (prepared.length > 0) {
         prompt += '\n\n# PREPARED ANSWERS\n';
         for (const item of prepared) prompt += `\nQuestion${item.who ? ` (${item.who})` : ''}: ${item.q}\nAnswer: ${item.a}\n`;
     }
-    const present = texts.filter((text) => text !== '');
+    if ('outline' in materials) {
+        return `${prompt}\n\n# MATERIALS\n\nThe materials are too long to read in full for every question, so each question comes with the passages of them that match it best, under "Excerpts from the materials", each labelled with its file, the heading above it and its page. Those passages are the materials these rules speak of: answer from them and from the prepared answers, and name the file and page their labels give. If they do not hold the answer, say so rather than guess.\n\nThe files:\n${materials.outline}\n`;
+    }
+    const present = materials.texts.filter((text) => text !== '');
     prompt +=
         present.length === 0
             ? '\n\n# MATERIALS\n\nNo materials were provided. Answer from general knowledge and say when you are unsure.\n'

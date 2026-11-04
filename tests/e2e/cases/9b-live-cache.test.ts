@@ -16,7 +16,17 @@ e2eCase(
         // Written before any question: a request that asks for no answer (max_tokens 0), with the system prompt marked for an hour's caching.
         const early = cue.serviceRequests('anthropic-request');
         const warmups = (kind: string) => early.filter((request) => request.kind === kind && request.maxTokens === 0);
-        assertEq(warmups('answer').length, 1, 'the answer prompt is written to the cache first');
+        const models = (kind: string) =>
+            JSON.stringify(
+                warmups(kind)
+                    .map((request) => request.model)
+                    .sort(),
+            );
+        assertEq(
+            models('answer'),
+            JSON.stringify(['claude-haiku-5-5', 'claude-sonnet-5-5']),
+            'the answer prompt is written to the cache first, for both answer models',
+        );
         assertEq(warmups('judge').length, 1, "and the judge's");
         assertEq(JSON.stringify(warmups('answer')[0]?.systemCache), JSON.stringify({ type: 'ephemeral', ttl: '1h' }), 'for an hour');
         assertEq(JSON.stringify(warmups('answer')[0]?.cache), undefined, 'the warm-up has no conversation to cache');
@@ -31,7 +41,7 @@ e2eCase(
             );
         });
 
-        // A question reads the cache the warm-ups wrote, and caches the conversation too.
+        // A question reads the cache the warm-ups wrote, and caches the conversation too. A prepared answer covers this one: Haiku answers it (router.ts).
         const speech = pcmOf(readFileSync(await bursts(cue.path('call.wav'), 6, [[1, 3]])));
         await live.play('others', speech);
         const asked = await live.next('question', () => true, 30);
@@ -40,7 +50,7 @@ e2eCase(
             cue.serviceRequests('anthropic-request').find((request) => request.kind === 'answer' && request.maxTokens > 0) ??
             fail('the question should reach Claude');
         assertEq(question.stream, true, 'the answer streams');
-        assertEq(question.model, 'claude-sonnet-5-5');
+        assertEq(question.model, 'claude-haiku-5-5');
         assertEq(JSON.stringify(question.systemCache), JSON.stringify({ type: 'ephemeral', ttl: '1h' }));
         assertEq(
             JSON.stringify(question.cache),

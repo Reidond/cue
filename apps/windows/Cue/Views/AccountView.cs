@@ -95,6 +95,7 @@ public sealed class AccountView : UserControl
             "notes_summary" => "Summaries",
             "note_translation" => "Translations",
             "material_text" => "Reading files",
+            "material_search" => "Searching files",
             _ => feature,
         };
 }

@@ -111,7 +111,9 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
   cache and keeps it warm with alarms, holds the Deepgram live streams (Nova-3 multilingual, `diarize` on the call side: the language is heard, and
   each question tells Claude which to answer in, so the cached prompt names none), runs the
   question spotting and judge on each final line (the waiting rules of the Mac's `QuestionDetector`: wait for the participant to finish, answer
-  at once when the speaker starts talking, the room's microphone as `Room`), matches prepared answers, answers questions, records usage,
+  at once when the speaker starts talking, the room's microphone as `Room`), matches prepared answers, answers questions (each with Claude Haiku 5.5 when a
+  prepared answer covers it or it asks a plain fact, else Claude Sonnet 5.5: `router.ts`; materials longer than 120,000 characters are not the system prompt but
+  passages, the best of them sent with each question, found by words and by multilingual `bge-m3` vectors: `excerpts.ts`), records usage,
   saves the live transcript to D1 when the call ends, and ends a call nobody has come back to. A dropped client resumes: events carry a `seq` and the
   last thousand are replayed.
 - **Notes Workflow** (`apps/api/src/notes/`, Cloudflare Workflows, each step retried three times on its own): `transcript` (Deepgram's recorded-file

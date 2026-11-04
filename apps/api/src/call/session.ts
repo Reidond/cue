@@ -77,7 +77,7 @@ export class ClaudeSession {
         this.#lastActivity = Date.now();
         this.#inFlight++;
         try {
-            const result = await send(this.#request([{ role: 'user', content: 'Connection check before the talk.' }], 0, true));
+            const result = await send(this.#request([{ role: 'user', content: 'Connection check before the talk.' }], 0, 'none'));
             this.#options.onTokens(this.#options.model, 'warm', result.tokens);
         } finally {
             this.#inFlight--;
@@ -87,13 +87,15 @@ export class ClaudeSession {
 
     /**
      * Sends `text` with the conversation so far and returns the whole reply, `onText` getting the pieces of a streamed one. A reply that
-     * came back whole joins the conversation.
+     * came back whole joins the conversation. `excerpts` (the passages of long materials it is asked about) go before `text` in this request
+     * only: the conversation keeps the question, so it does not grow by thousands of tokens a question.
      */
-    async ask(text: string, onText: (piece: string) => void = () => {}, signal?: AbortSignal): Promise<string> {
+    async ask(text: string, onText: (piece: string) => void = () => {}, signal?: AbortSignal, excerpts = ''): Promise<string> {
         this.#lastActivity = Date.now();
         this.#inFlight++;
         const question: Message = { role: 'user', content: text };
-        const body = this.#request([...this.#history, question], this.#options.maxTokens, false);
+        const sent: Message = excerpts === '' ? question : { role: 'user', content: `${excerpts}\n\n${text}` };
+        const body = this.#request([...this.#history, sent], this.#options.maxTokens, excerpts === '' ? 'conversation' : 'history');
         try {
             const result = this.#options.mode === 'stream' ? await stream(body, onText, signal) : await send(body);
             this.#options.onTokens(this.#options.model, 'message', result.tokens);
@@ -113,16 +115,28 @@ export class ClaudeSession {
         }
     }
 
-    /** The system prompt has its own hour-long cache entry; a message also caches the conversation up to it (top-level `cache_control`), which the warm-up leaves out. */
-    #request(messages: Message[], maxTokens: number, warmup: boolean): object {
+    /**
+     * The system prompt has its own hour-long cache entry. A message also caches the conversation: up to and with it (top-level `cache_control`),
+     * or, when it carries excerpts the conversation won't keep, up to the message before it (the next request starts the same way). The warm-up
+     * caches no conversation.
+     */
+    #request(messages: Message[], maxTokens: number, cache: 'none' | 'conversation' | 'history'): object {
         const { model, system } = this.#options;
+        const marked =
+            cache === 'history'
+                ? messages.map((message, index) =>
+                      index === messages.length - 2
+                          ? { ...message, content: [{ type: 'text', text: message.content, cache_control: CACHE }] }
+                          : message,
+                  )
+                : messages;
         return {
             model,
             max_tokens: maxTokens,
             thinking: noThinking(model),
-            messages,
+            messages: marked,
             ...(system === '' ? {} : { system: [{ type: 'text', text: system, cache_control: CACHE }] }),
-            ...(warmup ? {} : { cache_control: CACHE }),
+            ...(cache === 'conversation' ? { cache_control: CACHE } : {}),
         };
     }
 
