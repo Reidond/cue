@@ -364,10 +364,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                // The overlay is all glass, which caches as a blank window: drawn by the app, it is its view rendered.
+                // The overlay is all glass, which caches as a blank window: drawn by the app, it is its view rendered (with its lists
+                // and Ask field as plain views, which ImageRenderer draws).
                 let state = self.state, preferences = self.preferences, size = self.panel.frame.size
                 var targets = [Snapshots.Target(name: "Overlay", window: self.panel, path: path) {
-                    let renderer = ImageRenderer(content: OverlayView(state: state, preferences: preferences).frame(width: size.width, height: size.height))
+                    let overlay = OverlayView(state: state, preferences: preferences).environment(\.offscreenSnapshot, true)
+                    let renderer = ImageRenderer(content: overlay.frame(width: size.width, height: size.height))
                     renderer.scale = 2
                     return renderer.cgImage
                 }]

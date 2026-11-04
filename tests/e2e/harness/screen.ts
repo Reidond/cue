@@ -1,17 +1,66 @@
-// Reading rendered windows: Cue's snapshots and --render output are images, read with macOS Vision (Windows' own OCR on Windows).
+// Reading rendered windows: Cue's snapshots and --render output are images, read with macOS Vision, or Tesseract where Vision's
+// accurate recognizer can't run (harness/tesseract.ts), and with Windows' own OCR on Windows.
 import { copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { E2E_BIN, E2E_ROOT, IS_WINDOWS } from './config.ts';
 import { exec, type Ran } from './process.ts';
 import { fail, print } from './results.ts';
+import { type ReadLine, readLines } from './tesseract.ts';
+
+/** Whether Vision reads this Mac's images: tools/ocr.swift exits with 3 where its accurate recognizer can't run, and Tesseract reads from then on. */
+let vision = true;
 
 /** Runs tools/ocr.swift on an image (tools/ocr.ps1 on Windows, which can read one area of it alone). */
 export async function readImage(png: string, area?: Area): Promise<Ran> {
-    if (!IS_WINDOWS) return area ? fail('reading one area of an image is for Windows') : exec(join(E2E_BIN, 'ocr'), [png]);
+    if (!IS_WINDOWS) {
+        if (area) return fail('reading one area of an image is for Windows');
+        if (vision) {
+            const read = await exec(join(E2E_BIN, 'ocr'), [png]);
+            if (read.code !== 3) return read;
+            vision = false;
+        }
+        return readWithTesseract(png);
+    }
     // Windows' OCR holds the file while it reads, and Cue replaces its snapshot every 2 s: read a copy.
     const copy = `${png}.ocr.png`;
     copyFileSync(png, copy);
     return powershell('ocr.ps1', copy, ...(area ? [area.left, area.top, area.width, area.height].map(String) : []));
+}
+
+/** Who reads this Mac's images, once one has been read: for the capability probe's report. */
+export function imageReader(): string {
+    return vision ? 'Vision' : 'Tesseract (Vision’s accurate recognizer can’t run here)';
+}
+
+/**
+ * As tools/ocr.swift reads with Vision: the image over white and over black (inverted, so its light text is dark too), top to bottom and
+ * left to right. Where the two read the same line (their boxes mostly the same), the surer reading: Tesseract reads a line a little
+ * differently in each ("Participant 2 » Olena" and "Participant 2 = Olena"). Lines that only touch, as a button floating over a list, both stay.
+ */
+async function readWithTesseract(png: string): Promise<Ran> {
+    const [light, dark] = [`${png}.light.png`, `${png}.dark.png`];
+    const prepared = await exec(join(E2E_BIN, 'ocr'), ['--prepare', png, light, dark]);
+    if (prepared.code !== 0) return prepared;
+    const [onLight = [], onDark = []] = await readLines(light, dark);
+    const area = (line: ReadLine): number => (line.right - line.left) * (line.bottom - line.top);
+    const same = (a: ReadLine, b: ReadLine): boolean => {
+        const shared =
+            Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) *
+            Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+        return shared >= (area(a) + area(b) - shared) / 2;
+    };
+    const lines: ReadLine[] = [];
+    for (const line of [...onLight, ...onDark].sort((a, b) => b.confidence - a.confidence)) {
+        if (!lines.some((kept) => same(kept, line))) lines.push(line);
+    }
+    lines.sort((a, b) => {
+        // Lines whose middles are within half a line of each other are one row.
+        const [middleA, middleB] = [(a.top + a.bottom) / 2, (b.top + b.bottom) / 2];
+        const row = Math.min(a.bottom - a.top, b.bottom - b.top) / 2;
+        return Math.abs(middleA - middleB) > row ? middleA - middleB : a.left - b.left;
+    });
+    const stdout = lines.map((line) => `${line.text}\n`).join('');
+    return { code: 0, stdout, stderr: '', output: stdout };
 }
 
 /** A rectangle in an image's or the screen's own pixels. */

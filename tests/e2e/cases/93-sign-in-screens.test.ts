@@ -5,7 +5,8 @@ e2eCase('Home shows Sign In first, says plainly when an email is not invited, an
     const backend = await cue.backend();
     await cue.launch({ CUE_SNAPSHOT: cue.path('cue.png') }, { signIn: false });
 
-    await cue.dashboardPage('home', /Sign in to Cue/);
+    // Tesseract, which reads snapshots where Vision can't, runs the title's "Sign in" together.
+    await cue.dashboardPage('home', /Sign ?in to Cue/);
     await cue.dashboardShows(/Cue is invite-only/);
 
     backend.idp.approveAs('stranger@cue.test');
@@ -22,5 +23,5 @@ e2eCase('Home shows Sign In first, says plainly when an email is not invited, an
     asked = Date.now();
     await sleep(1);
     cue.control('signout');
-    await cue.waitFor('the dashboard to go back to the sign-in screen', 30, () => cue.dashboardShows(/Sign in to Cue/, asked));
+    await cue.waitFor('the dashboard to go back to the sign-in screen', 30, () => cue.dashboardShows(/Sign ?in to Cue/, asked));
 });

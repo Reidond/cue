@@ -23,6 +23,7 @@ import { exec, killTree, type Ran } from './process.ts';
 import { keychainKey, needOverlaySnapshots, needWindowSnapshots } from './requirements.ts';
 import { fail, print, Skip } from './results.ts';
 import { ocr, readImage } from './screen.ts';
+import { closeReader } from './tesseract.ts';
 import { sleep, within } from './time.ts';
 
 /** What a crash report (.ips) says that a failed case shows. */
@@ -187,6 +188,7 @@ export class Cue {
         this.#closing ??= (async () => {
             await this.stop();
             await closeBrowser(succeeded);
+            await closeReader();
             await (await this.#backend?.catch(() => undefined))?.stop();
             await this.#providers?.close();
             await (await this.#releases?.catch(() => undefined))?.close();
