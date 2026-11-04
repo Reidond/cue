@@ -10,7 +10,7 @@
 //                  `judge`, a transcript `summary-system` and `summary-input` (the notes Workflow's summary) or, when the system prompt starts "You find
 //                  the names", `names-system` and `names-input`; a project's materials (the system prompt starts "You read the materials") `brief-system`
 //                  and `brief-input`, replied to with FAKE_CLAUDE_BRIEF (the JSON object the brief prompt asks for; by default one with nothing
-//                  in it), FAKE_ANTHROPIC_BRIEF_FAILS=N failing the first N; a note's translation ("You translate the notes") `translate-system` and
+//                  in it), FAKE_ANTHROPIC_BRIEF_FAILS=N failing the first N, FAKE_CLAUDE_BRIEF_DELAY (seconds) slowing it down; a note's translation ("You translate the notes") `translate-system` and
 //                  `translate-input`, replied to in the shape asked for (fake-replies.ts `translation`); each request also as `anthropic-request`, with the headers it came with.
 //                  Replies carry `usage` and simulate the prompt cache (a system prompt seen before is a cache read). FAKE_CLAUDE_JUDGE_FAILS=1
 //                  fails every judge request with a 500, FAKE_ANTHROPIC_OVERLOADED=N the first N judge requests with a 529 (overloaded),
@@ -401,6 +401,8 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         } else if (kind === 'brief') {
             record(log, 'brief-system', system);
             record(log, 'brief-input', content);
+            const delay = Number(environment['FAKE_CLAUDE_BRIEF_DELAY']);
+            if (delay > 0) await sleep(delay * 1000);
             text = brief(environment);
         } else if (kind === 'names') {
             record(log, 'names-system', system);

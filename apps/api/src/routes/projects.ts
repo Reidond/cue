@@ -1,6 +1,7 @@
 import {
     ApiError as ApiErrorBody,
     Brief,
+    type BriefEvent,
     Deleted,
     NewProject,
     PreparedAnswers,
@@ -10,7 +11,7 @@ import {
     Projects,
 } from '@cue/contract';
 import { env } from 'cloudflare:workers';
-import { Elysia } from 'elysia';
+import { Elysia, sse } from 'elysia';
 import { ApiError } from '../errors.ts';
 import { mustBeWithinLimit } from '../limits.ts';
 import { preparedIn } from '../materials/read.ts';
@@ -170,6 +171,44 @@ export const projects = new Elysia({ name: 'projects', prefix: '/projects' })
             detail: {
                 summary:
                     "Writes the project's brief from its materials again (it is written by itself whenever a file is added or removed)",
+            },
+        },
+    )
+    .get(
+        '/:id/brief/events',
+        async function* ({ userId, params }) {
+            // The Workflow writes the brief's state to D1 (materials/workflow.ts): it is read here every half second for the first minute, then
+            // every two, which keeps a whole stream under D1's queries per invocation. A beat every 15 s keeps the connection open.
+            const started = Date.now();
+            let last = '';
+            let beat = started;
+            while (Date.now() - started < 10 * 60_000) {
+                const row = await findProject(env.DB, userId, params.id);
+                // Deleted meanwhile.
+                if (!row) return;
+                const brief: BriefEvent = projectOf(row).brief;
+                const seen = JSON.stringify(brief);
+                if (seen !== last) {
+                    last = seen;
+                    yield sse({ event: 'brief', data: brief });
+                }
+                if (brief.state !== 'working') return;
+                if (Date.now() - beat >= 15_000) {
+                    beat = Date.now();
+                    yield sse({ event: 'ping', data: {} });
+                }
+                await new Promise((resolve) => setTimeout(resolve, Date.now() - started < 60_000 ? 500 : 2000));
+            }
+        },
+        {
+            // An error thrown inside a streaming handler reaches no error hook: another person's project is refused before the stream starts.
+            beforeHandle: async ({ userId, params }) => {
+                await mustFind(userId, params.id);
+            },
+            params: ProjectId,
+            detail: {
+                summary:
+                    'Server-sent events: the brief (`brief`) at once and whenever it changes while Cue writes it; the stream ends once it is no longer `working`',
             },
         },
     );

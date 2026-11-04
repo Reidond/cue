@@ -90,6 +90,7 @@ with `unauthorized`, `not_invited`, `limit_reached` (402), `rate_limited`, `upst
 | `GET /v1/me` | Account, plan, limits, usage this month |
 | `GET/POST/PATCH/DELETE /v1/projects[/:id]` | Projects, the brief Cue wrote from their materials, and the person's own occasion and terms over it |
 | `POST /v1/projects/:id/brief` | Writes the brief again (it is written by itself whenever a file is added or removed) |
+| `GET /v1/projects/:id/brief/events` | Server-sent events: the brief at once and whenever it changes while Cue writes it, until it is written, failed or gone |
 | `POST /v1/projects/:id/materials`, `DELETE …/:materialId` | Upload a file (to R2), its text extracted and its prepared answers parsed |
 | `POST /v1/calls` | Starts a call for a project (calendar event, speaker, Auto, questions optional) → `callId` |
 | `GET /v1/live?call=ID[&after=SEQ]` (WebSocket) | In: binary audio frames (a channel byte, `me` / `others`, then PCM16 mono 16 kHz) and commands (`config`, `ask`, `answerNow`, `prepare`). Out, each with a `seq`: `ready`, `status {part, state, detail}`, `speaking`, `transcript.partial/final {channel, speaker, text, start, end}`, `question {id, exchange, text, opener, requested, forced}`, `prepared {questionId, answer, source, score}`, `answer.delta/done {questionId}`, `error`, `ended`. `after` replays what a reconnecting client missed. At a fixed path rather than `/v1/calls/:id/live`: Elysia drops a route's 101 under `cf dev`, so the socket is `.mount`ed and has no params |
@@ -154,7 +155,9 @@ row (`material_text`).
 
 The person adds files; Cue writes the rest from them, the **brief**: a Workflow (`BriefWorkflow`) waits a few seconds after the last file was added or removed,
 then Sonnet reads the materials (`prompts/brief.md`) and writes the occasion, the names and terms speech recognition should listen for, and answers to the questions
-people are most likely to ask (after the ones the files prepare themselves). The app shows the materials first and keeps the occasion and the names and terms under
+people are most likely to ask (after the ones the files prepare themselves). The apps follow it while it is written over `GET …/brief/events` (server-sent events,
+read from D1 on the server: one request, where reading the project every 1.5 s took hundreds against the rate limit), and read the project again every 1.5 s only from a
+server deployed before the stream (a 404). The app shows the materials first and keeps the occasion and the names and terms under
 Advanced: the person's own words there replace the brief's, and clearing them goes back to it. A brief that fails keeps the one before and says why; one over the month's
 allowance is not bought. Its tokens are `materials_brief` usage. There is no language setting: the project's `language` is the one its last call was heard in. Not yet: re-reading old files after the extractor improves, images, `.doc`/`.rtf`.
 

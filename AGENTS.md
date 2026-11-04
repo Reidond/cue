@@ -93,7 +93,9 @@ A person's projects and their materials live in D1 and R2; `docs/backend.md` ›
   and terms speech recognition listens for, and answers to the 10–25 questions people are most likely to ask (Sonnet reads the files' texts, up to `BRIEF_MAX_CHARS`, and is told
   which questions the files answer already). Every file added or removed counts in `materials_version` and starts a `BriefWorkflow` (bound `BRIEF`) for it: it waits
   `BRIEF_SETTLE_SECONDS` (3) so files dropped together are read once, and only the latest version's writes. Its states: `none` (no files), `working`, `ready`, `failed` (the
-  brief before stays in use, `error` says why; Claude's failure is retried). `POST /v1/projects/:id/brief` asks for it again. The project's `occasion` and `namesAndTerms`
+  brief before stays in use, `error` says why; Claude's failure is retried). `POST /v1/projects/:id/brief` asks for it again. **`GET /v1/projects/:id/brief/events`** follows it (server-sent events,
+  `routes/projects.ts`): a `brief` event (`BriefEvent`, the `Brief`) at once and whenever it changes, read from D1 every 0.5 s for a minute and every 2 s after (D1's queries per
+  invocation), `ping` every 15 s, ending after the first state that isn't `working` (or when the project is gone, or after 10 minutes). The project's `occasion` and `namesAndTerms`
   are the person's own: empty means the brief's are used (`inUse` in `src/projects.ts`: the call's prompt and keyterms, the notes). Its tokens are `materials_brief` usage.
 - **The language** is never set: the project's `language` is the one Cue last heard in its calls (the Call DO writes it when a call ends; `en` before). A client sending one is
   ignored.
@@ -102,13 +104,14 @@ A person's projects and their materials live in D1 and R2; `docs/backend.md` ›
   account's projects, makes a folder for the ones this Mac hasn't seen, and uploads every folder without a `serverID` once (`📦 Imported N projects from this Mac`).
   Create, rename, delete and adding or removing a file wait for the server; field edits are saved here at once and to the account after 0.8 s (`☁️ Saved “NAME” to your account`).
   `CUE_CONTROL` commands run one after another, so `new` and `add` finish before the next line. `KnowledgeBase` builds Claude's prompt from the server's text.
-  After a file is added or removed (and at sync, for a brief still `working`) `followBrief` reads the project every 1.5 s until the brief is written: `✨ Prepared “NAME” from its
+  After a file is added or removed (and at sync, for a brief still `working`) `followBrief` follows the brief's events (opened again when the stream drops; a server
+  without them, a 404 from one deployed before them, is read every 1.5 s instead, as apps before them still do) until the brief is written: `✨ Prepared “NAME” from its
   materials: N answers, M names and terms` or `⚠︎ Couldn't prepare “NAME” from its materials: WHY`. The Overview (`ProjectView`) is the materials first, then how Cue's reading
   went (Show Answers, Try Again, Prepare), then **Advanced**, collapsed: Occasion and Names and terms, whose placeholders are the brief's. Prepared Answers has "From Your Files"
   and "Prepared by Cue".
 - **AoT**: `E2E_BACKEND=preview node tests/e2e/run.ts --no-app 26 27` runs the same cases against the compiled Worker (`cf build --mode development`, `vp preview`), where Elysia compiles its routes ahead of time.
 - **In a case**: `backend.call(method, path, token, { body | file })`, `backend.accountOf(email)` (`Account`: `projects()`, `materials()`, `text()`, `answers()`, `briefed(name)`: waits for
-  the brief to be written or fail) and
+  the brief to be written or fail; `briefEvents(project)`: the brief's events, each with when it came, as `serverSentEvents` reads a stream) and
   `backend.rows(sql)` and `backend.objects()` (R2 keys) check the account from outside the app; `makeDocx`/`makePdf`/`makePptx`/`writeFile` build the files.
 
 ## Limits and usage (`apps/api/src/{pricing,limits,usage}.ts`)
@@ -299,7 +302,7 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   `w1-installer` installs per machine, so it needs an elevated process (`remote.ts windows --admin e2e w1-`, `vmpal_exec_admin`) and skips without.
 - **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks), `w1-…` (the installer), `w2-…` (projects and materials: `w2-projects`, `w2-materials`, `w2-import-projects`,
   `w2-account-projects`, `w2-active-project`, `w2-brief` (the Overview: Materials, how Cue read them, the Advanced `Expander`; Try Again); they read the window with `windowText`, open an `Expander` with `expand(pid, name)` (UI Automation's expand pattern: its header is no button to `press`), the account with `backend.accountOf(cue.email)`), `w3-…` (the live call: see Live call on Windows), `w4-…` (recordings and notes: see Recordings and notes on Windows) and `w6-…` (meetings, the calendar and notifications: see Meetings, the calendar and notifications on Windows) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
-  them together with the cases that never launch the app (the source has no `.launch(`, `.cli(` or `.control(`: the backend's own, `9a-…` to `9e-…`, `95`–`99`). `9e-windows-sign-in` signs in as `cue-windows` end to end
+  them together with the cases that never launch the app (the source has no `.launch(`, `.cli(` or `.control(`: the backend's own, `9a-…` to `9f-…`, `95`–`99`). `9e-windows-sign-in` signs in as `cue-windows` end to end
   and runs anywhere with `--no-app`. Every later `wN-…` case is the app's too. A case reads what the window shows with `windowText(pid)` (`tools/uia.ps1`: the text of its UI Automation tree, exact (no recognition errors); a XAML `ScrollViewer`'s content scrolled out of view is not in it),
   and `windowsOf(pid)` is `tools/windows.ps1` (the foreground, the windows' sizes and styles: the twin of `appWindows`); `ocr` is `tools/ocr.ps1` (Windows' own `Windows.Media.Ocr`; it needs the English recognizer,
   `Language.OCR~~~en-US~0.0.1.0`, which `setup.ps1` adds) for what a snapshot shows; `cue.defaults()` edits `settings.json`; `cue.stop()` sends `quit` through the control file and kills the tree after 10 s.
@@ -527,7 +530,7 @@ This rule is strict and has no exceptions.
     the Anthropic one has a second system prompt kind, the names step ("You find the names…"), answered by `FAKE_CLAUDE_NAMES` (a JSON object label → name; by default the
     `<!-- speaker: … -->` lines of the summary's fixture), and `FAKE_ANTHROPIC_SUMMARY_FAILS=N` fails the first N summaries; a third, a project's brief ("You read the
     materials…", noted as `brief-system` and `brief-input`), is answered by `FAKE_CLAUDE_BRIEF` (the JSON object `prompts/brief.md` asks for; by default an empty one) and
-    `FAKE_ANTHROPIC_BRIEF_FAILS=N` fails the first N; a note's translation ("You translate the notes…", `translate-system` / `translate-input`) is answered in the shape asked
+    `FAKE_ANTHROPIC_BRIEF_FAILS=N` fails the first N (`FAKE_CLAUDE_BRIEF_DELAY` slows it by that many seconds); a note's translation ("You translate the notes…", `translate-system` / `translate-input`) is answered in the shape asked
     for. With two languages, what is asked for in the other one (an answer's `» ` lines, the judge's `T: ` lines, a note's lines) is `FAKE_CLAUDE_TRANSLATIONS` (JSON, line →
     translation) where it has the line, else `(LANGUAGE) line`; `FAKE_CLAUDE_TRANSLATED_SUMMARY` (a file) is a note's translated summary. The variables are read from the environment the app was launched with (`cue.launch({…})`) or from
     `cue.standIns({…})` for a case with no app. `--real-deepgram` points the backend at the real Deepgram instead, with the key the runner
@@ -638,7 +641,7 @@ is cut to it, smaller than it was (GitHub's runner has a small screen).
 Each case is a TypeScript file, `tests/e2e/cases/NN-name.test.ts`, numbered
 by feature area (`0x` CLI and launch, `1x` prompter and recording, `2x`
 projects and dashboard, `3x` call audio, `4x` the notes' second pass (upload, steps, retries), `5x`
-speakers, `6x` calendar, `7x` the backend's Anthropic calls, `8x` Deepgram through the backend, `9x` signing in, the backend and the admin: the admin's are `9a-…`, the live calls' `9b-…`, the notes' `9c-…`, the limits, usage and rate limits' `9d-…`, the Windows app's OAuth client `9e-…`; `wN-…` are Windows-only: `w0-…` the Windows app, `w1-…` its installer). It declares one test, whose title says the
+speakers, `6x` calendar, `7x` the backend's Anthropic calls, `8x` Deepgram through the backend, `9x` signing in, the backend and the admin: the admin's are `9a-…`, the live calls' `9b-…`, the notes' `9c-…`, the limits, usage and rate limits' `9d-…`, the Windows app's OAuth client `9e-…`, the brief's events `9f-…`; `wN-…` are Windows-only: `w0-…` the Windows app, `w1-…` its installer). It declares one test, whose title says the
 behaviour it checks:
 
 ```ts

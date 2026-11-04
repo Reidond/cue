@@ -24,6 +24,14 @@ export const Brief = Type.Object({
 });
 export type Brief = Static<typeof Brief>;
 
+/**
+ * `GET /v1/projects/:id/brief/events` (server-sent events): the brief while Cue writes it, a `brief` event (its data a `Brief`) at once and then one
+ * whenever it changes, until it is no longer `working` (`ready`, `failed`, or `none` when the files are gone): the stream ends after that event. `ping`
+ * events only keep the connection open. A server without the route answers 404; a client then reads the project again now and then.
+ */
+export const BriefEvent = Brief;
+export type BriefEvent = Brief;
+
 export const Project = Type.Object({
     id: Type.String(),
     name: Name,

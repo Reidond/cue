@@ -167,3 +167,73 @@ public static class ProjectsApi
         ["html"] = "text/html",
     };
 }
+
+public sealed partial class CueApi
+{
+    /// <summary>
+    /// Follows the project's brief while the account writes it (server-sent events): `onBrief` gets it at once and again whenever it changes, until the server
+    /// ends the stream, once it is no longer `working`. False when the server has no such stream (one from before it, during a deploy): the caller reads the
+    /// project again now and then instead.
+    /// </summary>
+    public async Task<bool> FollowBriefEvents(string project, Action<ProjectBrief> onBrief, CancellationToken cancel = default)
+    {
+        var token = await Bearer();
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+            limit.CancelAfter(TimeSpan.FromMinutes(10));
+            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(BaseUrl, $"v1/projects/{project}/brief/events"));
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            request.Headers.TryAddWithoutValidation("Cue-Version", $"windows/{Env.Version}");
+            request.Headers.TryAddWithoutValidation("Accept", "text/event-stream");
+            try
+            {
+                using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, limit.Token);
+                var status = (int)response.StatusCode;
+                if (status == 401 && attempt == 0)
+                {
+                    token = await Bearer(refreshing: true);
+                    continue;
+                }
+                if (status == 404) return false;
+                if (status != 200)
+                {
+                    var error = ApiErrorBody.In(await response.Content.ReadAsByteArrayAsync(limit.Token));
+                    if (status == 401) throw new CueApiException(CueApiError.Ended, error?.Message ?? "Your session has ended. Sign in to Cue again.", error?.Code);
+                    throw CueApiException.Server(error?.Message ?? $"Cue answered {status}.");
+                }
+                // An event's name comes before its data; `ping` only keeps the connection open.
+                var name = "message";
+                using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(limit.Token));
+                while (await reader.ReadLineAsync(limit.Token) is { } line)
+                {
+                    if (line.StartsWith("event:", StringComparison.Ordinal))
+                    {
+                        name = line[6..].Trim();
+                        continue;
+                    }
+                    if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
+                    var named = name;
+                    name = "message";
+                    if (named != "brief") continue;
+                    ProjectBrief? brief;
+                    try
+                    {
+                        brief = JsonSerializer.Deserialize<ProjectBrief>(line[5..], EventJson);
+                    }
+                    catch (JsonException)
+                    {
+                        continue;
+                    }
+                    if (brief is not null) onBrief(brief);
+                }
+                return true;
+            }
+            catch (Exception e) when (e is HttpRequestException or IOException or OperationCanceledException && !cancel.IsCancellationRequested)
+            {
+                throw CueApiException.Network(e is OperationCanceledException ? "the stream timed out." : e.Message);
+            }
+        }
+        throw CueApiException.Server("Cue didn't accept the sign-in.");
+    }
+}

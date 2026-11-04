@@ -140,6 +140,57 @@ extension CueAPI {
         _ = try await request("POST", "v1/projects/\(project)/brief")
     }
 
+    /// Follows the project's brief while the account writes it (server-sent events): `onBrief` gets it at once and again whenever it changes,
+    /// until the server ends the stream, once it is no longer `working`. False when the server has no such stream (one from before it, during a
+    /// deploy): the caller reads the project again now and then instead.
+    func followBriefEvents(_ project: String, onBrief: (ProjectBrief) -> Void) async throws -> Bool {
+        var token = try await bearer()
+        for attempt in 0..<2 {
+            var request = URLRequest(url: Self.baseURL.appendingPathComponent("v1/projects/\(project)/brief/events"), timeoutInterval: 600)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            request.setValue(LiveCall.clientVersion, forHTTPHeaderField: "Cue-Version")
+            let opened: (URLSession.AsyncBytes, URLResponse)
+            do {
+                opened = try await URLSession.shared.bytes(for: request)
+            } catch {
+                throw CueAPIError.network(error.localizedDescription)
+            }
+            let status = (opened.1 as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 401 && attempt == 0 {
+                token = try await bearer(refreshing: true)
+                continue
+            }
+            if status == 404 { return false }
+            guard status == 200 else {
+                var data = Data()
+                for try await byte in opened.0 { data.append(byte) }
+                let message = ((try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
+                if status == 401 { throw CueAPIError.ended(message ?? "Your session has ended. Sign in to Cue again.") }
+                throw CueAPIError.server(message ?? "Cue answered \(status).")
+            }
+            // An event's name comes before its data; `ping` only keeps the connection open.
+            var event = "message"
+            do {
+                for try await line in opened.0.lines {
+                    if line.hasPrefix("event:") {
+                        event = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
+                        continue
+                    }
+                    guard line.hasPrefix("data:") else { continue }
+                    let name = event
+                    event = "message"
+                    guard name == "brief", let brief = try? Self.decoder.decode(ProjectBrief.self, from: Data(line.dropFirst(5).utf8)) else { continue }
+                    onBrief(brief)
+                }
+            } catch {
+                throw CueAPIError.network(error.localizedDescription)
+            }
+            return true
+        }
+        throw CueAPIError.server("Cue didn't accept the sign-in.")
+    }
+
     /// Sends a file to a project; the server stores it and reads its text before it answers.
     func uploadMaterial(_ file: URL, to project: String) async throws -> Material {
         let type = Self.mimeTypes[file.pathExtension.lowercased()] ?? "application/octet-stream"

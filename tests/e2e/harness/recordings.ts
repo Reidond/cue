@@ -8,6 +8,7 @@ import type { Backend } from './backend.ts';
 import type { Cue } from './sandbox.ts';
 import { bursts, LiveClient, pcmOf, startCall, type StartedCall } from './live.ts';
 import { fail } from './results.ts';
+import { serverSentEvents } from './sse.ts';
 
 export const MIB = 1024 * 1024;
 
@@ -189,28 +190,8 @@ export async function noteEvents(
         signal: AbortSignal.timeout((options.seconds ?? 120) * 1000),
     });
     if (response.status !== 200) return fail(`the events stream answered ${response.status}`, await response.text());
-    const events: NoteEvent[] = [];
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        for (let end = buffer.indexOf('\n\n'); end >= 0; end = buffer.indexOf('\n\n')) {
-            const block = buffer.slice(0, end);
-            buffer = buffer.slice(end + 2);
-            const fields = block.split('\n');
-            // A beat (`event: ping`) only keeps the connection open.
-            if (fields.some((line) => /^event:\s*ping$/.test(line))) continue;
-            const data = fields
-                .filter((line) => line.startsWith('data:'))
-                .map((line) => line.slice(5).trimStart())
-                .join('\n');
-            if (data !== '') events.push(JSON.parse(data) as NoteEvent);
-        }
-    }
-    return events;
+    // A beat (`event: ping`) only keeps the connection open.
+    return (await serverSentEvents(response)).filter((event) => event.event !== 'ping').map((event) => event.data as NoteEvent);
 }
 
 /** A recording made for the backend without the app: a call, the audio of both sides, and (with `live`) the live transcript the Deepgram stand-in gave it. */

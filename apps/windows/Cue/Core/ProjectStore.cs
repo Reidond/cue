@@ -409,8 +409,8 @@ public sealed class ProjectStore : Observable
     }
 
     /// <summary>
-    /// Follows the brief while the account writes it: the project is read again until it is written (or failed), and the session log says how it went.
-    /// Its page then reads the prepared answers again (the brief changed).
+    /// Follows the brief while the account writes it: the account's events say each change until it is written (or failed), and the session log says how it
+    /// went. Its page then reads the prepared answers again (the brief changed).
     /// </summary>
     private void FollowBrief(Project project)
     {
@@ -423,32 +423,66 @@ public sealed class ProjectStore : Observable
         try
         {
             var started = DateTime.UtcNow;
-            while (DateTime.UtcNow - started < TimeSpan.FromMinutes(10))
+            var over = false;
+            // Deleted meanwhile, or signed out.
+            while (!over && DateTime.UtcNow - started < TimeSpan.FromMinutes(10) && projects.Any(project => project.ServerId == serverId))
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(1500));
-                // Deleted meanwhile, or signed out.
-                if (!projects.Any(project => project.ServerId == serverId)) return;
-                RemoteProject remote;
                 try
                 {
-                    remote = await api.Project(serverId);
+                    var streamed = await api.FollowBriefEvents(serverId, brief =>
+                    {
+                        over = !brief.Working;
+                        Show(serverId, brief, null);
+                    });
+                    if (!streamed) await Poll(serverId, started);
+                    // Otherwise the account ended the stream: the brief is written, failed or gone, or the project is.
+                    return;
+                }
+                catch (CueApiException e) when (e.Kind == CueApiError.Ended)
+                {
+                    return;
                 }
                 catch (CueApiException)
                 {
-                    continue;
+                    // The stream dropped, or the account is out of reach for a moment: it is opened again, and says the brief as it is now.
+                    await Task.Delay(TimeSpan.FromMilliseconds(1500));
                 }
-                var brief = remote.Brief ?? ProjectBrief.None;
-                if (SetBrief(serverId, brief, remote.Language) is not { } name) return;
-                if (brief.Working) continue;
-                if (brief.Ready) log.Write($"✨ Prepared “{name}” from its materials: {brief.AnswersText}, {brief.TermsText}");
-                else if (brief.Failed) log.Write($"{SessionLog.Warning} Couldn't prepare “{name}” from its materials: {brief.Error ?? "something went wrong"}");
-                return;
             }
         }
         finally
         {
             following.Remove(serverId);
         }
+    }
+
+    /// <summary>The same with an account from before the brief's events (during a deploy): the project is read again every 1.5 s.</summary>
+    private async Task Poll(string serverId, DateTime started)
+    {
+        while (DateTime.UtcNow - started < TimeSpan.FromMinutes(10))
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(1500));
+            if (!projects.Any(project => project.ServerId == serverId)) return;
+            RemoteProject remote;
+            try
+            {
+                remote = await api.Project(serverId);
+            }
+            catch (CueApiException)
+            {
+                continue;
+            }
+            var brief = remote.Brief ?? ProjectBrief.None;
+            if (!Show(serverId, brief, remote.Language) || !brief.Working) return;
+        }
+    }
+
+    /// <summary>The account's brief on the project here, and in the session log once it is written (or failed); false when the project is gone.</summary>
+    private bool Show(string serverId, ProjectBrief brief, string? language)
+    {
+        if (SetBrief(serverId, brief, language) is not { } name) return false;
+        if (brief.Ready) log.Write($"✨ Prepared “{name}” from its materials: {brief.AnswersText}, {brief.TermsText}");
+        else if (brief.Failed) log.Write($"{SessionLog.Warning} Couldn't prepare “{name}” from its materials: {brief.Error ?? "something went wrong"}");
+        return true;
     }
 
     /// <summary>The account's brief (and the language it heard) on the project here: its name, or null when it is gone.</summary>
