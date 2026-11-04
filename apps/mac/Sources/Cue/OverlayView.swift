@@ -1,5 +1,33 @@
 import SwiftUI
 
+extension EnvironmentValues {
+    /// Whether the overlay is drawn for an offscreen snapshot (`ImageRenderer`, see `Snapshots`), which draws neither a scroll view's
+    /// content nor a text field: its lists and the Ask field are plain views then, the lists from their top as they show unscrolled.
+    @Entry var offscreenSnapshot = false
+}
+
+extension View {
+    /// Liquid Glass, as every piece of the overlay is; in an offscreen snapshot a flat card instead, as ImageRenderer draws glass as a flat
+    /// tint (the accent's blue in the Cue macOS VM) that hides the secondary text on it.
+    func overlayGlass(_ glass: Glass = .regular, in shape: some Shape) -> some View {
+        modifier(OverlayGlass(glass: glass, shape: shape))
+    }
+}
+
+private struct OverlayGlass<S: Shape>: ViewModifier {
+    let glass: Glass
+    let shape: S
+    @Environment(\.offscreenSnapshot) private var offscreenSnapshot
+
+    func body(content: Content) -> some View {
+        if offscreenSnapshot {
+            content.background(.background, in: shape)
+        } else {
+            content.glassEffect(glass, in: shape)
+        }
+    }
+}
+
 /// The floating prompter. Following the HIG for Liquid Glass, every piece is its
 /// own glass element floating over the user's slides (no glass on glass), grouped
 /// in one container so neighbouring shapes blend; text uses semantic colors so the
@@ -67,7 +95,7 @@ private struct ControlBar: View {
         .frame(height: 38)
         .contentShape(.capsule)
         .gesture(WindowDragGesture())  // the bar is the handle for moving the overlay
-        .glassEffect(.regular, in: .capsule)
+        .overlayGlass(in: .capsule)
     }
 }
 
@@ -215,6 +243,7 @@ private struct QuestionList: View {
     /// With two languages, how the answer in full shows them.
     let layout: AnswerLayout
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.offscreenSnapshot) private var offscreenSnapshot
     @State private var position = ScrollPosition(idType: UUID.self)
 
     var body: some View {
@@ -222,33 +251,29 @@ private struct QuestionList: View {
             if state.exchanges.isEmpty {
                 EmptyState(state: state)
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
-                        if let exchange = state.current {
-                            ExchangeCard(exchange: exchange, size: size, lexicon: state.lexicon, layout: layout,
-                                         prepare: { state.prepare(exchange.id) },
-                                         answerAnyway: { state.ask($0, force: true) })
-                                .id(exchange.id)
+                Group {
+                    if offscreenSnapshot {
+                        rows.padding(8).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).clipped()
+                    } else {
+                        ScrollView {
+                            rows.scrollTargetLayout()
                         }
-                        group("New", state.newExchanges)
-                        group("Answered", state.answeredExchanges).opacity(0.75)
+                        .contentMargins(8, for: .scrollContent)
+                        .scrollPosition($position, anchor: .top)
+                        .scrollIndicators(.never)
+                        .scrollEdgeEffectStyle(.soft, for: .vertical)
+                        .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 24 } action: { _, scrolled in
+                            state.listScrolled = scrolled
+                        }
+                        .onChange(of: state.exchanges.count) {
+                            if !state.holding && !state.listScrolled { position.scrollTo(edge: .top) }
+                        }
+                        .onChange(of: state.expandedID) { _, id in
+                            // The exchange shown in full is always on top.
+                            guard id != nil else { return }
+                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.2)) { position.scrollTo(edge: .top) }
+                        }
                     }
-                    .scrollTargetLayout()
-                }
-                .contentMargins(8, for: .scrollContent)
-                .scrollPosition($position, anchor: .top)
-                .scrollIndicators(.never)
-                .scrollEdgeEffectStyle(.soft, for: .vertical)
-                .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 24 } action: { _, scrolled in
-                    state.listScrolled = scrolled
-                }
-                .onChange(of: state.exchanges.count) {
-                    if !state.holding && !state.listScrolled { position.scrollTo(edge: .top) }
-                }
-                .onChange(of: state.expandedID) { _, id in
-                    // The exchange shown in full is always on top.
-                    guard id != nil else { return }
-                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.2)) { position.scrollTo(edge: .top) }
                 }
                 .overlay(alignment: .top) {
                     if !state.unseen.isEmpty {
@@ -265,7 +290,21 @@ private struct QuestionList: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: state.expandedID)
         .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: state.unseen.isEmpty)
-        .glassEffect(.regular, in: .rect(cornerRadius: 24))
+        .overlayGlass(in: .rect(cornerRadius: 24))
+    }
+
+    /// The exchange shown in full, then New and Answered.
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let exchange = state.current {
+                ExchangeCard(exchange: exchange, size: size, lexicon: state.lexicon, layout: layout,
+                             prepare: { state.prepare(exchange.id) },
+                             answerAnyway: { state.ask($0, force: true) })
+                    .id(exchange.id)
+            }
+            group("New", state.newExchanges)
+            group("Answered", state.answeredExchanges).opacity(0.75)
+        }
     }
 
     /// A part of the list under its name, when it has any.
@@ -852,35 +891,47 @@ private struct EmptyState: View {
 private struct TranscriptCard: View {
     @ObservedObject var state: AppState
     let size: CGFloat
+    @Environment(\.offscreenSnapshot) private var offscreenSnapshot
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(state.utterances.suffix(30)) { line in
-                        TranscriptLine(channel: line.channel, text: line.text, size: size)
-                            .onTapGesture { state.ask(line.text, force: true) }
-                            .help("Click to get an answer for this")
+        Group {
+            if offscreenSnapshot {
+                // The newest lines, as the card keeps them in view.
+                lines.frame(maxHeight: .infinity, alignment: .bottom).clipped()
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        lines
                     }
-                    ForEach([Channel.others, Channel.me], id: \.self) { channel in
-                        if let live = state.partial[channel], !live.isEmpty {
-                            TranscriptLine(channel: channel, text: live, size: size).opacity(0.5)
-                        }
-                    }
-                    Color.clear.frame(height: 1).id("end")
+                    .scrollIndicators(.never)
+                    .scrollEdgeEffectStyle(.soft, for: .vertical)
+                    .defaultScrollAnchor(.bottom)
+                    .onChange(of: state.utterances.count) { proxy.scrollTo("end") }
+                    .onChange(of: state.partial) { proxy.scrollTo("end") }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .scrollIndicators(.never)
-            .scrollEdgeEffectStyle(.soft, for: .vertical)
-            .defaultScrollAnchor(.bottom)
-            .onChange(of: state.utterances.count) { proxy.scrollTo("end") }
-            .onChange(of: state.partial) { proxy.scrollTo("end") }
         }
         .frame(height: 104)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+        .overlayGlass(in: .rect(cornerRadius: 18))
+    }
+
+    private var lines: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(state.utterances.suffix(30)) { line in
+                TranscriptLine(channel: line.channel, text: line.text, size: size)
+                    .onTapGesture { state.ask(line.text, force: true) }
+                    .help("Click to get an answer for this")
+            }
+            ForEach([Channel.others, Channel.me], id: \.self) { channel in
+                if let live = state.partial[channel], !live.isEmpty {
+                    TranscriptLine(channel: channel, text: live, size: size).opacity(0.5)
+                }
+            }
+            Color.clear.frame(height: 1).id("end")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -904,18 +955,24 @@ private struct TranscriptLine: View {
 private struct AskBar: View {
     @ObservedObject var state: AppState
     @State private var typed = ""
+    @Environment(\.offscreenSnapshot) private var offscreenSnapshot
 
     var body: some View {
         HStack(spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "questionmark.bubble").foregroundStyle(.secondary)
-                TextField("Ask anything", text: $typed)
-                    .textFieldStyle(.plain)
-                    .onSubmit(submit)
+                if offscreenSnapshot {
+                    // The field's placeholder (a snapshot's copy of the overlay has nothing typed in it).
+                    Text("Ask anything").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    TextField("Ask anything", text: $typed)
+                        .textFieldStyle(.plain)
+                        .onSubmit(submit)
+                }
             }
             .padding(.horizontal, 14)
             .frame(height: 38)
-            .glassEffect(.regular.interactive(), in: .capsule)
+            .overlayGlass(.regular.interactive(), in: .capsule)
 
             Button(action: state.answerNow) {
                 Image(systemName: "text.bubble.fill")

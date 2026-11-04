@@ -2,6 +2,11 @@
 # Builds build/Cue.app.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Cue is built in the Cue macOS VM (tests/e2e/remote.ts) or on CI, never on a Mac someone works at: macOS says it is a VM's.
+if [[ -z ${CI:-} && $(sysctl -n kern.hv_vmm_present 2>/dev/null) != 1 ]]; then
+    echo "Cue isn't built on this Mac: node tests/e2e/remote.ts mac apps/mac/scripts/build.sh" >&2
+    exit 1
+fi
 
 swift build -c release
 APP=build/Cue.app

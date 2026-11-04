@@ -49,7 +49,8 @@ e2eCase(
 
         // Its chip, with Apply, on the note's page; the front matter row doesn't show it.
         const page = cue.page;
-        await cue.dashboardPage('Library/notes', /Participant 2 → Olena Mulesa\?/);
+        // The arrow is any character: Tesseract, which reads snapshots where Vision can't, reads it as another.
+        await cue.dashboardPage('Library/notes', /Participant 2 . Olena Mulesa\?/);
         assertContains(page, /Apply/);
         assertEq(
             countLines(page, /Olena Mulesa/),

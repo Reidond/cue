@@ -224,7 +224,8 @@ e2eCase(
         await cue.waitFor('the originals to go', 30, async () => !/^Thank you for the talk/m.test((text = await windowText(cue.pid))));
         assertTextContains(text, /^Дякую за доповідь\. Скільки вуликів ви дослідили\?$/);
         cue.control('note-language en');
-        await shows('the note in English, alone', together('Rooftop bees in Kyiv'));
+        // By the English summary: the notes list shows the title in English on either page.
+        await shows('the note in English, alone', /^Andrii presented the rooftop bee study/m);
         assertTextContains(text, /^Thank you for the talk\. How many hives did you study\?$/);
         assertTextNotContains(text, /^Дякую за доповідь/, 'no translated lines');
         await press(cue.pid, 'Translations');

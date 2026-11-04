@@ -1,12 +1,18 @@
 import { appWindows, e2eCase, exists, fail, silence, type AppWindows } from '../harness/index.ts';
 
 e2eCase(
-    'A test run stays out of the way: Cue never takes focus or shows a Dock icon, its windows stay behind everyone ' +
+    'CUE_BACKGROUND keeps Cue out of the way: it never takes focus or shows a Dock icon, its windows stay behind everyone ' +
         "else's, and an alert goes to the session log instead of waiting for a click.",
     async (cue) => {
         // A rehearsal shows the overlay at launch; recorded, a silent one ends in "Nothing was recorded".
         const call = await silence(cue.path('silence.wav'), 3);
-        await cue.launch({ CUE_PROJECT: 'Bees', CUE_SHOW_SETTINGS: '1', CUE_REHEARSE_RECORD: '1', CUE_REHEARSE_PARTICIPANT: call });
+        await cue.launch({
+            CUE_BACKGROUND: '1',
+            CUE_PROJECT: 'Bees',
+            CUE_SHOW_SETTINGS: '1',
+            CUE_REHEARSE_RECORD: '1',
+            CUE_REHEARSE_PARTICIPANT: call,
+        });
         const seen: AppWindows[] = [];
         const look = async (): Promise<void> => {
             seen.push(await appWindows(cue.pid));

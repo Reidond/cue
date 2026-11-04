@@ -7,7 +7,7 @@ import { writeFile } from 'node:fs/promises';
 import { linesOf, nonEmpty, readText } from './files.ts';
 import type { Capabilities } from './requirements.ts';
 import { Cue } from './sandbox.ts';
-import { ocr } from './screen.ts';
+import { imageReader, ocr } from './screen.ts';
 import { sleep } from './time.ts';
 
 /**
@@ -32,8 +32,9 @@ export async function probeSnapshots(): Promise<Pick<Capabilities, 'windows' | '
         }
         const log = linesOf(readText(cue.sessionLog()) ?? '');
         const logged = (pattern: RegExp): string | undefined => log.map((line) => pattern.exec(line)?.[1]).find(Boolean);
-        const windowsMethod = logged(/📸 Snapshots: (.*)/) ?? 'capture method not logged';
-        const overlayMethod = logged(/📸 Overlay: (.*)/) ?? windowsMethod;
+        const capture = logged(/📸 Snapshots: (.*)/) ?? 'capture method not logged';
+        const windowsMethod = `${capture}, read by ${imageReader()}`;
+        const overlayMethod = `${logged(/📸 Overlay: (.*)/) ?? capture}, read by ${imageReader()}`;
         const unreadable = (text: string, method: string): string =>
             `${text.trim() ? 'not the expected text' : 'no text'} in its snapshots here (${method})`;
         return {
