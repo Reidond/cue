@@ -1,6 +1,7 @@
 import Foundation
 
-/// Global preferences, persisted in UserDefaults; everything about a talk lives in its `Project`.
+/// Global preferences, persisted in UserDefaults; everything about a talk lives in its `Project`. The person's own — their name, Auto,
+/// questions from the room, summaries, keeping audio — are kept in their Cue account, and this is this Mac's copy (`SettingsSync`).
 @MainActor
 final class Preferences: ObservableObject {
     private let defaults = appDefaults

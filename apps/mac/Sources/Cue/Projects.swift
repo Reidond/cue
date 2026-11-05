@@ -412,22 +412,18 @@ final class ProjectStore: ObservableObject {
         projects[index].materials = materials
     }
 
-    /// What the account read from the project's files, for the project's page: their texts, and the prepared answers (the files' own first,
-    /// then the ones Cue wrote from them). Nil when it couldn't be asked.
+    /// What the account read from the project's files, for the project's page: the files, the prepared answers (the files' own first, then the
+    /// ones Cue wrote from them) and how much Claude reads for each question. Nil when it couldn't be asked.
     func knowledge(of serverID: String?) async -> KnowledgeBase? {
         guard let serverID else { return KnowledgeBase(documents: [], prepared: []) }
         do {
-            let materials = try await api.materials(of: serverID)
-            let answers = try await api.preparedAnswers(of: serverID)
-            var documents: [MaterialDocument] = []
-            for material in materials {
-                var document = MaterialDocument(name: material.name, summary: material.summary, error: material.error)
-                if material.error == nil { document.text = try await api.materialText(material.id, in: serverID).text }
-                documents.append(document)
-            }
-            return KnowledgeBase(documents: documents, prepared: answers.map {
+            async let project = api.project(serverID)
+            async let materials = api.materials(of: serverID)
+            async let answers = api.preparedAnswers(of: serverID)
+            let documents = try await materials.map { MaterialDocument(name: $0.name, summary: $0.summary, error: $0.error) }
+            return KnowledgeBase(documents: documents, prepared: try await answers.map {
                 PreparedAnswer(q: $0.question, a: $0.answer, who: $0.who, source: $0.source, byCue: $0.from == "cue")
-            })
+            }, reading: try await project.reading)
         } catch {
             // A page that was left, or a newer read that replaced this one, cancels it: nothing went wrong.
             if !Task.isCancelled { log.write("⚠︎ Couldn't read your materials: \(error.localizedDescription)") }

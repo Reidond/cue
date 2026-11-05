@@ -103,7 +103,7 @@ A person's projects and their materials live in D1 and R2; `docs/backend.md` ›
   assignments point at it); `Project.serverID`, in `project.json`, is the account's project. After sign-in (`CueAPI.onSignedIn`, before `Signed in` is logged) `syncWithAccount` lists the
   account's projects, makes a folder for the ones this Mac hasn't seen, and uploads every folder without a `serverID` once (`📦 Imported N projects from this Mac`).
   Create, rename, delete and adding or removing a file wait for the server; field edits are saved here at once and to the account after 0.8 s (`☁️ Saved “NAME” to your account`).
-  `CUE_CONTROL` commands run one after another, so `new` and `add` finish before the next line. `KnowledgeBase` builds Claude's prompt from the server's text.
+  `CUE_CONTROL` commands run one after another, so `new` and `add` finish before the next line. The project page's `KnowledgeBase` is the files, their prepared answers and the project's `reading` (`Project.reading`: about how many tokens Claude reads for each question, and how many the files hold; the server's, from `readingOf` in `src/call/excerpts.ts`): no file's text is downloaded.
   After a file is added or removed (and at sync, for a brief still `working`) `followBrief` follows the brief's events (opened again when the stream drops or ends before
   the brief is written; a 404 at the first try is a server deployed before them, read every 1.5 s instead, as apps before them still do, and a 404 later is the project gone) until the brief is written: `✨ Prepared “NAME” from its
   materials: N answers, M names and terms` or `⚠︎ Couldn't prepare “NAME” from its materials: WHY`. The Overview (`ProjectView`) is the materials first, then how Cue's reading
@@ -119,8 +119,8 @@ A person's projects and their materials live in D1 and R2; `docs/backend.md` ›
 What a person may spend, and what stops them. `docs/backend.md` › Limits has the design; the shapes are `Me` in `packages/contract/src/index.ts`.
 
 - **One price table**: `PRICING` in `src/pricing.ts` (per model input / output / cache write / cache read tokens per million, Deepgram's multilingual live and recorded per minute,
-  `toMarkdown` per file; millionths of a dollar, list prices to check before the first deploy). Every `usage` row is built by `tokenUsage`, `speechUsage` or
-  `markdownUsage` there: a new thing that costs money is a line in the table and one of those, nowhere else.
+  `toMarkdown` per file, Workers AI `bge-m3` per million tokens; millionths of a dollar, list prices to check before the first deploy). Every `usage` row is built by
+  `tokenUsage`, `speechUsage`, `embeddingUsage` or `markdownUsage` there: a new thing that costs money is a line in the table and one of those, nowhere else.
 - **A month's allowance**: `limitState(db, userId)` (`src/usage.ts`): the UTC month's `usage` against `user_limit`, else the admin's default. Over it (spend >= limit; a
   limit of 0 stops everything) is `limit_reached` (402, not retryable) with a sentence the app shows as it is ("You've used $20.00 of your $20.00 Cue plan for this month. It
   starts over on November 1 (UTC).").
@@ -144,6 +144,25 @@ What a person may spend, and what stops them. `docs/backend.md` › Limits has t
   overlay's status line says "Plan limit reached", and `🔓 Cue plan has room again` when it clears (a raised limit, a new month, an answer arriving).
 - **In a case** (`9d-…`, all but `9d-limit-app` and `9d-limit-overlay` run with `--no-app`): `backend.setLimit(owner, email, usd | null)` (the admin API; the backend needs
   `adminEmails`) and `backend.seedUsage` put a person over or under; `cue.backend({ env: { RATE_LIMIT_REQUESTS: '6', RATE_LIMIT_PERIOD: '10', … } })` makes `rate_limited` easy to see.
+
+## Account settings (`apps/api/src/preferences.ts`, `apps/mac/Sources/Cue/PersonalSettings.swift`)
+
+The settings that are the person's, not a device's, are the account's, as the two languages are; `docs/backend.md` › Settings has the design (and why the rest stays per device).
+
+- **Which**: the speaker's name, Auto, questions from the room, summaries, keeping the audio (`AccountSettings` in the contract: `speakerName`, `autoAnswer`, `micQuestions`, `summarize`,
+  `keepAudio`, each null until the account has it). `GET /v1/me` `settings`, `PATCH /v1/me/settings` (the ones named; migration `0011_account_settings.sql`, columns of `preference`).
+  Not these: what Cue does when a meeting starts and the meeting series' projects (an event's series id is not the same on the Mac and Windows), the calendars watched, the
+  library, text size, the transcript, the two languages' layouts, updates.
+- **The server reads them**: `POST /v1/calls`, the socket's `config` and `POST /v1/calls/:id/notes` go by the account's; a field the request carries counts only where the account
+  has none (the apps from before it send them every time). A `PATCH` reaches the person's calls under way (`settingsChanged` on the Call DO).
+- **The apps**: `Preferences` / `settings.json` keep the device's copy. At sign-in (first in `onSignedIn`) the ones the account lacks are sent once (`📦 Imported your settings from
+  this Mac`, Windows: `this PC`); the account's are put into the preferences whenever `/v1/me` brings a change; a change made here is saved (the name after 0.8 s) — `☁️ Saved your
+  settings to your account`, else `⚠︎ Couldn't save your settings: …` and the account's value back — and the settings in effect are logged when they change:
+  `⚙️ Settings: name “NAME”, Auto on|off, questions from the room on|off, summaries on|off, audio kept|not kept`. The apps no longer send them with calls and notes. `CUE_CONTROL`
+  `setting speakerName|autoAnswer|micQuestions|summarize|keepAudio | VALUE` changes one as Settings › General does (`on`/`off`; signed out too). A case's `cue.defaults(…)` before the first
+  launch still sets them: they are what the first sign-in sends.
+- **Cases** `9f-…`: `settings` (the API), `settings-calls` (a call's prompts and Auto, an old app's fields, a change reaching a call), `settings-notes` (the name, summary and audio of
+  notes), `settings-app` (the Mac: imported once, another device's change, a change here, a call following it), and on Windows `w0-account-settings`.
 
 ## The admin (`apps/api` `/admin/v1`, `apps/admin`: the `cue-admin` Worker)
 
@@ -176,7 +195,7 @@ The owner's admin: usage and money, never content (no transcripts, no notes). `d
 A call is one stretch of listening (Start Cue, or a recording): the Mac streams the microphone and the call audio to a **Call Durable Object** and shows
 what its events say. `docs/backend.md` has the design; the shapes are `packages/contract/src/calls.ts` (the Swift side follows them by hand).
 
-- **Routes**: `POST /v1/calls` (project, optional event, speaker, auto, micQuestions, questions → `callId`), `POST /v1/calls/:id/questions` (the Ask field, SSE of the
+- **Routes**: `POST /v1/calls` (project, optional event, questions → `callId`; the speaker and Auto are the account's, see Account settings), `POST /v1/calls/:id/questions` (the Ask field, SSE of the
   same events), `POST /v1/calls/:id/end`, and the socket **`GET /v1/live?call=ID[&after=SEQ]`** (not `/v1/calls/:id/live`: see below). Calls are the user's: another
   person's is `not_found`.
 - **The socket is `.mount`ed** (`routes/calls.ts` `live`, a fixed path with the call in the query) because Elysia rebuilds every `Response` a route returns and
@@ -205,6 +224,16 @@ what its events say. `docs/backend.md` has the design; the shapes are `packages/
   prompt from `prompts/prompt.md`, the project's prepared answers (the files' own and the brief's) and materials; `Matcher` is `KnowledgeBase.match`), `session.ts` (a Claude conversation:
   system prompt cached for an hour and written before the first question with `max_tokens: 0`, the conversation cached too, history kept; `anthropic.ts` the Messages
   client with the retries), `lexicon.ts` (language names, stop words, openers). Echo lines (the microphone hearing the call) are dropped before anyone sees them.
+- **Long materials** (`excerpts.ts`, `embeddings.ts`): up to `MATERIALS_INLINE_CHARS` (120,000 characters) the materials are the whole cached system prompt. Longer
+  ones are cut into passages (whole paragraphs, about 1,400 characters, labelled `[file › heading, p. N]`), the system prompt lists the files and their headings, and
+  each question brings the best `EXCERPT_CHARS` (24,000) of them: BM25 over the matcher's stems fused (reciprocal rank) with multilingual vectors, Workers AI
+  `@cf/baai/bge-m3` (the passages' made when the call starts, the question's with a 1 s wait; `EMBEDDINGS_URL` is the stand-in under `cf dev`; with neither, words
+  alone), so a Ukrainian question finds an English passage. The passages ride on that request only (`ClaudeSession.ask(…, excerpts)`): the conversation keeps the
+  question and is cached up to the message before it. The vectors are `material_search` usage (`embeddingUsage`, tokens counted at three characters).
+- **The router** (`router.ts`): each question goes to Claude Haiku 5.5 (`QUICK_MODEL`) when a prepared answer covers it (score 0.5 or more) or it asks a plain fact
+  (who, when, how many, скільки, хто…), else to Claude Sonnet 5.5 (why, how, compare, чому, поясніть…, more than 18 words, two questions, or unclear), from its words: no
+  request, no time. Both sessions have the same prompt and one conversation, both are warmed and kept warm; a quick question goes to Sonnet while Haiku isn't warm and
+  Sonnet is, and any to Haiku when Sonnet couldn't start. The status line is Sonnet's.
 - **Alarms** (`CACHE_TICK_SECONDS` 300): each tick warms a session quiet for `CACHE_REFRESH_SECONDS` (2700), records usage and ends an abandoned call.
 - **Usage** (`usage` table, flushed each tick and at the end): `answer` and `question_judge` rows per model for input / output / cache write / cache read tokens,
   `live_transcript` audio seconds per stream (both channels are billed), `notes_summary` tokens (the notes Workflow also writes `note_transcript` audio seconds per side and `note_names` tokens). Prices are the one table in `src/pricing.ts` (list prices, not checked
@@ -288,8 +317,8 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   adding or removing a file wait for the server; field edits are saved to `project.json` at once and to the account after 0.8 s (`☁️ Saved “NAME” to your account`). A deleted project's folder goes to the Recycle Bin
   (`Shell.MoveToRecycleBin`). The dashboard: `DashboardPage.Project` with `Dashboard.ProjectId` and `Dashboard.Section` (`ProjectTab`: Overview, Answers, Notes; the notes slice filled `ProjectPage`'s Notes tab (`NotesView`) and
   Home's recent notes); `Dashboard.OpenProject(id, tab)`; the pane (`MainWindow.RefreshProjects`) has a "Projects" header, an item per project with a context menu (Rename…, Show in Explorer, Move to
-  Recycle Bin…) and New Project (Ctrl+N) below; the start-Cue button belongs in `ProjectPage`'s header (the live-call slice). The prepared answers and the token estimate on a page come from `ProjectStore.Documents`
-  (`KnowledgeBase`, as the Mac's); the account's server builds the prompt.
+  Recycle Bin…) and New Project (Ctrl+N) below; the start-Cue button belongs in `ProjectPage`'s header (the live-call slice). The prepared answers and the tokens Claude reads on a page come from `ProjectStore.Knowledge`
+  (`KnowledgeBase`, as the Mac's: the files, the prepared answers and the project's `Reading`); the account's server builds the prompt.
 - **Where the next slices plug in**: `AppState` (`Core/AppState.cs`: the log, preferences, `Api`, `Projects`, `Dashboard`, `Control`, `PlanLimit`; one instance, `App.State`); `CueApi.Request(method, path, query, json,
   file, body, contentType, timeout)` and `Bearer()` for every call (a bearer token refreshed on its own, `{error: {code, message, retryable}}` as `CueApiException`: kinds
   `LimitReached`, `RateLimited`, `PlanPaused`, `Ended`, `Network`, `Server`; `OnSignedIn` runs before Cue counts as signed in); `state.Control.Register("new", run, needsSignIn)` for a `CUE_CONTROL`
@@ -300,9 +329,9 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
 - **Where it is built and tested**: never on this Mac. In the Cue Windows VM (VMPal's, Windows 11 for Arm: see Where work runs), through `tests/e2e/remote.ts`:
   `node tests/e2e/remote.ts windows e2e w --except=w1- 9e-`. Never build on a VMPal shared folder (`Z:`): `remote.ts` copies the checkout to `C:\cue\ID`.
   `w1-installer` installs per machine, so it needs an elevated process (`remote.ts windows --admin e2e w1-`, `vmpal_exec_admin`) and skips without.
-- **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks), `w1-…` (the installer), `w2-…` (projects and materials: `w2-projects`, `w2-materials`, `w2-import-projects`,
+- **Cases**: `w0-…` (the app: sign-in, not invited, sign out, account and limit, hooks, `w0-account-settings`: the settings kept in the account), `w1-…` (the installer), `w2-…` (projects and materials: `w2-projects`, `w2-materials`, `w2-import-projects`,
   `w2-account-projects`, `w2-active-project`, `w2-brief` (the Overview: Materials, how Cue read them, the Advanced `Expander`; Try Again); they read the window with `windowText`, open an `Expander` with `expand(pid, name)` (UI Automation's expand pattern: its header is no button to `press`), the account with `backend.accountOf(cue.email)`), `w3-…` (the live call: see Live call on Windows), `w4-…` (recordings and notes: see Recordings and notes on Windows) and `w6-…` (meetings, the calendar and notifications: see Meetings, the calendar and notifications on Windows) are Windows-only: the Mac's `run.ts` skips every `w…` case, Windows' runs
-  them together with the cases that never launch the app (the source has no `.launch(`, `.cli(` or `.control(`: the backend's own, `9a-…` to `9f-…`, `95`–`99`). `9e-windows-sign-in` signs in as `cue-windows` end to end
+  them together with the cases that never launch the app (the source has no `.launch(`, `.cli(` or `.control(`: the backend's own, `9a-…` to `9g-…`, `95`–`99`). `9e-windows-sign-in` signs in as `cue-windows` end to end
   and runs anywhere with `--no-app`. Every later `wN-…` case is the app's too. A case reads what the window shows with `windowText(pid)` (`tools/uia.ps1`: the text of its UI Automation tree, exact (no recognition errors); a XAML `ScrollViewer`'s content scrolled out of view is not in it),
   and `windowsOf(pid)` is `tools/windows.ps1` (the foreground, the windows' sizes and styles: the twin of `appWindows`); `ocr` is `tools/ocr.ps1` (Windows' own `Windows.Media.Ocr`; it needs the English recognizer,
   `Language.OCR~~~en-US~0.0.1.0`, which `setup.ps1` adds) for what a snapshot shows; `cue.defaults()` edits `settings.json`; `cue.stop()` sends `quit` through the control file and kills the tree after 10 s.
@@ -314,7 +343,7 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   `CUE_ME_TICK`, `CUE_API_URL`, `CUE_WEB_AUTH=headless`, `CUE_PROJECT=name` as on the Mac; `CUE_CONTROL` commands now: `signin [google|github]`, `signout`, `settings general|account|calendar`,
   `page home|upcoming|NAME|NAME/overview|NAME/answers|NAME/notes`, `size W H`, `quit`, and the projects': `new NAME`, `add PATH` (a file dropped on the open project's materials, else the active project's),
   `set PROJECT | occasion|names | VALUE`, `remove PROJECT | FILE`, plus two the Mac has no command for, because it does them in a dialog no case drives: `rename-project NAME | NEW` and `delete-project NAME`
-  (what the pane's context menu runs), and `update check|restart` as on the Mac. Commands run one after another, so `new` and `add` finish before the next line. `signin`, `signout`, `settings`, `page`, `size`, `update` and `quit` work signed out; any other command then
+  (what the pane's context menu runs), `setting KEY | VALUE` (Settings › General: `speakerName`, `autoAnswer`, `micQuestions`, `summarize` or `keepAudio`, the name or `on`/`off`), and `update check|restart` as on the Mac. Commands run one after another, so `new` and `add` finish before the next line. `signin`, `signout`, `settings`, `setting`, `page`, `size`, `update` and `quit` work signed out; any other command then
   logs `⚠︎ Sign in to Cue first (NAME ignored)`.
   The live call's `CUE_CONTROL` commands: `start NAME` (Start Cue for that project: shows the overlay and listens), `stop`, `project NAME` (the overlay's project menu), `ask TEXT`, `show TEXT`, `newest`, `prepare`; the project is found as `page NAME` finds it (by name, else by folder name), and none is no-op, as on the Mac.
   The meetings' `CUE_CONTROL` commands: `assign EVENT | PROJECT` (the project picker of an event on Upcoming, by the event's title) and `notification record|dismiss` (Record / Not Now on the latest prompt); `CUE_CALENDAR_EVENTS`, `CUE_MIC_APPS`, `CUE_MEETING_TICK` and `CUE_MIC_RELEASE` are as on the Mac except that `CUE_MIC_APPS` names program files or package family names, not bundle IDs, and that without `CUE_CALENDAR_EVENTS` the calendar is Windows' appointment store (see Meetings, the calendar and notifications on Windows).
@@ -530,9 +559,11 @@ This rule is strict and has no exceptions.
     the Anthropic one has a second system prompt kind, the names step ("You find the names…"), answered by `FAKE_CLAUDE_NAMES` (a JSON object label → name; by default the
     `<!-- speaker: … -->` lines of the summary's fixture), and `FAKE_ANTHROPIC_SUMMARY_FAILS=N` fails the first N summaries; a third, a project's brief ("You read the
     materials…", noted as `brief-system` and `brief-input`), is answered by `FAKE_CLAUDE_BRIEF` (the JSON object `prompts/brief.md` asks for; by default an empty one) and
-    `FAKE_ANTHROPIC_BRIEF_FAILS=N` fails the first N (`FAKE_CLAUDE_BRIEF_DELAY` slows it by that many seconds); a note's translation ("You translate the notes…", `translate-system` / `translate-input`) is answered in the shape asked
+    `FAKE_ANTHROPIC_BRIEF_FAILS=N` fails the first N (`FAKE_CLAUDE_BRIEF_DELAY` slows it by that many seconds); `FAKE_ANTHROPIC_MODEL_FAILS=MODEL` fails every request to that model; a note's translation ("You translate the notes…", `translate-system` / `translate-input`) is answered in the shape asked
     for. With two languages, what is asked for in the other one (an answer's `» ` lines, the judge's `T: ` lines, a note's lines) is `FAKE_CLAUDE_TRANSLATIONS` (JSON, line →
-    translation) where it has the line, else `(LANGUAGE) line`; `FAKE_CLAUDE_TRANSLATED_SUMMARY` (a file) is a note's translated summary. The variables are read from the environment the app was launched with (`cue.launch({…})`) or from
+    translation) where it has the line, else `(LANGUAGE) line`; `FAKE_CLAUDE_TRANSLATED_SUMMARY` (a file) is a note's translated summary. `/embeddings` stands in for
+    Workers AI `bge-m3` (`EMBEDDINGS_URL`, noted as `embeddings-request`): a text's words hashed into a vector, `FAKE_EMBEDDINGS_SYNONYMS` (JSON, word → word) making
+    two languages' words one, as a multilingual model would; a real `bge-m3` run is not covered by any case. The variables are read from the environment the app was launched with (`cue.launch({…})`) or from
     `cue.standIns({…})` for a case with no app. `--real-deepgram` points the backend at the real Deepgram instead, with the key the runner
     reads from the login keychain (item `Cue e2e Deepgram API key`, added with `security add-generic-password -a "$USER" -s "…" -w`): never
     put a real key in a case, a fixture, the control file or the chat. A recording of a real call (someone's conversation) never goes into
@@ -641,7 +672,7 @@ is cut to it, smaller than it was (GitHub's runner has a small screen).
 Each case is a TypeScript file, `tests/e2e/cases/NN-name.test.ts`, numbered
 by feature area (`0x` CLI and launch, `1x` prompter and recording, `2x`
 projects and dashboard, `3x` call audio, `4x` the notes' second pass (upload, steps, retries), `5x`
-speakers, `6x` calendar, `7x` the backend's Anthropic calls, `8x` Deepgram through the backend, `9x` signing in, the backend and the admin: the admin's are `9a-…`, the live calls' `9b-…`, the notes' `9c-…`, the limits, usage and rate limits' `9d-…`, the Windows app's OAuth client `9e-…`, the brief's events `9f-…`; `wN-…` are Windows-only: `w0-…` the Windows app, `w1-…` its installer). It declares one test, whose title says the
+speakers, `6x` calendar, `7x` the backend's Anthropic calls, `8x` Deepgram through the backend, `9x` signing in, the backend and the admin: the admin's are `9a-…`, the live calls' `9b-…`, the notes' `9c-…`, the limits, usage and rate limits' `9d-…`, the Windows app's OAuth client `9e-…`, the account's settings `9f-…`, the brief's events `9g-…`; `wN-…` are Windows-only: `w0-…` the Windows app, `w1-…` its installer). It declares one test, whose title says the
 behaviour it checks:
 
 ```ts
@@ -731,7 +762,7 @@ code paths and document new ones here and in `README.md` › Testing.
 | `CUE_SNAPSHOT_METHOD=m` | How `CUE_SNAPSHOT` takes them: `desktop` (the default: each window over the desktop picture alone, so its glass refracts real pixels yet no other window covers it or shows through), `window` (the window alone: the overlay's glass over nothing), `display` (what's on screen behind the window now, other apps included, minus whatever is in front of it) or `offscreen` (the fallback, forced). |
 | `CUE_APPEARANCE=light\|dark` | Use this appearance instead of the system's. |
 | `CUE_PROJECT=name` | Make this project active at launch, creating it if there is none by that name. |
-| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|account\|calendar` (Settings on that tab), `set PROJECT | occasion|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (a material's minus button), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes), `signin` (Sign In on Home), `signout` (Sign Out in Settings › Account), `languages CODE CODE` (Settings' language pickers; alone: none), `answer-layout subtitles|mirror|focus` and `note-layout switch|both` (how two languages are shown), `note-language CODE` (the open note's language switch) and `update check\|restart` (Check Now / Restart to Update in Settings › General). Until someone is signed in only `signin`, `signout`, `settings`, `page`, `size` and `update` do anything (the rest log `⚠︎ Sign in to Cue first (…)`). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
+| `CUE_CONTROL=file` | Run each line appended to `file` as a click would: `new NAME` (New Project), `add PATH` (drop a file on the open project's materials), `start NAME` (Start Cue), `project NAME` (the overlay's project menu), `page home\|upcoming\|NAME\|NAME/answers\|NAME/notes` (show a dashboard page), `ask TEXT` (the Ask field), `timestamp HH:MM:SS` (a timestamp in the open note's transcript: plays its audio from there), `assign EVENT \| PROJECT` (an Upcoming call's project picker, by event title), `notification record\|dismiss` (Record / Not Now on the latest prompt), `rename NAME \| NEW` (a speaker's name clicked and renamed in the open note), `apply LABEL` / `dismiss LABEL` (Apply or ✕ on a name suggestion of the open note), `show TEXT` (the overlay's row of the question with TEXT in it), `newest` (the overlay's New Questions button), `prepare` (Prepare Answer on the newest questions waiting for it), `record` (the overlay's record button, or Stop Recording in its timer's menu), `settings general\|account\|calendar` (Settings on that tab), `set PROJECT | occasion|names | VALUE` (a field of the project's page edited), `remove PROJECT | FILE` (a material's minus button), `size W H` (the dashboard's edge dragged until it's W × H points, or as small as it goes), `signin` (Sign In on Home), `signout` (Sign Out in Settings › Account), `languages CODE CODE` (Settings' language pickers; alone: none), `setting speakerName\|autoAnswer\|micQuestions\|summarize\|keepAudio \| VALUE` (that setting in Settings › General: the name, or `on`/`off`), `answer-layout subtitles|mirror|focus` and `note-layout switch|both` (how two languages are shown), `note-language CODE` (the open note's language switch) and `update check\|restart` (Check Now / Restart to Update in Settings › General). Until someone is signed in only `signin`, `signout`, `settings`, `setting`, `page`, `size` and `update` do anything (the rest log `⚠︎ Sign in to Cue first (…)`). Notifications then go only to the session log (`🔔 …`), not Notification Center, so no permission is asked. |
 | `CUE_CALENDAR_EVENTS=file.json` | Read the calendar from this file instead of EventKit (no permission asked), again on every check: a JSON array of `{title, start, end}` (ISO 8601) with optional `id`, `series` (shared by a recurring event's occurrences), `calendar` (name), `url`, `location`, `notes`, `attendees` (names), `recurring`. |
 | `CUE_MIC_APPS=file` | The bundle IDs using the microphone right now, one per line, read on every check instead of Core Audio's process list. |
 | `CUE_MEETING_TICK=s` / `CUE_MIC_RELEASE=s` | Check for calls every `s` seconds instead of 5; stop a call's recording once the call app has been off the microphone for `s` seconds instead of 60. |
@@ -774,7 +805,8 @@ or `⚠︎ Couldn't improve the transcript: …`, `👥 Finding speakers…`,
 `🔑 Signed in to Cue as EMAIL`, `🔑 Signed out of Cue` (Sign Out, or after `⚠︎ Your Cue session ended: …`),
 `🔑 Cue access refreshed`, `📦 Imported N projects from this Mac (M files)`, `📎 Added FILE to PROJECT: SUMMARY`, `🗑 Removed FILE from PROJECT`,
 `✨ Prepared “PROJECT” from its materials: N answers, M names and terms`, `⚠︎ Couldn't prepare “PROJECT” from its materials: …`, `🌐 Language heard: NAME`,
-`🌐 Languages: English, Ukrainian` (or one, or `none — Cue follows the language it hears`), `⚠︎ Couldn't save your languages: …`, `🌐 Translating notes…`, `✅ Notes translated into NAME: N lines`,
+`🌐 Languages: English, Ukrainian` (or one, or `none — Cue follows the language it hears`), `⚠︎ Couldn't save your languages: …`,
+`📦 Imported your settings from this Mac`, `⚙️ Settings: name “NAME”, Auto on, …`, `☁️ Saved your settings to your account`, `⚠︎ Couldn't save your settings: …`, `🌐 Translating notes…`, `✅ Notes translated into NAME: N lines`,
 `☁️ Saved “PROJECT” to your account`, `⚠︎ Not invited: EMAIL`, `⚠︎ Couldn't sign in to Cue: …`, `⚠︎ Sign in to Cue first`,
 `📝 Notes ready: …`, `📅 Recording “Title” into Project`, `🔔 Record “Title”?`,
 `✅ Cue is up to date (VERSION)`, `🔄 Downloading Cue NEW (this is OLD)…`, `✅ Cue NEW is installed: it opens the next time Cue starts` (the Mac) or

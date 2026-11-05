@@ -69,13 +69,11 @@ struct QuestionTranslation: Decodable, Equatable {
 }
 
 extension CueAPI {
-    /// Starts a call for a project. The settings can change later with a `config` command. `notesOnly`: a call just for a recording's notes, which
-    /// starts over already (nothing listens or answers) and is not stopped by the plan's limit.
-    func createCall(projectID: String, speaker: String, auto: Bool, micQuestions: Bool, questions: Bool, notesOnly: Bool = false) async throws -> CallInfo {
-        let body: [String: Any] = [
-            "projectId": projectID, "speaker": speaker, "auto": auto, "micQuestions": micQuestions, "questions": questions,
-            "notesOnly": notesOnly,
-        ]
+    /// Starts a call for a project; the person's settings (their name, Auto, …) are the account's, which the server reads. `questions` can
+    /// change later with a `config` command. `notesOnly`: a call just for a recording's notes, which starts over already (nothing listens or
+    /// answers) and is not stopped by the plan's limit.
+    func createCall(projectID: String, questions: Bool, notesOnly: Bool = false) async throws -> CallInfo {
+        let body: [String: Any] = ["projectId": projectID, "questions": questions, "notesOnly": notesOnly]
         let data = try await request("POST", "v1/calls", json: try JSONSerialization.data(withJSONObject: body))
         do {
             return try JSONDecoder().decode(CallInfo.self, from: data)

@@ -30,7 +30,7 @@ e2eCase(
                     print('--- the window shows', await windowText(cue.pid));
                     throw error;
                 });
-        assertNotContains(cue.sessionLog(), /Imported/, 'a new user has nothing to import');
+        assertNotContains(cue.sessionLog(), /Imported \d/, 'a new user has no projects or notes to import');
         const account = await (await cue.backend()).accountOf(cue.email);
         assertEq((await account.projects()).length, 0, 'the account starts with no projects');
         await waitShows('Home to offer the first project', /^Create Your First Project$/m);

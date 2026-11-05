@@ -30,6 +30,8 @@ export const NewCall = Type.Object({
                 'A call made only to hang a recording and its notes on (no live path: nothing listens, answers or warms up): it starts already ended, and the monthly limit does not stop it',
         }),
     ),
+    // The person's settings, as the apps from before the account kept them sent them: each is used only while the account has none of its own
+    // (Me.settings), and the apps of now leave them to it.
     ...{
         speaker: Type.Optional(Type.String({ description: 'The name the speaker goes by (empty: "the speaker")' })),
         auto: Type.Optional(
@@ -206,7 +208,10 @@ export type CallEvent = Static<typeof CallEvent>;
 
 // MARK: Commands, client to server (JSON text frames)
 
-/** The settings of the call that can change while it runs. */
+/**
+ * The settings of the call that can change while it runs. `speaker`, `auto` and `micQuestions` are the person's (Me.settings): the account's
+ * reach a running call when they change, and these count only where the account has none (the apps from before it send them).
+ */
 export const ConfigCommand = Type.Object({
     type: Type.Literal('config'),
     speaker: Type.Optional(Type.String()),

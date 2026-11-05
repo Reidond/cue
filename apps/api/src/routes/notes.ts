@@ -19,6 +19,7 @@ import { Elysia, sse } from 'elysia';
 import { callOf } from '../call/stub.ts';
 import { ApiError } from '../errors.ts';
 import { languagesOf } from '../languages.ts';
+import { settingsOf } from '../preferences.ts';
 import { findProject } from '../projects.ts';
 import { janitor } from '../notes/janitor.ts';
 import { participantsOf, turnsFor } from '../notes/compose.ts';
@@ -195,11 +196,15 @@ export const notes = new Elysia({ name: 'notes' })
             const language = call.language ?? body.language ?? project.language;
             const lexicon = noteLexicon(language);
             const lines = inRecording(await liveLines(call), call, body.take, body.endedAt);
-            const speaker = body.speaker.trim();
+            // The person's settings are the account's; what the request says counts only where the account has none (an app from before it).
+            const settings = await settingsOf(env.DB, userId);
+            const speaker = (settings.speakerName ?? body.speaker ?? '').trim();
+            const summarize = settings.summarize ?? body.summarize ?? true;
+            const keepAudio = settings.keepAudio ?? body.keepAudio ?? true;
             const reads = audio.me !== undefined && audio.others !== undefined;
             const steps: StepId[] = [
                 ...(reads ? (['transcript', 'speakers'] as const) : []),
-                ...(body.summarize ? (['names', 'summary'] as const) : []),
+                ...(summarize ? (['names', 'summary'] as const) : []),
                 // With two languages chosen, the notes are translated into the other.
                 ...((await languagesOf(env.DB, userId)).length === 2 ? (['translate'] as const) : []),
             ];
@@ -230,8 +235,8 @@ export const notes = new Elysia({ name: 'notes' })
                 suggestions: '{}',
                 steps: JSON.stringify(newSteps(steps)),
                 audio: JSON.stringify(audio),
-                keep_audio: body.keepAudio ? 1 : 0,
-                summarize: body.summarize ? 1 : 0,
+                keep_audio: keepAudio ? 1 : 0,
+                summarize: summarize ? 1 : 0,
                 created_at: Date.now(),
             }).run();
             await env.NOTES.create({ id, params: { noteId: id } });

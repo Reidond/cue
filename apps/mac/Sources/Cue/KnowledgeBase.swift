@@ -10,33 +10,27 @@ struct PreparedAnswer: Hashable {
     var byCue = false
 }
 
-/// One file of a project: the text the Cue API read from it.
+/// One file of a project, as the Cue API read it.
 struct MaterialDocument {
     let name: String
-    var text = ""
     var summary = ""
     var error: String?
-
-    init(name: String, summary: String, error: String?) {
-        self.name = name
-        self.summary = summary
-        self.error = error
-    }
 }
 
-/// What the account read from a project's files, for the project's page: its prepared answers and how much Claude is given to read.
+/// What the account read from a project's files, for the project's page: its prepared answers and how much Claude reads for each question.
 /// (The Call Durable Object builds the prompt and matches questions to the prepared answers on the server.)
 struct KnowledgeBase {
     let documents: [MaterialDocument]
     let prepared: [PreparedAnswer]
-    private let bytes: Int
+    /// Nil from a backend from before it said.
+    var reading: ProjectReading?
 
-    /// Rough token count; Claude's tokenizer averages ~3.9 UTF-8 bytes per token on mixed text.
-    var estimatedTokens: Int { bytes * 10 / 39 }
-
-    init(documents: [MaterialDocument], prepared: [PreparedAnswer]) {
-        self.documents = documents
-        self.prepared = prepared
-        bytes = documents.reduce(0) { $0 + $1.text.utf8.count }
+    /// "~2k tokens", or for materials too long to read whole "~263k tokens, ~6k read per question"; nil when the backend didn't say.
+    var tokens: String? {
+        guard let reading else { return nil }
+        let size = { (tokens: Int) in tokens >= 1000 ? "\(tokens / 1000)k" : "\(tokens)" }
+        return reading.passages
+            ? "~\(size(reading.totalTokens)) tokens, ~\(size(reading.tokens)) read per question"
+            : "~\(size(reading.tokens)) tokens"
     }
 }

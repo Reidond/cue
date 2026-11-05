@@ -18,6 +18,7 @@ export {
     type AnthropicRequest,
     type DeepgramFileRequest,
     type DeepgramRequest,
+    type EmbeddingsRequest,
     type MarkdownRequest,
 } from './fake-providers.ts';
 export {

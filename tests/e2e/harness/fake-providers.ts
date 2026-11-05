@@ -36,6 +36,11 @@
 //   /markdown      POST: Workers AI `toMarkdown`, for the Cue API (MARKDOWN_URL). A Word file's paragraphs or a PDF's text, one blank line
 //                  apart, as `{name, format: 'markdown', data, tokens}`; any other file as `{format: 'error'}`, the shape `toMarkdown` returns
 //                  per file. The file's name arrives in `x-file-name` (URL-encoded). Noted as `markdown-request`.
+//   /embeddings    POST: Workers AI `bge-m3`, for the Cue API (EMBEDDINGS_URL): `{text: [...]}` in, `{shape, data}` out, one vector per text. A
+//                  vector is the text's words (lower case, cut to 6 letters, as the API's stems) hashed into 256 dimensions, so texts that share
+//                  words are close; FAKE_EMBEDDINGS_SYNONYMS (a JSON object, word → word) makes words of two languages one, standing in for what a
+//                  multilingual model knows. Noted as `embeddings-request`.
+//   Any model:     FAKE_ANTHROPIC_MODEL_FAILS=MODEL fails every request to that model with a 500.
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
@@ -60,9 +65,19 @@ export interface AnthropicRequest {
     cache?: { type: string; ttl?: string };
     /** The breakpoint on the system prompt. */
     systemCache?: { type: string; ttl?: string };
+    /** The breakpoint on the message before the last (the conversation so far, when the last carries passages it won't keep). */
+    historyCache?: { type: string; ttl?: string };
     messages: number;
+    /** The characters of the conversation before the last message. */
+    historyChars: number;
     /** The request's headers (lower-case names): the owner's key in `x-api-key`, and nothing of the user's. */
     headers: Record<string, string>;
+}
+
+/** What the embeddings stand-in noted about a request: how many texts, and their characters. */
+export interface EmbeddingsRequest {
+    texts: number;
+    chars: number;
 }
 
 /** What the `toMarkdown` stand-in noted about a file the Cue API sent it. */
@@ -158,6 +173,9 @@ function textOf(content: unknown): string {
         ? content.map((block: { text?: string } | string) => (typeof block === 'string' ? block : (block.text ?? ''))).join('')
         : '';
 }
+
+/** A word as the embeddings stand-in keys it: lower case, its first 6 letters. */
+const stemOf = (word: string) => Array.from(word.toLowerCase()).slice(0, 6).join('');
 
 function queryOf(url: URL): { query: Record<string, string>; keyterms: string[] } {
     const query: Record<string, string> = {};
@@ -324,6 +342,7 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         const system = textOf(sent['system']);
         const messages = (sent['messages'] ?? []) as { content: unknown }[];
         const content = textOf(messages.at(-1)?.content);
+        const before = messages.at(-2)?.content;
         const kind: AnthropicRequest['kind'] = system.startsWith('You translate the notes')
             ? 'translate'
             : content.startsWith('Transcript:')
@@ -348,13 +367,20 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
             systemCache: Array.isArray(sent['system'])
                 ? (sent['system'][0] as { cache_control?: AnthropicRequest['cache'] }).cache_control
                 : undefined,
+            historyCache: Array.isArray(before)
+                ? (before.at(-1) as { cache_control?: AnthropicRequest['cache'] } | undefined)?.cache_control
+                : undefined,
             messages: messages.length,
+            historyChars: textOf(messages.slice(0, -1).map((message) => message.content)).length,
             headers: headersOf(request),
         };
         record(log, 'anthropic-request', JSON.stringify(noted));
         const environment = env();
         if (key !== FAKE_KEYS.anthropic) {
             return json(response, 401, { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } });
+        }
+        if (environment['FAKE_ANTHROPIC_MODEL_FAILS'] === noted.model) {
+            return json(response, 500, { type: 'error', error: { type: 'api_error', message: `${noted.model} failed` } });
         }
         if (kind === 'judge' && environment['FAKE_CLAUDE_JUDGE_FAILS'] === '1') {
             return json(response, 500, { type: 'error', error: { type: 'api_error', message: 'The judge failed' } });
@@ -741,6 +767,35 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
         );
     }
 
+    async function embeddings(request: IncomingMessage, response: ServerResponse): Promise<void> {
+        const texts = ((JSON.parse((await body(request)).toString('utf8')) as { text?: string[] }).text ?? []).map(String);
+        record(
+            log,
+            'embeddings-request',
+            JSON.stringify({
+                texts: texts.length,
+                chars: texts.reduce((total, text) => total + text.length, 0),
+            } satisfies EmbeddingsRequest),
+        );
+        const synonyms = new Map(
+            Object.entries(JSON.parse(env()['FAKE_EMBEDDINGS_SYNONYMS'] ?? '{}') as Record<string, string>).map(([word, same]) => [
+                stemOf(word),
+                stemOf(same),
+            ]),
+        );
+        const data = texts.map((text) => {
+            const vector = Array.from({ length: 256 }, () => 0);
+            for (const word of text.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
+                if (Array.from(word).length < 3) continue;
+                const stem = synonyms.get(stemOf(word)) ?? stemOf(word);
+                const index = createHash('sha1').update(stem).digest().readUInt16BE(0) % 256;
+                vector[index]! += 1;
+            }
+            return vector;
+        });
+        json(response, 200, { shape: [data.length, 256], data });
+    }
+
     const server = createServer((request, response) => {
         const url = new URL(request.url ?? '/', 'http://127.0.0.1');
         const handled =
@@ -750,7 +805,9 @@ export async function startFakeProviders(log: string, env: () => Env): Promise<F
                   ? deepgramFile(request, response, url)
                   : request.method === 'POST' && url.pathname === '/markdown'
                     ? markdown(request, response)
-                    : Promise.resolve(json(response, 404, { error: `no ${request.method} ${url.pathname} here` }));
+                    : request.method === 'POST' && url.pathname === '/embeddings'
+                      ? embeddings(request, response)
+                      : Promise.resolve(json(response, 404, { error: `no ${request.method} ${url.pathname} here` }));
         handled.catch((error: unknown) => {
             if (!response.headersSent) json(response, 500, { type: 'error', error: { type: 'api_error', message: String(error) } });
             else response.end();

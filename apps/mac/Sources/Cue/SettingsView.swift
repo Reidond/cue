@@ -37,6 +37,8 @@ struct GeneralSettings: View {
         Form {
             Section {
                 TextField("Your name", text: $preferences.speakerName, prompt: Text("How notes and answers refer to you"))
+            } footer: {
+                Text("Your name, Auto, questions from the room and what notes keep are kept in your Cue account: the same on every Mac and PC you sign in to.")
             }
 
             Section {

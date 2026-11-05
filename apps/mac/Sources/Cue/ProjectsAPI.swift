@@ -15,6 +15,15 @@ struct RemoteProject: Decodable {
     /// Milliseconds since the epoch.
     let createdAt: Double
     let lastUsedAt: Double?
+    /// How much of the materials Claude reads for each question (none from a backend from before it said).
+    let reading: ProjectReading?
+}
+
+/// How much of a project's materials Claude reads for each question: all of them, or for long ones the passages that match it best.
+struct ProjectReading: Decodable, Hashable {
+    let tokens: Int
+    let totalTokens: Int
+    let passages: Bool
 }
 
 /// What Cue wrote from a project's materials: the occasion, the names and terms, answers to the likely questions. Written again (after a few
@@ -54,13 +63,6 @@ struct Material: Decodable, Hashable, Identifiable {
 }
 
 /// A material with the text the server extracted from it.
-struct RemoteMaterialText: Decodable {
-    let name: String
-    let error: String?
-    let summary: String
-    let text: String
-}
-
 struct RemotePreparedAnswer: Decodable {
     let question: String
     let answer: String
@@ -124,10 +126,6 @@ extension CueAPI {
     func materials(of project: String) async throws -> [Material] {
         struct Materials: Decodable { let materials: [Material] }
         return try decode(Materials.self, from: try await get("v1/projects/\(project)/materials")).materials
-    }
-
-    func materialText(_ id: String, in project: String) async throws -> RemoteMaterialText {
-        try decode(RemoteMaterialText.self, from: try await get("v1/projects/\(project)/materials/\(id)"))
     }
 
     func preparedAnswers(of project: String) async throws -> [RemotePreparedAnswer] {

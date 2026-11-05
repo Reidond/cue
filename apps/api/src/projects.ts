@@ -1,4 +1,5 @@
 import type { BriefState, Project } from '@cue/contract';
+import { readingOf } from './call/excerpts.ts';
 
 // Projects in D1 (migrations/0005_projects.sql, 0009_project_brief.sql). Every query carries the user id: a person sees only their own, and
 // another's project is simply not found.
@@ -18,12 +19,17 @@ export interface ProjectRow {
     created_at: number;
     last_used_at: number | null;
     material_count: number;
+    /** The characters and UTF-8 bytes of the materials' texts (the ones that could be read). */
+    material_chars: number | null;
+    material_bytes: number | null;
 }
 
 export const PROJECT_COLUMNS = `p.id AS id, p.name AS name, p.occasion AS occasion, p.language AS language, p.names_and_terms AS names_and_terms,
 p.brief_state AS brief_state, p.brief_error AS brief_error, p.brief_occasion AS brief_occasion, p.brief_terms AS brief_terms,
 p.brief_answers AS brief_answers, p.brief_updated_at AS brief_updated_at,
-p.created_at AS created_at, p.last_used_at AS last_used_at, (SELECT COUNT(*) FROM material m WHERE m.project_id = p.id) AS material_count`;
+p.created_at AS created_at, p.last_used_at AS last_used_at, (SELECT COUNT(*) FROM material m WHERE m.project_id = p.id) AS material_count,
+(SELECT SUM(LENGTH(m.text)) FROM material m WHERE m.project_id = p.id AND m.error IS NULL) AS material_chars,
+(SELECT SUM(LENGTH(CAST(m.text AS BLOB))) FROM material m WHERE m.project_id = p.id AND m.error IS NULL) AS material_bytes`;
 
 /** The names and terms one by one (speech recognition's keyterms): written one per line or separated by commas or semicolons. */
 export const termsOf = (namesAndTerms: string) =>
@@ -73,6 +79,7 @@ export const projectOf = (row: ProjectRow): Project => ({
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at,
     materialCount: row.material_count,
+    reading: readingOf(row.material_chars ?? 0, row.material_bytes ?? 0),
 });
 
 export async function findProject(db: D1Database, userId: string, id: string): Promise<ProjectRow | null> {

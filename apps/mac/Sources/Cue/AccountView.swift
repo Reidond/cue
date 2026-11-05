@@ -129,6 +129,7 @@ struct AccountSettings: View {
         case "notes_summary": "Summaries"
         case "note_translation": "Translated notes"
         case "material_text": "Reading files"
+        case "material_search": "Searching files"
         default: feature
         }
     }

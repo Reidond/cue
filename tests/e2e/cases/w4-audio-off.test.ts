@@ -67,6 +67,8 @@ e2eCase(
         // The switches in Settings are the preferences.
         const settings = (): { keepAudio?: boolean; summarizeRecordings?: boolean } =>
             JSON.parse(readFileSync(join(cue.support, 'settings.json'), 'utf8')) as { keepAudio?: boolean; summarizeRecordings?: boolean };
+        // (As tall as the screen allows: the Notes group is under Answers, and UI Automation sees only what is scrolled into view.)
+        cue.control('size 1100 1400');
         cue.control('settings general');
         await cue.waitFor('the switches', 30, async () => {
             await press(cue.pid, 'Keep audio');

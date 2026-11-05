@@ -94,6 +94,9 @@ export default defineConfig(({ mode }) => ({
             // suite's stand-in, harness/fake-providers.ts) answers in `toMarkdown`'s shape instead. A deploy always has it.
             AI: mode !== 'development' || process.env.AI_BINDING === '1' ? bindings.ai() : false,
             MARKDOWN_URL: bindings.text(process.env.MARKDOWN_URL ?? ''),
+            // Workers AI `bge-m3` makes the vectors a live call finds the passages of long materials by (src/call/embeddings.ts): without the
+            // binding, EMBEDDINGS_URL (the e2e suite's stand-in) answers in its shape, and with neither the passages are found by their words.
+            EMBEDDINGS_URL: bindings.text(process.env.EMBEDDINGS_URL ?? ''),
             // The owner's keys: the backend does all the AI and speech work, so these never reach a client (nor does the user's token reach them).
             ANTHROPIC_API_KEY: secret(mode, 'ANTHROPIC_API_KEY'),
             DEEPGRAM_API_KEY: secret(mode, 'DEEPGRAM_API_KEY'),
