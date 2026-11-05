@@ -1,4 +1,4 @@
-import { type CallCommand, CallCommand as CallCommandSchema, type CallEvent, type Channel } from '@cue/contract';
+import { type AccountSettings, type CallCommand, CallCommand as CallCommandSchema, type CallEvent, type Channel } from '@cue/contract';
 import { Value } from '@sinclair/typebox/value';
 import { DurableObject, env } from 'cloudflare:workers';
 import { preparedIn } from '../materials/read.ts';
@@ -12,6 +12,7 @@ import { embed } from './embeddings.ts';
 import { Excerpts } from './excerpts.ts';
 import { answerPrompt, firstSentence, isEcho, judgePrompt, Matcher, type PreparedAnswer } from './knowledge.ts';
 import { languagesOf, nameOf, pairFor } from '../languages.ts';
+import { NO_SETTINGS } from '../preferences.ts';
 import { lexiconFor, STOP_WORDS, type CallLexicon } from './lexicon.ts';
 import { embeddingUsage, speechUsage, tokenUsage } from '../pricing.ts';
 import { ANSWER_MODEL, noTokens, QUICK_MODEL, SPEECH_MODEL, type Tokens, type UsageRow } from './models.ts';
@@ -34,6 +35,8 @@ export interface Meta {
     auto: boolean;
     micQuestions: boolean;
     questions: boolean;
+    /** The person's settings as the account has them: a `config` command changes only the ones it has none of (an app from before it). */
+    account?: AccountSettings;
     ended: boolean;
 }
 
@@ -167,6 +170,20 @@ export class Call extends DurableObject<Env> {
         });
     }
 
+    /** The person changed their settings (`PATCH /v1/me/settings`, on any device): the call follows them from now on. */
+    async settingsChanged(settings: AccountSettings): Promise<void> {
+        await this.#ensure();
+        const meta = this.#meta;
+        if (!meta || meta.ended) return;
+        meta.account = settings;
+        this.#configure({
+            speaker: settings.speakerName ?? undefined,
+            auto: settings.autoAnswer ?? undefined,
+            micQuestions: settings.micQuestions ?? undefined,
+        });
+        await this.ctx.storage.put('meta', meta);
+    }
+
     /** The final transcript lines so far: what the notes start from when a recording stops while the call goes on. */
     async lines(): Promise<{ channel: Channel; speaker: number | null; text: string; start: number; end: number }[]> {
         await this.#ensure();
@@ -269,12 +286,13 @@ export class Call extends DurableObject<Env> {
         switch (command.type) {
             case 'config': {
                 const wasAsking = meta.questions;
-                if (command.speaker !== undefined && command.speaker !== meta.speaker) {
-                    meta.speaker = command.speaker;
-                    this.#restartPrompts();
-                }
-                meta.auto = command.auto ?? meta.auto;
-                meta.micQuestions = command.micQuestions ?? meta.micQuestions;
+                // The person's settings are the account's once it has them; an app from before it still sends its own.
+                const account = meta.account ?? NO_SETTINGS;
+                this.#configure({
+                    speaker: account.speakerName === null ? command.speaker : undefined,
+                    auto: account.autoAnswer === null ? command.auto : undefined,
+                    micQuestions: account.micQuestions === null ? command.micQuestions : undefined,
+                });
                 meta.questions = command.questions ?? meta.questions;
                 if (command.languages !== undefined) {
                     this.#languages = command.languages;
@@ -422,6 +440,17 @@ export class Call extends DurableObject<Env> {
         this.#answers.start();
         this.#quick.start();
         this.#judge.start();
+    }
+
+    /** The person's settings that the call follows; a new name starts Claude's sessions again (their prompts name the speaker). */
+    #configure(settings: { speaker?: string | undefined; auto?: boolean | undefined; micQuestions?: boolean | undefined }): void {
+        const meta = this.#meta!;
+        if (settings.speaker !== undefined && settings.speaker !== meta.speaker) {
+            meta.speaker = settings.speaker;
+            this.#restartPrompts();
+        }
+        meta.auto = settings.auto ?? meta.auto;
+        meta.micQuestions = settings.micQuestions ?? meta.micQuestions;
     }
 
     /** The speaker's name changed: Claude's prompts name them, so both sessions start again. */

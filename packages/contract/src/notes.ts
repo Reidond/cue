@@ -135,10 +135,11 @@ export const NewNotes = Type.Object({
         description:
             'The uploads that are complete. `me` and `others` together: the transcript is read again; none: only the live one is kept',
     }),
-    speaker: Type.String(),
     meeting: Type.Optional(MeetingDetails),
-    keepAudio: Type.Boolean({ description: 'Off: the audio is deleted from storage once the notes are ready' }),
-    summarize: Type.Boolean(),
+    // The person's settings, as the apps from before the account kept them sent them: each counts only while the account has none (Me.settings).
+    speaker: Type.Optional(Type.String()),
+    keepAudio: Type.Optional(Type.Boolean({ description: 'Off: the audio is deleted from storage once the notes are ready' })),
+    summarize: Type.Optional(Type.Boolean()),
     language: Type.Optional(
         Type.String({
             description: 'What the live recognition heard (the call’s `language` events), when the server has not heard the call itself',

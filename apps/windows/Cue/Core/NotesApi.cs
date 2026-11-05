@@ -69,16 +69,13 @@ public sealed record RemoteNote(
 /// <param name="Line">The session log line this event stands for, if it stands for one.</param>
 public sealed record NoteProgressEvent(int Seq, string Kind, string? Step, string State, string? Line, string? Detail, double At);
 
-/// <summary>`POST /v1/calls/:id/notes`.</summary>
+/// <summary>`POST /v1/calls/:id/notes`. The person's name, and whether the notes get a summary and keep the audio, are the account's (<see cref="AccountSettings"/>).</summary>
 public sealed record NewNotesBody(
     string? Title,
     long Take,
     long EndedAt,
     IReadOnlyList<string> Sides,
-    string Speaker,
     RemoteMeeting? Meeting,
-    bool KeepAudio,
-    bool Summarize,
     string? Language,
     string? ProjectId);
 

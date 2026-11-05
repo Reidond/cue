@@ -130,16 +130,13 @@ struct NoteProgressEvent: Decodable {
     let at: Double
 }
 
-/// `POST /v1/calls/:id/notes` (`NewNotes`).
+/// `POST /v1/calls/:id/notes` (`NewNotes`). The speaker's name, the summary and keeping the audio are the account's, which the server reads.
 struct NewNotesBody: Encodable {
     var title: String?
     let take: Int64
     let endedAt: Int64
     let sides: [String]
-    let speaker: String
     var meeting: RemoteMeeting?
-    let keepAudio: Bool
-    let summarize: Bool
     var language: String?
     var projectId: String?
 }

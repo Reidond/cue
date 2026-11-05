@@ -388,7 +388,7 @@ final class RecordingStore: ObservableObject {
         let mixedAudio = audioFile
         tasks[id] = Task {
             await process(id, transcript: transcript, in: project, title: title, meeting: meeting, audio: audio, mixed: mixedAudio,
-                          language: language ?? project.language, speaker: speaker, callID: callID)
+                          language: language ?? project.language, callID: callID)
             tasks[id] = nil
         }
         return id
@@ -400,7 +400,7 @@ final class RecordingStore: ObservableObject {
     /// for playing), the account's notes Workflow reads it again, tells the voices apart, suggests names and writes the summary, and this
     /// follows its progress. A step that fails leaves the note as it was (the live transcript stays) and the Workflow goes on to the next.
     private func process(_ id: String, transcript live: CallTranscript, in project: Project, title: String, meeting: MeetingDetails?,
-                         audio: AudioRecorder.Recording?, mixed: URL?, language: String, speaker: String, callID: String?) async {
+                         audio: AudioRecorder.Recording?, mixed: URL?, language: String, callID: String?) async {
         guard let serverID = project.serverID else {
             abandon(id, "this project isn't in your account yet")
             return
@@ -409,8 +409,7 @@ final class RecordingStore: ObservableObject {
         var made: String?
         if callID == nil {
             do {
-                made = try await api.createCall(projectID: serverID, speaker: speaker, auto: false, micQuestions: false, questions: false,
-                                           notesOnly: true).callId
+                made = try await api.createCall(projectID: serverID, questions: false, notesOnly: true).callId
             } catch {
                 abandon(id, error.localizedDescription)
                 return
@@ -464,9 +463,7 @@ final class RecordingStore: ObservableObject {
         do {
             started = try await api.startNotes(call: call, NewNotesBody(
                 title: title, take: take, endedAt: Int64((live.endedAt.timeIntervalSince1970 * 1000).rounded(.down)), sides: sides,
-                speaker: speaker, meeting: meeting.map { RemoteMeeting(title: $0.title, attendees: $0.attendees) },
-                keepAudio: preferences.keepAudio, summarize: has(.writingSummary, id),
-                language: language, projectId: serverID))
+                meeting: meeting.map { RemoteMeeting(title: $0.title, attendees: $0.attendees) }, language: language, projectId: serverID))
         } catch {
             if temporary { await api.endCall(call) }
             abandon(id, error.localizedDescription)

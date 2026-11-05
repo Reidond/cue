@@ -137,6 +137,8 @@ final class AppState: ObservableObject {
     let api: CueAPI
     /// New versions of Cue, from its GitHub releases.
     let updater: Updater
+    /// The person's settings, kept in their account: `preferences` holds this Mac's copy.
+    let accountSettings: SettingsSync
     private(set) lazy var meetings = MeetingMonitor(state: self)
 
     /// The project Cue answers from and records into.
@@ -262,8 +264,11 @@ final class AppState: ObservableObject {
         AudioRecorder.removeStaleWorkingFolders()
         calendar = MeetingCalendar(preferences: preferences)
         updater = Updater(log: log, preferences: preferences)
-        // The projects are the account's: once someone is signed in they are loaded (and the ones found in the library imported), and one is chosen.
+        accountSettings = SettingsSync(preferences: preferences, api: api, log: log)
+        // The settings and the projects are the account's: once someone is signed in the settings are in effect (this Mac's sent if the account
+        // has none), the projects are loaded (and the ones found in the library imported), and one is chosen.
         api.onSignedIn = { [weak self] in
+            await self?.accountSettings.signedIn()
             await self?.projects.syncWithAccount()
             await self?.recordings.syncWithAccount()
             await self?.chooseProject()
@@ -397,13 +402,6 @@ final class AppState: ObservableObject {
             }
             .store(in: &subscriptions)
 
-        // What the server does with the questions follows these.
-        Publishers.CombineLatest3(preferences.$speakerName, preferences.$autoAnswer, preferences.$micQuestions)
-            .dropFirst()
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.sendConfig() }
-            .store(in: &subscriptions)
-
         projects.objectWillChange
             .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &subscriptions)
@@ -459,8 +457,7 @@ final class AppState: ObservableObject {
         speech = ServiceStatus(ok: false, detail: "Starting speech recognition…", working: true)
         Task {
             do {
-                let info = try await api.createCall(projectID: serverID, speaker: preferences.speakerName, auto: preferences.autoAnswer,
-                                                    micQuestions: preferences.micQuestions, questions: cueRunning)
+                let info = try await api.createCall(projectID: serverID, questions: cueRunning)
                 guard generation == callGeneration else {
                     await api.endCall(info.callId)
                     return
@@ -527,12 +524,9 @@ final class AppState: ObservableObject {
         if capturing { startCall() }
     }
 
-    /// The settings the server follows while it listens for questions.
+    /// What the server follows while it listens for questions besides the person's settings, which it has from the account (`SettingsSync`).
     private func sendConfig() {
-        liveCall?.send([
-            "type": "config", "speaker": preferences.speakerName, "auto": preferences.autoAnswer,
-            "micQuestions": preferences.micQuestions, "questions": cueRunning, "languages": api.languages,
-        ])
+        liveCall?.send(["type": "config", "questions": cueRunning, "languages": api.languages])
     }
 
     // MARK: - Languages

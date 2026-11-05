@@ -83,6 +83,32 @@ export const Languages = Type.Object({
 });
 export type Languages = Static<typeof Languages>;
 
+const accountSettings = {
+    speakerName: Type.String({ maxLength: 200, description: 'What answers and notes call the person (empty: "the speaker", "You")' }),
+    autoAnswer: Type.Boolean({ description: 'Answer the questions Cue notices by itself; off: they wait for Prepare Answer' }),
+    micQuestions: Type.Boolean({ description: 'The microphone also hears the room: its lines can hold questions' }),
+    summarize: Type.Boolean({ description: 'Write a summary (and a title) of each recorded call' }),
+    keepAudio: Type.Boolean({ description: "Keep a call's audio with its notes; off: it is deleted once the notes are ready" }),
+};
+
+/**
+ * The settings that are the person's, not a device's (Settings › General), kept in the account so every Cue they sign in to follows them; the
+ * server uses them for calls and notes. Null: the account has none yet, and an app signing in sends its own once (`PATCH /v1/me/settings`);
+ * until then the server goes by what a call or a note's request says, as the apps from before them send it.
+ */
+export const AccountSettings = Type.Object({
+    speakerName: Type.Union([accountSettings.speakerName, Type.Null()]),
+    autoAnswer: Type.Union([accountSettings.autoAnswer, Type.Null()]),
+    micQuestions: Type.Union([accountSettings.micQuestions, Type.Null()]),
+    summarize: Type.Union([accountSettings.summarize, Type.Null()]),
+    keepAudio: Type.Union([accountSettings.keepAudio, Type.Null()]),
+});
+export type AccountSettings = Static<typeof AccountSettings>;
+
+/** `PATCH /v1/me/settings`: the settings to change; the others stay as they are. */
+export const AccountSettingsPatch = Type.Partial(Type.Object(accountSettings), { minProperties: 1 });
+export type AccountSettingsPatch = Static<typeof AccountSettingsPatch>;
+
 export const Me = Type.Object({
     account: Type.Object({
         id: Type.String(),
@@ -95,6 +121,7 @@ export const Me = Type.Object({
         name: Type.String(),
     }),
     languages: Type.Array(Type.String(), { description: 'The languages the person reads Cue in, in order (see Languages)' }),
+    settings: AccountSettings,
     limits: Type.Object({
         monthlyUsd: Type.Union([Type.Number(), Type.Null()], {
             description: 'The monthly spend limit in US dollars that applies to this account',

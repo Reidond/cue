@@ -6,8 +6,9 @@ using Microsoft.UI.Xaml.Input;
 namespace Cue;
 
 /// <summary>
-/// Settings › General: who the speaker is, the languages Cue is read in (the account's) and how two of them are laid out (this PC's), what the
-/// notes of a recorded call get, and updates. The rest (answers, the library) comes with the slices that have them.
+/// Settings › General: who the speaker is, the languages Cue is read in (the account's) and how two of them are laid out (this PC's), how answers are
+/// made and what the notes of a recorded call get (the account's: <see cref="AccountSettings"/>), and updates. The rest (the library) comes with the
+/// slice that has it.
 /// </summary>
 public sealed class GeneralView : UserControl
 {
@@ -16,15 +17,21 @@ public sealed class GeneralView : UserControl
     private string languagesShown = "";
     private bool choosing;
     private readonly StackPanel updates = new() { Spacing = 8 };
+    private readonly TextBox name;
+
+    /// <summary>The switches of the account's settings, each with the preference it shows: they follow it when the account changes it.</summary>
+    private readonly List<(ToggleSwitch Switch, Func<bool> Value)> switches = [];
 
     public GeneralView(AppState state)
     {
         this.state = state;
-        var name = new TextBox
+        name = new TextBox
         {
             Text = state.Preferences.SpeakerName,
             PlaceholderText = "How notes and answers refer to you",
             MinWidth = 280,
+            // What the account takes.
+            MaxLength = 200,
         };
         AutomationProperties.SetName(name, "Your name");
         name.TextChanged += (_, _) => state.Preferences.SpeakerName = name.Text;
@@ -36,9 +43,12 @@ public sealed class GeneralView : UserControl
         row.Children.Add(name);
 
         var preferences = state.Preferences;
+        var answers = Ui.Card(
+            Ui.Padded(Toggle("Answer questions automatically", null, () => preferences.AutoAnswer, on => preferences.AutoAnswer = on, follows: true)),
+            Ui.Padded(Toggle("Also listen for questions from people in the room", null, () => preferences.MicQuestions, on => preferences.MicQuestions = on, follows: true)));
         var notes = Ui.Card(
-            Ui.Padded(Toggle("Write a summary of each call", null, preferences.SummarizeRecordings, on => preferences.SummarizeRecordings = on)),
-            Ui.Padded(Toggle("Keep audio", "Saved next to the notes, about 15 MB per hour", preferences.KeepAudio, on => preferences.KeepAudio = on)));
+            Ui.Padded(Toggle("Write a summary of each call", null, () => preferences.SummarizeRecordings, on => preferences.SummarizeRecordings = on, follows: true)),
+            Ui.Padded(Toggle("Keep audio", "Saved next to the notes, about 15 MB per hour", () => preferences.KeepAudio, on => preferences.KeepAudio = on, follows: true)));
 
         Content = new StackPanel
         {
@@ -46,8 +56,11 @@ public sealed class GeneralView : UserControl
             Children =
             {
                 Ui.Card(Ui.Padded(row)),
+                Ui.Caption("Your name, Auto, questions from the room and what notes keep are kept in your Cue account: the same on every Mac and PC you sign in to."),
                 Ui.Header("Languages"),
                 languages,
+                Ui.Header("Answers"),
+                answers,
                 Ui.Header("Notes"),
                 notes,
                 Ui.Caption("Win+Alt+C records a call into the current project. Let people know when you record — consent rules vary by place."),
@@ -63,6 +76,18 @@ public sealed class GeneralView : UserControl
         // The account's languages are read at sign-in and now and then (another PC may change them): the pickers follow.
         Loaded += (_, _) => state.Api.PropertyChanged += OnAccountChanged;
         Unloaded += (_, _) => state.Api.PropertyChanged -= OnAccountChanged;
+        // The account's settings come in the same way, into the preferences (and after a save here that didn't go through): the name and the switches follow.
+        Loaded += (_, _) =>
+        {
+            state.Preferences.PropertyChanged -= OnPreferencesChanged;
+            state.Preferences.PropertyChanged += OnPreferencesChanged;
+            OnPreferencesChanged(null, new(null));
+        };
+        Unloaded += (_, _) =>
+        {
+            // WinUI may say Unloaded after the Loaded of its return.
+            if (!IsLoaded) state.Preferences.PropertyChanged -= OnPreferencesChanged;
+        };
     }
 
     private void OnUpdatesChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => RenderUpdates();
@@ -93,7 +118,7 @@ public sealed class GeneralView : UserControl
         status.Children.Add(action);
         updates.Children.Add(Ui.Card(
             Ui.Row("Version", updater.Version),
-            Ui.Padded(Toggle("Update Cue automatically", null, preferences.AutomaticUpdates, on => preferences.AutomaticUpdates = on)),
+            Ui.Padded(Toggle("Update Cue automatically", null, () => preferences.AutomaticUpdates, on => preferences.AutomaticUpdates = on)),
             Ui.Padded(status)));
         updates.Children.Add(Ui.Caption("Cue looks for a new version when it opens and every few hours, and installs it when Cue restarts, quits or next opens. Windows asks for permission, as Cue is installed for everyone on this PC."));
     }
@@ -239,8 +264,9 @@ public sealed class GeneralView : UserControl
         return grid;
     }
 
-    /// <summary>A line of a card: what it is (and a word on it) on the left, its switch on the right.</summary>
-    private static Grid Toggle(string label, string? description, bool on, Action<bool> set)
+    /// <summary>A line of a card: what it is (and a word on it) on the left, its switch on the right, showing `value`; one of the account's settings
+    /// (`follows`) shows it again when it changes.</summary>
+    private Grid Toggle(string label, string? description, Func<bool> value, Action<bool> set, bool follows = false)
     {
         var grid = new Grid { ColumnSpacing = 16 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -249,11 +275,22 @@ public sealed class GeneralView : UserControl
         text.Children.Add(new TextBlock { Text = label });
         if (description is not null) text.Children.Add(Ui.Caption(description));
         grid.Children.Add(text);
-        var toggle = new ToggleSwitch { IsOn = on, MinWidth = 0 };
+        var toggle = new ToggleSwitch { IsOn = value(), MinWidth = 0 };
         AutomationProperties.SetName(toggle, label);
         toggle.Toggled += (_, _) => set(toggle.IsOn);
         Grid.SetColumn(toggle, 1);
         grid.Children.Add(toggle);
+        if (follows) switches.Add((toggle, value));
         return grid;
+    }
+
+    /// <summary>The account changed a setting while the page is open (another device, or a save here that didn't go through): the controls show it.</summary>
+    private void OnPreferencesChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (name.Text != state.Preferences.SpeakerName) name.Text = state.Preferences.SpeakerName;
+        foreach (var (toggle, value) in switches)
+        {
+            if (toggle.IsOn != value()) toggle.IsOn = value();
+        }
     }
 }

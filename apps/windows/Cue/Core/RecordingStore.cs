@@ -194,17 +194,17 @@ public sealed class RecordingStore
         var cancel = new CancellationTokenSource();
         tasks[id] = cancel;
         var mixedAudio = audioFile;
-        _ = Run(id, transcript, project, title, meeting, audio, mixedAudio, spokenIn ?? project.Language, speaker, callId, cancel);
+        _ = Run(id, transcript, project, title, meeting, audio, mixedAudio, spokenIn ?? project.Language, callId, cancel);
         return id;
     }
 
     // MARK: The notes
 
-    private async Task Run(string id, CallTranscript live, Project project, string title, MeetingDetails? meeting, AudioRecording? audio, string? mixed, string language, string speaker, string? callId, CancellationTokenSource cancel)
+    private async Task Run(string id, CallTranscript live, Project project, string title, MeetingDetails? meeting, AudioRecording? audio, string? mixed, string language, string? callId, CancellationTokenSource cancel)
     {
         try
         {
-            await Process(id, live, project, title, meeting, audio, mixed, language, speaker, callId, cancel.Token);
+            await Process(id, live, project, title, meeting, audio, mixed, language, callId, cancel.Token);
         }
         catch (OperationCanceledException)
         {
@@ -224,7 +224,7 @@ public sealed class RecordingStore
     /// the account's notes Workflow reads it again, tells the voices apart, suggests names and writes the summary, and this follows its progress. A step
     /// that fails leaves the note as it was (the live transcript stays) and the Workflow goes on to the next.
     /// </summary>
-    private async Task Process(string id, CallTranscript live, Project project, string title, MeetingDetails? meeting, AudioRecording? audio, string? mixed, string language, string speaker, string? callId, CancellationToken cancel)
+    private async Task Process(string id, CallTranscript live, Project project, string title, MeetingDetails? meeting, AudioRecording? audio, string? mixed, string language, string? callId, CancellationToken cancel)
     {
         if (project.ServerId is not { } serverId)
         {
@@ -237,7 +237,7 @@ public sealed class RecordingStore
         {
             try
             {
-                made = (await Api.CreateCall(serverId, speaker, auto: false, micQuestions: false, questions: false, notesOnly: true)).CallId;
+                made = (await Api.CreateCall(serverId, questions: false, notesOnly: true)).CallId;
             }
             catch (CueApiException e)
             {
@@ -312,10 +312,7 @@ public sealed class RecordingStore
                         take,
                         new DateTimeOffset(live.EndedAt).ToUnixTimeMilliseconds(),
                         sides,
-                        speaker,
                         meeting is null ? null : new RemoteMeeting(meeting.Title, [.. meeting.Attendees]),
-                        Prefs.KeepAudio,
-                        Has(NoteStep.WritingSummary, id),
                         language,
                         serverId));
             }
@@ -570,8 +567,6 @@ public sealed class RecordingStore
         Changed?.Invoke();
         Ready?.Invoke(id);
     }
-
-    private bool Has(NoteStep step, string id) => progress.GetValueOrDefault(id)?.Any(item => item.Step == step) == true;
 
     private void Set(NoteStep step, string id, StepState to, string? detail = null)
     {

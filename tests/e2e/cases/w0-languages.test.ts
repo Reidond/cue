@@ -71,14 +71,14 @@ e2eCase(
         await shows('the Languages group', together('Read Cue in', 'None'));
         cue.save('settings-none.txt', text);
         assertTextNotContains(text, /^Second language$/, 'no second before a first');
-        assertTextNotContains(text, /^Answers$/, 'no layouts with one or none');
+        assertTextNotContains(text, /^How the overlay shows an answer in both$/, 'no layouts with one or none');
 
         // A first: saved to the account; the second is offered, without the first among its options.
         await choose(cue.pid, 'Read Cue in', 'English');
         await cue.waitLog(/🌐 Languages: English$/, 30);
         assertEq(await accountLanguages(), 'en', 'the account has it');
         await shows('the second picker', together('Second language', 'None'));
-        assertTextNotContains(text, /^Answers$/, 'no layouts with one');
+        assertTextNotContains(text, /^How the overlay shows an answer in both$/, 'no layouts with one');
 
         // A second: both in the account; the layouts appear, at their defaults.
         await choose(cue.pid, 'Second language', 'Українська');

@@ -1,13 +1,15 @@
-import { ApiError as ApiErrorBody, Languages, Me } from '@cue/contract';
+import { AccountSettings, ApiError as ApiErrorBody, Languages, Me, AccountSettingsPatch } from '@cue/contract';
 import { env } from 'cloudflare:workers';
 import { Elysia } from 'elysia';
 import { adminEmails } from '../auth.ts';
 import { ApiError } from '../errors.ts';
+import { callOf } from '../call/stub.ts';
 import { languagesOf, setLanguages } from '../languages.ts';
+import { saveSettings, settingsOf } from '../preferences.ts';
 import { accountUsage, monthOf } from '../usage.ts';
 import { authed } from './authed.ts';
 
-/** The signed-in account, and the languages the person reads Cue in. */
+/** The signed-in account, and what the person keeps in it: the languages they read Cue in, and their settings. */
 export const me = new Elysia({ name: 'me' })
     .use(authed)
     .get(
@@ -34,6 +36,7 @@ export const me = new Elysia({ name: 'me' })
                 },
                 plan: { id: 'cue' as const, name: 'Cue' },
                 languages: await languagesOf(env.DB, userId),
+                settings: await settingsOf(env.DB, userId),
                 limits: { monthlyUsd: usage.limitUsd },
                 usage: {
                     month,
@@ -61,5 +64,24 @@ export const me = new Elysia({ name: 'me' })
             body: Languages,
             response: { 200: Languages, 400: ApiErrorBody, 401: ApiErrorBody, 429: ApiErrorBody },
             detail: { summary: 'The languages the person reads Cue in: two, and answers and notes come in both' },
+        },
+    )
+    .patch(
+        '/me/settings',
+        async ({ userId, body }) => {
+            const settings = await saveSettings(env.DB, userId, body);
+            // The person's calls under way follow them at once, whichever device they are on.
+            const { results } = await env.DB.prepare('SELECT id FROM call WHERE user_id = ? AND ended_at IS NULL')
+                .bind(userId)
+                .all<{ id: string }>();
+            await Promise.allSettled(results.map((call) => callOf(call.id).settingsChanged(settings)));
+            return settings;
+        },
+        {
+            body: AccountSettingsPatch,
+            response: { 200: AccountSettings, 400: ApiErrorBody, 401: ApiErrorBody, 429: ApiErrorBody },
+            detail: {
+                summary: "Changes the person's settings (the ones named): every app they use, and their calls under way, follow them",
+            },
         },
     );
