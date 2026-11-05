@@ -15,9 +15,10 @@ e2eCase(
             FAKE_CLAUDE_ANSWER: 'We studied 48 hives.',
         });
         const backend = await cue.backend();
-        // The prompts Claude was given for answering (each written once, before the first question), by the name they say the speaker goes by.
+        // The prompts Claude was given for answering, by the name they say the speaker goes by: each is written once before the first question,
+        // for each of the two models that answer (Claude Sonnet and Claude Haiku), so a call's prompt counts as one when both have it.
         const prompts = (name: string) =>
-            cue.claudeRequests('answer-system').filter((system) => system.startsWith(`You are a live prompter for ${name}.`)).length;
+            cue.claudeRequests('answer-system').filter((system) => system.startsWith(`You are a live prompter for ${name}.`)).length / 2;
 
         // An app from before the account kept settings sends its own with every call; the account has none, so the call goes by them.
         const call = await startCall(backend, 'ann@cue.test', { call: { speaker: 'Old App Name', auto: true } });
