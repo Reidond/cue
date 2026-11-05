@@ -436,7 +436,7 @@ final class AppState: ObservableObject {
             self.knowledge = knowledge
             self.readingMaterials = false
             let files = knowledge.documents.map { "\($0.name) — \($0.error ?? $0.summary)" }.joined(separator: "; ")
-            self.log.write("📚 Materials for \(project) (~\(knowledge.estimatedTokens / 1000)k tokens): \(files.isEmpty ? "none" : files)")
+            self.log.write("📚 Materials for \(project)\(knowledge.tokens.map { " (\($0))" } ?? ""): \(files.isEmpty ? "none" : files)")
         }
     }
 

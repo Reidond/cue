@@ -24,6 +24,16 @@ export const Brief = Type.Object({
 });
 export type Brief = Static<typeof Brief>;
 
+/** How much of a project's materials Claude reads for each question of a call: all of them, or for long ones the passages that match it best. */
+export const Reading = Type.Object({
+    tokens: Type.Integer({ description: 'About how many tokens of the materials Claude reads for each question' }),
+    totalTokens: Type.Integer({ description: 'About how many tokens the materials hold' }),
+    passages: Type.Boolean({
+        description: 'Too long to read whole (over 120,000 characters): each question brings the passages of them that match it best',
+    }),
+});
+export type Reading = Static<typeof Reading>;
+
 export const Project = Type.Object({
     id: Type.String(),
     name: Name,
@@ -43,6 +53,7 @@ export const Project = Type.Object({
     createdAt: Type.Number(),
     lastUsedAt: Type.Union([Type.Number(), Type.Null()]),
     materialCount: Type.Integer(),
+    reading: Reading,
 });
 export type Project = Static<typeof Project>;
 

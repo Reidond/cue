@@ -18,7 +18,8 @@ interface TokenPrices {
 export const PRICING = {
     models: {
         [ANSWER_MODEL]: { input: 2_000_000, output: 10_000_000, cacheWrite: 4_000_000, cacheRead: 100_000 },
-        // Haiku's prices for prompts up to 100,000 tokens: the judge's are a few hundred.
+        // Haiku's prices for prompts up to 100,000 tokens: the judge's are a few hundred, a quick answer's (router.ts) the materials up to
+        // MATERIALS_INLINE_CHARS (about 35,000 tokens) or their outline and passages.
         [JUDGE_MODEL]: { input: 100_000, output: 500_000, cacheWrite: 200_000, cacheRead: 10_000 },
     } satisfies Record<string, TokenPrices>,
     /**
@@ -32,6 +33,8 @@ export const PRICING = {
     },
     /** Workers AI `toMarkdown`, per file: PDFs and Office files are free (images are not, and are not accepted). */
     toMarkdown: { microsPerFile: 0 },
+    /** Workers AI `bge-m3` (the vectors of long materials' passages and of the questions asked of them), per million input tokens: 0.0118 USD. */
+    embeddings: { microsPerMillionTokens: 11_800 },
 } as const;
 
 /** What the tokens of one model cost; a model the table does not list is priced as the answer model (dearer, never free). */
@@ -80,6 +83,22 @@ export const speechUsage = (feature: string, kind: 'live' | 'recorded', model: s
     'audio_seconds',
     speechMicros(kind, seconds, addOns),
 ];
+
+/**
+ * The `usage` row of `characters` of text turned into vectors with Workers AI `bge-m3`. It bills by its own tokens and does not say how many:
+ * they are counted here at three characters each, more than its tokenizer makes of most text.
+ */
+export const embeddingUsage = (feature: string, characters: number): UsageRow => {
+    const tokens = Math.ceil(characters / 3);
+    return [
+        feature,
+        'cloudflare',
+        'workers-ai-bge-m3',
+        tokens,
+        'input_tokens',
+        Math.round((tokens * PRICING.embeddings.microsPerMillionTokens) / 1_000_000),
+    ];
+};
 
 /** The `usage` row of one file read with Workers AI `toMarkdown`. */
 export const markdownUsage = (): UsageRow => [

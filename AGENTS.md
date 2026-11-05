@@ -101,7 +101,7 @@ A person's projects and their materials live in D1 and R2; `docs/backend.md` ›
   assignments point at it); `Project.serverID`, in `project.json`, is the account's project. After sign-in (`CueAPI.onSignedIn`, before `Signed in` is logged) `syncWithAccount` lists the
   account's projects, makes a folder for the ones this Mac hasn't seen, and uploads every folder without a `serverID` once (`📦 Imported N projects from this Mac`).
   Create, rename, delete and adding or removing a file wait for the server; field edits are saved here at once and to the account after 0.8 s (`☁️ Saved “NAME” to your account`).
-  `CUE_CONTROL` commands run one after another, so `new` and `add` finish before the next line. `KnowledgeBase` builds Claude's prompt from the server's text.
+  `CUE_CONTROL` commands run one after another, so `new` and `add` finish before the next line. The project page's `KnowledgeBase` is the files, their prepared answers and the project's `reading` (`Project.reading`: about how many tokens Claude reads for each question, and how many the files hold; the server's, from `readingOf` in `src/call/excerpts.ts`): no file's text is downloaded.
   After a file is added or removed (and at sync, for a brief still `working`) `followBrief` reads the project every 1.5 s until the brief is written: `✨ Prepared “NAME” from its
   materials: N answers, M names and terms` or `⚠︎ Couldn't prepare “NAME” from its materials: WHY`. The Overview (`ProjectView`) is the materials first, then how Cue's reading
   went (Show Answers, Try Again, Prepare), then **Advanced**, collapsed: Occasion and Names and terms, whose placeholders are the brief's. Prepared Answers has "From Your Files"
@@ -116,8 +116,8 @@ A person's projects and their materials live in D1 and R2; `docs/backend.md` ›
 What a person may spend, and what stops them. `docs/backend.md` › Limits has the design; the shapes are `Me` in `packages/contract/src/index.ts`.
 
 - **One price table**: `PRICING` in `src/pricing.ts` (per model input / output / cache write / cache read tokens per million, Deepgram's multilingual live and recorded per minute,
-  `toMarkdown` per file; millionths of a dollar, list prices to check before the first deploy). Every `usage` row is built by `tokenUsage`, `speechUsage` or
-  `markdownUsage` there: a new thing that costs money is a line in the table and one of those, nowhere else.
+  `toMarkdown` per file, Workers AI `bge-m3` per million tokens; millionths of a dollar, list prices to check before the first deploy). Every `usage` row is built by
+  `tokenUsage`, `speechUsage`, `embeddingUsage` or `markdownUsage` there: a new thing that costs money is a line in the table and one of those, nowhere else.
 - **A month's allowance**: `limitState(db, userId)` (`src/usage.ts`): the UTC month's `usage` against `user_limit`, else the admin's default. Over it (spend >= limit; a
   limit of 0 stops everything) is `limit_reached` (402, not retryable) with a sentence the app shows as it is ("You've used $20.00 of your $20.00 Cue plan for this month. It
   starts over on November 1 (UTC).").
@@ -202,6 +202,16 @@ what its events say. `docs/backend.md` has the design; the shapes are `packages/
   prompt from `prompts/prompt.md`, the project's prepared answers (the files' own and the brief's) and materials; `Matcher` is `KnowledgeBase.match`), `session.ts` (a Claude conversation:
   system prompt cached for an hour and written before the first question with `max_tokens: 0`, the conversation cached too, history kept; `anthropic.ts` the Messages
   client with the retries), `lexicon.ts` (language names, stop words, openers). Echo lines (the microphone hearing the call) are dropped before anyone sees them.
+- **Long materials** (`excerpts.ts`, `embeddings.ts`): up to `MATERIALS_INLINE_CHARS` (120,000 characters) the materials are the whole cached system prompt. Longer
+  ones are cut into passages (whole paragraphs, about 1,400 characters, labelled `[file › heading, p. N]`), the system prompt lists the files and their headings, and
+  each question brings the best `EXCERPT_CHARS` (24,000) of them: BM25 over the matcher's stems fused (reciprocal rank) with multilingual vectors, Workers AI
+  `@cf/baai/bge-m3` (the passages' made when the call starts, the question's with a 1 s wait; `EMBEDDINGS_URL` is the stand-in under `cf dev`; with neither, words
+  alone), so a Ukrainian question finds an English passage. The passages ride on that request only (`ClaudeSession.ask(…, excerpts)`): the conversation keeps the
+  question and is cached up to the message before it. The vectors are `material_search` usage (`embeddingUsage`, tokens counted at three characters).
+- **The router** (`router.ts`): each question goes to Claude Haiku 5.5 (`QUICK_MODEL`) when a prepared answer covers it (score 0.5 or more) or it asks a plain fact
+  (who, when, how many, скільки, хто…), else to Claude Sonnet 5.5 (why, how, compare, чому, поясніть…, more than 18 words, two questions, or unclear), from its words: no
+  request, no time. Both sessions have the same prompt and one conversation, both are warmed and kept warm; a quick question goes to Sonnet while Haiku isn't warm and
+  Sonnet is, and any to Haiku when Sonnet couldn't start. The status line is Sonnet's.
 - **Alarms** (`CACHE_TICK_SECONDS` 300): each tick warms a session quiet for `CACHE_REFRESH_SECONDS` (2700), records usage and ends an abandoned call.
 - **Usage** (`usage` table, flushed each tick and at the end): `answer` and `question_judge` rows per model for input / output / cache write / cache read tokens,
   `live_transcript` audio seconds per stream (both channels are billed), `notes_summary` tokens (the notes Workflow also writes `note_transcript` audio seconds per side and `note_names` tokens). Prices are the one table in `src/pricing.ts` (list prices, not checked
@@ -285,8 +295,8 @@ standard controls, `Segoe Fluent Icons`, theme resources; no embedded WebView (t
   adding or removing a file wait for the server; field edits are saved to `project.json` at once and to the account after 0.8 s (`☁️ Saved “NAME” to your account`). A deleted project's folder goes to the Recycle Bin
   (`Shell.MoveToRecycleBin`). The dashboard: `DashboardPage.Project` with `Dashboard.ProjectId` and `Dashboard.Section` (`ProjectTab`: Overview, Answers, Notes; the notes slice filled `ProjectPage`'s Notes tab (`NotesView`) and
   Home's recent notes); `Dashboard.OpenProject(id, tab)`; the pane (`MainWindow.RefreshProjects`) has a "Projects" header, an item per project with a context menu (Rename…, Show in Explorer, Move to
-  Recycle Bin…) and New Project (Ctrl+N) below; the start-Cue button belongs in `ProjectPage`'s header (the live-call slice). The prepared answers and the token estimate on a page come from `ProjectStore.Documents`
-  (`KnowledgeBase`, as the Mac's); the account's server builds the prompt.
+  Recycle Bin…) and New Project (Ctrl+N) below; the start-Cue button belongs in `ProjectPage`'s header (the live-call slice). The prepared answers and the tokens Claude reads on a page come from `ProjectStore.Knowledge`
+  (`KnowledgeBase`, as the Mac's: the files, the prepared answers and the project's `Reading`); the account's server builds the prompt.
 - **Where the next slices plug in**: `AppState` (`Core/AppState.cs`: the log, preferences, `Api`, `Projects`, `Dashboard`, `Control`, `PlanLimit`; one instance, `App.State`); `CueApi.Request(method, path, query, json,
   file, body, contentType, timeout)` and `Bearer()` for every call (a bearer token refreshed on its own, `{error: {code, message, retryable}}` as `CueApiException`: kinds
   `LimitReached`, `RateLimited`, `PlanPaused`, `Ended`, `Network`, `Server`; `OnSignedIn` runs before Cue counts as signed in); `state.Control.Register("new", run, needsSignIn)` for a `CUE_CONTROL`
@@ -527,9 +537,11 @@ This rule is strict and has no exceptions.
     the Anthropic one has a second system prompt kind, the names step ("You find the names…"), answered by `FAKE_CLAUDE_NAMES` (a JSON object label → name; by default the
     `<!-- speaker: … -->` lines of the summary's fixture), and `FAKE_ANTHROPIC_SUMMARY_FAILS=N` fails the first N summaries; a third, a project's brief ("You read the
     materials…", noted as `brief-system` and `brief-input`), is answered by `FAKE_CLAUDE_BRIEF` (the JSON object `prompts/brief.md` asks for; by default an empty one) and
-    `FAKE_ANTHROPIC_BRIEF_FAILS=N` fails the first N; a note's translation ("You translate the notes…", `translate-system` / `translate-input`) is answered in the shape asked
+    `FAKE_ANTHROPIC_BRIEF_FAILS=N` fails the first N; `FAKE_ANTHROPIC_MODEL_FAILS=MODEL` fails every request to that model; a note's translation ("You translate the notes…", `translate-system` / `translate-input`) is answered in the shape asked
     for. With two languages, what is asked for in the other one (an answer's `» ` lines, the judge's `T: ` lines, a note's lines) is `FAKE_CLAUDE_TRANSLATIONS` (JSON, line →
-    translation) where it has the line, else `(LANGUAGE) line`; `FAKE_CLAUDE_TRANSLATED_SUMMARY` (a file) is a note's translated summary. The variables are read from the environment the app was launched with (`cue.launch({…})`) or from
+    translation) where it has the line, else `(LANGUAGE) line`; `FAKE_CLAUDE_TRANSLATED_SUMMARY` (a file) is a note's translated summary. `/embeddings` stands in for
+    Workers AI `bge-m3` (`EMBEDDINGS_URL`, noted as `embeddings-request`): a text's words hashed into a vector, `FAKE_EMBEDDINGS_SYNONYMS` (JSON, word → word) making
+    two languages' words one, as a multilingual model would; a real `bge-m3` run is not covered by any case. The variables are read from the environment the app was launched with (`cue.launch({…})`) or from
     `cue.standIns({…})` for a case with no app. `--real-deepgram` points the backend at the real Deepgram instead, with the key the runner
     reads from the login keychain (item `Cue e2e Deepgram API key`, added with `security add-generic-password -a "$USER" -s "…" -w`): never
     put a real key in a case, a fixture, the control file or the chat. A recording of a real call (someone's conversation) never goes into

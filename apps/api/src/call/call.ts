@@ -8,11 +8,14 @@ import { describe } from './anthropic.ts';
 import { QuestionDetector } from './detector.ts';
 import { SpeechStream } from './deepgram.ts';
 import { QuestionJudge } from './judge.ts';
+import { embed } from './embeddings.ts';
+import { Excerpts } from './excerpts.ts';
 import { answerPrompt, firstSentence, isEcho, judgePrompt, Matcher, type PreparedAnswer } from './knowledge.ts';
 import { languagesOf, nameOf, pairFor } from '../languages.ts';
 import { lexiconFor, STOP_WORDS, type CallLexicon } from './lexicon.ts';
-import { speechUsage, tokenUsage } from '../pricing.ts';
-import { ANSWER_MODEL, noTokens, SPEECH_MODEL, type Tokens, type UsageRow } from './models.ts';
+import { embeddingUsage, speechUsage, tokenUsage } from '../pricing.ts';
+import { ANSWER_MODEL, noTokens, QUICK_MODEL, SPEECH_MODEL, type Tokens, type UsageRow } from './models.ts';
+import { route } from './router.ts';
 import { ClaudeSession, type SessionState } from './session.ts';
 
 // One Call per call id: everything a live call needs on the server. It holds a Deepgram live stream per channel, spots questions on each
@@ -87,9 +90,13 @@ export class Call extends DurableObject<Env> {
     #terms: string[] = [];
     #occasion = '';
     #texts: string[] = [];
+    /** Materials too long for the system prompt, in passages that go with each question (none for shorter ones). */
+    #excerpts: Excerpts | undefined;
     #lexicon: CallLexicon = lexiconFor('en');
     #matcher = new Matcher([], new Set());
     #answers: ClaudeSession | undefined;
+    /** Claude Haiku over the same prompt and conversation, for the questions router.ts finds quick to answer. */
+    #quick: ClaudeSession | undefined;
     #judge: QuestionJudge | undefined;
     #detector = new QuestionDetector();
     #streams: Partial<Record<Channel, SpeechStream>> = {};
@@ -111,6 +118,7 @@ export class Call extends DurableObject<Env> {
     #speaking: Record<Channel, boolean> = { me: false, others: false };
     #tokens = new Map<string, Tokens>();
     #billedSeconds: Partial<Record<Channel, number>> = {};
+    #billedEmbedded = 0;
 
     // The month's allowance: the sentence that says it is used up (null while it is not), when it was last looked at, and the event that told clients.
     #limited: string | null = null;
@@ -367,6 +375,10 @@ export class Call extends DurableObject<Env> {
         this.#terms = termsOf(used.namesAndTerms);
         this.#occasion = used.occasion;
         this.#texts = results.map((material) => material.text);
+        this.#excerpts = Excerpts.inline(results) ? undefined : new Excerpts(results, STOP_WORDS);
+        this.#billedEmbedded = 0;
+        const excerpts = this.#excerpts;
+        void excerpts?.index(embed).catch((error: unknown) => console.error('embeddings', error));
         const history = (await this.ctx.storage.get<{ role: 'user' | 'assistant'; content: string }[]>('history')) ?? [];
         this.#startPrompts(history);
         this.#detector.judge = (speech) => this.#judgeSpeech(speech);
@@ -377,17 +389,30 @@ export class Call extends DurableObject<Env> {
         const meta = this.#meta!;
         const who = { speaker: meta.speaker, occasion: this.#occasion };
         this.#answers?.stop();
+        this.#quick?.stop();
         this.#judge?.stop();
+        const system = answerPrompt(
+            who,
+            this.#matcher.prepared,
+            this.#excerpts ? { outline: this.#excerpts.outline() } : { texts: this.#texts },
+        );
+        const onTokens = (model: string, _kind: 'warm' | 'message', tokens: Tokens) => this.#count('answer', model, tokens);
+        // One conversation for both: whichever answered, the next question follows on from it.
         this.#answers = new ClaudeSession(
             {
                 model: ANSWER_MODEL,
-                system: answerPrompt(who, this.#matcher.prepared, this.#texts),
+                system,
                 title: 'Claude Sonnet',
                 mode: 'stream',
                 maxTokens: 4096,
                 onState: (state, detail) => this.#status('claude', state, detail),
-                onTokens: (model, _kind, tokens) => this.#count('answer', model, tokens),
+                onTokens,
             },
+            history,
+        );
+        // The status line follows Sonnet's, which answers whatever Haiku can't.
+        this.#quick = new ClaudeSession(
+            { model: QUICK_MODEL, system, title: 'Claude Haiku', mode: 'stream', maxTokens: 4096, onState: () => {}, onTokens },
             history,
         );
         this.#judge = new QuestionJudge(judgePrompt(who), {
@@ -395,6 +420,7 @@ export class Call extends DurableObject<Env> {
             onTokens: (model, _kind, tokens) => this.#count('question_judge', model, tokens),
         });
         this.#answers.start();
+        this.#quick.start();
         this.#judge.start();
     }
 
@@ -620,8 +646,7 @@ export class Call extends DurableObject<Env> {
 
     /** Sends an exchange's questions that are still waiting to Claude, each as its own request (if the month's allowance has room for them). */
     #send(exchange: Exchange): void {
-        const answers = this.#answers;
-        if (!answers) return;
+        if (!this.#answers) return;
         const waiting = exchange.questions.filter((question) => !question.requested);
         if (waiting.length === 0) return;
         for (const question of waiting) {
@@ -630,21 +655,39 @@ export class Call extends DurableObject<Env> {
         }
         void this.#withinLimit(0).then((allowed) => {
             for (const question of waiting) {
-                if (allowed) this.#answer(exchange, question, answers);
+                if (allowed) this.#answer(exchange, question, this.#sessionFor(question.text));
                 else this.#emitFor(exchange, { type: 'answer.done', questionId: question.id, error: this.#limited });
             }
         });
     }
 
-    /** One question to Claude. An answer under way when the allowance runs out is finished: the limit stops the next one. */
+    /**
+     * The session that answers a question: Sonnet unless router.ts finds it quick, then Haiku. A quick one goes to Sonnet while Haiku isn't warm
+     * and Sonnet is (a warm cache answers sooner), and any to Haiku when Sonnet could not start.
+     */
+    #sessionFor(question: string): ClaudeSession {
+        const sonnet = this.#answers!;
+        const haiku = this.#quick;
+        if (!haiku) return sonnet;
+        if (route(question, this.#matcher.match(question)?.score ?? null).model === QUICK_MODEL) {
+            if (haiku.state === 'ready') return haiku;
+            return sonnet.state === 'ready' || haiku.state === 'unavailable' ? sonnet : haiku;
+        }
+        return sonnet.state === 'unavailable' && haiku.state === 'ready' ? haiku : sonnet;
+    }
+
+    /** One question to Claude, with its passages when the materials are long. An answer under way when the allowance runs out is finished: the limit stops the next one. */
     #answer(exchange: Exchange, question: Question, answers: ClaudeSession): void {
         const others = exchange.questions.filter((other) => other !== question).map((other) => `«${other.text}»`);
         const message = this.#messageFor(question.text, others, exchange.forced);
-        answers
-            .ask(
-                message,
-                (piece) => this.#emitFor(exchange, { type: 'answer.delta', questionId: question.id, text: piece }),
-                this.#abort.signal,
+        this.#passagesFor(question.text)
+            .then((excerpts) =>
+                answers.ask(
+                    message,
+                    (piece) => this.#emitFor(exchange, { type: 'answer.delta', questionId: question.id, text: piece }),
+                    this.#abort.signal,
+                    excerpts,
+                ),
             )
             .then(
                 () => {
@@ -653,6 +696,19 @@ export class Call extends DurableObject<Env> {
                 },
                 (error: unknown) => this.#emitFor(exchange, { type: 'answer.done', questionId: question.id, error: describe(error) }),
             );
+    }
+
+    /** The passages of long materials a question is asked about, found by the question and the two lines before it (which may say what "it" is). */
+    async #passagesFor(question: string): Promise<string> {
+        if (!this.#excerpts) return '';
+        const before = this.#lines
+            .filter((line) => Date.now() - line.ended < 60_000 && !question.includes(line.text))
+            .slice(-2)
+            .map((line) => line.text);
+        return this.#excerpts.for([...before, question].join('\n')).catch((error: unknown) => {
+            console.error('excerpts', error);
+            return '';
+        });
     }
 
     #messageFor(question: string, others: string[], force: boolean): string {
@@ -731,6 +787,9 @@ export class Call extends DurableObject<Env> {
             rows.push(...tokenUsage(feature, model, tokens));
         }
         this.#tokens.clear();
+        const embedded = this.#excerpts?.embedded ?? 0;
+        if (embedded > this.#billedEmbedded) rows.push(embeddingUsage('material_search', embedded - this.#billedEmbedded));
+        this.#billedEmbedded = embedded;
         for (const channel of ['me', 'others'] as const) {
             const total = this.#streams[channel]?.seconds ?? 0;
             const delta = total - (this.#billedSeconds[channel] ?? 0);
@@ -750,6 +809,7 @@ export class Call extends DurableObject<Env> {
         if (!meta || meta.ended) return;
         const refresh = seconds('CACHE_REFRESH_SECONDS', 2700);
         this.#answers?.keepWarm(refresh);
+        this.#quick?.keepWarm(refresh);
         this.#judge?.keepWarm(refresh);
         await this.#flushUsage().catch((error: unknown) => console.error('usage', error));
         // The allowance is looked at on every tick, so a call nobody asks anything of hears of it too.
@@ -769,6 +829,7 @@ export class Call extends DurableObject<Env> {
         this.#abort.abort();
         await Promise.all(Object.values(this.#streams).map((stream) => stream.close()));
         this.#answers?.stop();
+        this.#quick?.stop();
         this.#judge?.stop();
         await this.#flushUsage().catch((error: unknown) => console.error('usage', error));
         const endedAt = Date.now();

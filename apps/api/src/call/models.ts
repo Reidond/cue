@@ -4,6 +4,8 @@
 export const ANSWER_MODEL = 'claude-sonnet-5-5';
 /** The question judge. */
 export const JUDGE_MODEL = 'claude-haiku-5-5';
+/** Answers that need no reasoning: a prepared answer to condense, a plain fact to find (router.ts). */
+export const QUICK_MODEL = JUDGE_MODEL;
 export const SPEECH_MODEL = 'nova-3';
 
 export const ANTHROPIC_VERSION = '2026-10-21';

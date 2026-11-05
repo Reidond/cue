@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -54,12 +53,12 @@ public sealed record Project
 /// <param name="ByCue">Prepared by Cue from the materials, not written in them.</param>
 public sealed record PreparedAnswer(string Q, string A, string? Who, string Source, bool ByCue = false);
 
-/// <summary>One file of a project: the text the Cue API read from it.</summary>
-public sealed record MaterialDocument(string Name, string Summary, string? Error, string Text);
+/// <summary>One file of a project, as the Cue API read it.</summary>
+public sealed record MaterialDocument(string Name, string Summary, string? Error);
 
 /// <summary>
 /// What the account read from a project's files, for the project's page: its prepared answers (the files' own first, then the ones Cue wrote from
-/// them) and how much Claude is given to read.
+/// them) and how much Claude reads for each question.
 /// (The Call Durable Object builds the prompt and matches questions to the prepared answers on the server.)
 /// </summary>
 public sealed class KnowledgeBase
@@ -67,25 +66,29 @@ public sealed class KnowledgeBase
     public IReadOnlyList<MaterialDocument> Documents { get; }
     public IReadOnlyList<PreparedAnswer> Prepared { get; }
 
-    private readonly int bytes;
+    /// <summary>Null from a backend from before it said.</summary>
+    public ProjectReading? Reading { get; }
 
-    /// <summary>Rough token count; Claude's tokenizer averages ~3.9 UTF-8 bytes per token on mixed text.</summary>
-    public int EstimatedTokens => bytes * 10 / 39;
-
-    public KnowledgeBase(IReadOnlyList<MaterialDocument> documents, IReadOnlyList<PreparedAnswer> prepared)
+    public KnowledgeBase(IReadOnlyList<MaterialDocument> documents, IReadOnlyList<PreparedAnswer> prepared, ProjectReading? reading = null)
     {
         Documents = documents;
         Prepared = prepared;
-        bytes = documents.Sum(document => Encoding.UTF8.GetByteCount(document.Text));
+        Reading = reading;
     }
 
-    /// <summary>"~2k tokens · 3 prepared answers".</summary>
+    /// <summary>"~2k tokens · 3 prepared answers", or for materials too long to read whole "~263k tokens, ~6k read per question · 3 prepared answers".</summary>
     public string Summary
     {
         get
         {
-            var size = EstimatedTokens >= 1000 ? $"{EstimatedTokens / 1000}k" : EstimatedTokens.ToString(CultureInfo.CurrentCulture);
-            return $"~{size} tokens · {Prepared.Count} prepared answers";
+            static string Size(int tokens) => tokens >= 1000 ? $"{tokens / 1000}k" : tokens.ToString(CultureInfo.CurrentCulture);
+            var answers = $"{Prepared.Count} prepared answers";
+            return Reading switch
+            {
+                null => answers,
+                { Passages: true } => $"~{Size(Reading.TotalTokens)} tokens, ~{Size(Reading.Tokens)} read per question · {answers}",
+                _ => $"~{Size(Reading.Tokens)} tokens · {answers}",
+            };
         }
     }
 }
