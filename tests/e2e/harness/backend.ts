@@ -27,6 +27,7 @@ import {
 import { exec, killTree, type Ran } from './process.ts';
 import { fail } from './results.ts';
 import { sleep, within } from './time.ts';
+import { type ServerSentEvent, serverSentEvents } from './sse.ts';
 
 const API = join(E2E_ROOT, '..', '..', 'apps', 'api');
 const ADMIN = join(E2E_ROOT, '..', '..', 'apps', 'admin');
@@ -552,5 +553,18 @@ export class Account {
             if (Date.now() > deadline) return fail(`the brief of "${name}" was not written in ${seconds} s`, JSON.stringify(project));
             await new Promise((resolve) => setTimeout(resolve, 250));
         }
+    }
+
+    /**
+     * Follows the project's brief over `GET …/brief/events` as the apps do, until the server ends the stream: every event with when it came
+     * (`brief` events carry the brief, `ping` ones keep the connection open). Fails the case when the stream isn't opened.
+     */
+    async briefEvents(project: { id: string }, seconds = 120): Promise<ServerSentEvent[]> {
+        const response = await fetch(new URL(`/v1/projects/${project.id}/brief/events`, this.#backend.url), {
+            headers: { authorization: `Bearer ${this.token}`, accept: 'text/event-stream' },
+            signal: AbortSignal.timeout(seconds * 1000),
+        });
+        if (response.status !== 200) return fail(`the brief's events answered ${response.status}`, await response.text());
+        return serverSentEvents(response);
     }
 }

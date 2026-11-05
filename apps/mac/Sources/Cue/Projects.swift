@@ -341,8 +341,8 @@ final class ProjectStore: ObservableObject {
         }
     }
 
-    /// Follows the brief while the account writes it: the project is read again until it is written (or failed), and the session log says how
-    /// it went. Its page then reads the prepared answers again (the brief changed).
+    /// Follows the brief while the account writes it: the account's events say each change until it is written (or failed), and the session log
+    /// says how it went. Its page then reads the prepared answers again (the brief changed).
     private func followBrief(of project: Project) {
         guard let serverID = project.serverID, !following.contains(serverID) else { return }
         following.insert(serverID)
@@ -354,25 +354,55 @@ final class ProjectStore: ObservableObject {
 
     private func follow(_ serverID: String) async {
         let started = Date()
+        var over = false, followed = false
+        while !over, Date().timeIntervalSince(started) < 600, projects.contains(where: { $0.serverID == serverID }) {
+            do {
+                let found = try await api.followBriefEvents(serverID) { brief in
+                    over = brief.state != .working
+                    show(brief, of: serverID)
+                }
+                if !found {
+                    // An account from before the brief's events; or, once they were followed, the project is gone from it.
+                    if !followed { await poll(serverID, since: started) }
+                    return
+                }
+                followed = true
+            } catch CueAPIError.ended {
+                return
+            } catch {
+                // The stream dropped, or the account is out of reach for a moment.
+            }
+            // Ended before the brief was written (or failed): it is opened again, and says the brief as it is now.
+            if !over { try? await Task.sleep(for: .milliseconds(1500)) }
+        }
+    }
+
+    /// The same with an account from before the brief's events (during a deploy): the project is read again every 1.5 s.
+    private func poll(_ serverID: String, since started: Date) async {
         while Date().timeIntervalSince(started) < 600 {
             try? await Task.sleep(for: .milliseconds(1500))
             guard let remote = try? await api.project(serverID) else { continue }
             guard let index = projects.firstIndex(where: { $0.serverID == serverID }) else { return }
-            projects[index].brief = remote.brief
             projects[index].language = remote.language
-            guard remote.brief.state != .working else { continue }
-            let name = projects[index].name, brief = remote.brief
-            switch brief.state {
-            case .ready:
-                let answers = brief.answerCount == 1 ? "1 answer" : "\(brief.answerCount) answers"
-                let terms = brief.terms.count == 1 ? "1 name or term" : "\(brief.terms.count) names and terms"
-                log.write("✨ Prepared “\(name)” from its materials: \(answers), \(terms)")
-            case .failed:
-                log.write("⚠︎ Couldn't prepare “\(name)” from its materials: \(brief.error ?? "something went wrong")")
-            default:
-                break
-            }
-            return
+            show(remote.brief, of: serverID)
+            if remote.brief.state != .working { return }
+        }
+    }
+
+    /// The account's brief on the project here, and in the session log once it is written (or failed).
+    private func show(_ brief: ProjectBrief, of serverID: String) {
+        guard let index = projects.firstIndex(where: { $0.serverID == serverID }) else { return }
+        projects[index].brief = brief
+        let name = projects[index].name
+        switch brief.state {
+        case .ready:
+            let answers = brief.answerCount == 1 ? "1 answer" : "\(brief.answerCount) answers"
+            let terms = brief.terms.count == 1 ? "1 name or term" : "\(brief.terms.count) names and terms"
+            log.write("✨ Prepared “\(name)” from its materials: \(answers), \(terms)")
+        case .failed:
+            log.write("⚠︎ Couldn't prepare “\(name)” from its materials: \(brief.error ?? "something went wrong")")
+        default:
+            break
         }
     }
 
